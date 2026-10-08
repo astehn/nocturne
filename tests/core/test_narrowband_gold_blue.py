@@ -1,5 +1,6 @@
 """The "SHO-style (gold and blue)" palette (spec 2026-10-08, D1-D6), and the
 guard that adding it left the three old palettes' pixels exactly where they were."""
+import dataclasses
 import hashlib
 import itertools
 
@@ -115,14 +116,14 @@ def _pure_ha(h=720, w=1280, noise=0.003, seed=1):
     return np.clip(data, 0, 1).astype(np.float32)
 
 
-def _with_oxygen_core(data, amp=0.1):
+def _with_oxygen_core(data, amp=0.1, cx=500, cy=360):
     h, w = data.shape[:2]
     yy, xx = np.mgrid[0:h, 0:w]
-    core = amp * np.exp(-((xx - 500) ** 2 + (yy - 360) ** 2) / (2 * 60 ** 2))
+    core = amp * np.exp(-((xx - cx) ** 2 + (yy - cy) ** 2) / (2 * 60 ** 2))
     out = data.copy()
     out[..., 1] += core
     out[..., 2] += core
-    return np.clip(out, 0, 1).astype(np.float32), ((xx - 500) ** 2 + (yy - 360) ** 2) < 30 ** 2
+    return np.clip(out, 0, 1).astype(np.float32), ((xx - cx) ** 2 + (yy - cy) ** 2) < 30 ** 2
 
 
 def _blue_share(out, original):
@@ -146,25 +147,28 @@ def _engine(data, **kw):
 def test_pure_hydrogen_gets_almost_no_blue_and_the_floor_is_why(monkeypatch):
     data = _pure_ha()
     stats = gold_blue_stats(AstroImage(data, is_linear=False))
-    assert stats.spread < nb.GB_FLOOR_SPREAD_LO          # the fixture reaches the floor
+    assert stats.evidence < nb.GB_FLOOR_EVIDENCE_LO       # the fixture reaches the floor
     assert _blue_share(_engine(data), data) < 0.02
     # Same image without the floor: relative colouring paints noise blue.
-    monkeypatch.setattr(nb, "GB_FLOOR_SPREAD_LO", 0.0)
-    monkeypatch.setattr(nb, "GB_FLOOR_SPREAD_HI", 0.0)
+    monkeypatch.setattr(nb, "GB_FLOOR_EVIDENCE_LO", 0.0)
+    monkeypatch.setattr(nb, "GB_FLOOR_EVIDENCE_HI", 0.0)
     assert _blue_share(_engine(data), data) > 0.10
 
 
 def test_a_real_oxygen_core_stays_blue_through_the_floor():
-    data, core = _with_oxygen_core(_pure_ha())
+    # Off the hydrogen peak: an oxygen core exactly concentric with it is a
+    # rising function of Ha, which the evidence cannot tell from leak + stretch
+    # (scores 2.2 there, 18.7 at this position; see GB_FLOOR_EVIDENCE_LO).
+    data, core = _with_oxygen_core(_pure_ha(), cx=650, cy=300)
     stats = gold_blue_stats(AstroImage(data, is_linear=False))
-    assert stats.spread >= nb.GB_FLOOR_SPREAD_HI and stats.blue_floor == 1.0
+    assert stats.evidence >= nb.GB_FLOOR_EVIDENCE_HI and stats.blue_floor == 1.0
     h, s = _hsv(_engine(data))
     assert 196 <= np.median(h[core]) <= 225
     assert np.median(s[core]) > 0.3
 
 
 def test_floor_ramps_between_its_two_calibration_points():
-    lo, hi = nb.GB_FLOOR_SPREAD_LO, nb.GB_FLOOR_SPREAD_HI
+    lo, hi = nb.GB_FLOOR_EVIDENCE_LO, nb.GB_FLOOR_EVIDENCE_HI
     assert nb._blue_floor(lo) == 0.0 and nb._blue_floor(hi) == 1.0
     assert nb._blue_floor((lo + hi) / 2) == pytest.approx(0.5)
 
@@ -232,7 +236,7 @@ def test_passed_stats_are_what_the_render_uses():
     img = AstroImage(data, is_linear=False)
     st = gold_blue_stats(img)
     p = palette_defaults(GOLD_BLUE)
-    shifted = GoldBlueStats(st.match, st.centre + 0.5 * st.spread, st.spread, st.blue_floor)
+    shifted = dataclasses.replace(st, centre=st.centre + 0.5 * st.spread)
     assert not np.array_equal(render(img, p, stats=st).data, render(img, p, stats=shifted).data)
 
 
@@ -299,7 +303,7 @@ def test_degenerate_inputs_stay_finite_and_in_range(data, has_stars):
 
 def test_an_empty_nebula_mask_falls_back_to_the_whole_picture(monkeypatch):
     data = _with_oxygen_core(_pure_ha(120, 160), amp=0.3)[0]
-    monkeypatch.setattr(nb, "nebula_mask", lambda rgb, protect: np.zeros(rgb.shape[:2], np.float32))
+    monkeypatch.setattr(nb, "nebula_mask", lambda rgb, protect, caps=None: np.zeros(rgb.shape[:2], np.float32))
     st = gold_blue_stats(AstroImage(data, is_linear=False))
     assert np.isfinite([st.centre, st.spread, st.blue_floor]).all() and st.spread > 0
 
@@ -360,9 +364,9 @@ def test_star_taper_drains_the_brightest_only_in_a_layer_that_still_has_stars():
     assert (with_stars <= 0.25 * without).all()
 
 
-# Exact-t probe: match=None makes t = O/(Ha+O) scale-invariant, and centre 0.5,
+# Exact-t probe: a zero pedestal makes t = O/(Ha+O) scale-invariant, and centre 0.5,
 # spread 0.5 make d = clip(4t-2, -1, 1), so each pixel's chroma is the formula's.
-_PROBE = GoldBlueStats(match=None, centre=0.5, spread=0.5, blue_floor=1.0)
+_PROBE = GoldBlueStats(pedestal=(0.0, 0.0), centre=0.5, spread=0.5, evidence=100.0, blue_floor=1.0)
 
 
 def _probe_chroma(pixels, **kw):
@@ -381,13 +385,141 @@ def test_colour_ramp_shape_is_gamma_0_6():
     assert c[1] / c[0] == pytest.approx(0.25 ** 0.6, rel=0.03)        # gamma 1.0 would give 0.25
 
 
-def test_gold_is_0_85_of_the_blue_at_the_same_distance():
+def test_gold_is_0_70_of_the_blue_at_the_same_distance():
     c, L = _probe_chroma([(0.9, 0.3, 0.3), (0.3, 0.9, 0.9)])          # d = -1 and d = +1
     assert (L >= nb._GB_DARK_L).all()
-    assert c[0] / c[1] == pytest.approx(0.85, rel=0.03)
+    assert c[0] / c[1] == pytest.approx(0.70, rel=0.03)
 
 
 def test_dark_parts_get_colour_in_proportion_to_their_lightness():
     c, L = _probe_chroma([(0.9, 0.3, 0.3), (0.27, 0.09, 0.09)])        # same t, darker
     assert L[1] < nb._GB_DARK_L <= L[0]
     assert c[1] / c[0] == pytest.approx(L[1] / nb._GB_DARK_L, rel=0.03)
+
+
+# --- Task 3: tight crops (no sky in frame) ----------------------------------
+
+def _nebula_frame(h=720, w=1280, seed=4, noise=0.003):
+    """Neutral sky around a flat-topped hydrogen nebula with one broad oxygen
+    region, so a crop inside the nebula has no sky at all."""
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32) / h
+    neb = np.exp(-(((xx - 0.89) / 0.42) ** 2 + ((yy - 0.5) / 0.3) ** 2) ** 2)
+    ha = 0.08 + 0.45 * neb + 0.08 * neb * np.sin(11 * xx) * np.cos(7 * yy)
+    ox = 0.10 * np.exp(-((xx - 0.80) ** 2 + (yy - 0.45) ** 2) / (2 * 0.12 ** 2)) * neb
+    o = 0.08 + 0.127 * (ha - 0.08) + ox
+    data = np.stack([ha, o, o], 2) + noise * rng.standard_normal((h, w, 3))
+    return np.clip(data, 0, 1).astype(np.float32), neb, ((xx - 0.80) ** 2 + (yy - 0.45) ** 2) > 0.3 ** 2
+
+
+def _cool(out):
+    lab = nb._srgb_to_oklab(np.clip(out, 0, 1))
+    return (np.hypot(lab[..., 1], lab[..., 2]) > 0.025) & (lab[..., 2] < 0)
+
+
+def _still_blue(data, crop):
+    """Of the crop region's blue in the full-frame render, the share still
+    blue when the crop is rendered on its own (defaults)."""
+    p = palette_defaults(GOLD_BLUE)
+    full = render(AstroImage(data, is_linear=False), p, has_stars=False).data
+    alone_img = AstroImage(np.ascontiguousarray(data[crop]), is_linear=False)
+    alone = render(alone_img, p, has_stars=False).data
+    blue_full = _cool(full[crop])
+    assert blue_full.mean() > 0.1, "the crop must hold real blue in the full frame"
+    return float((_cool(alone) & blue_full).sum() / blue_full.sum()), gold_blue_stats(alone_img)
+
+
+def test_a_crop_with_no_sky_keeps_its_blue():
+    data, _, _ = _nebula_frame()
+    crop = np.s_[230:470, 470:800]
+    assert data[crop].mean(2).min() > 0.15            # really no sky in the crop
+    kept, st = _still_blue(data, crop)
+    assert st.blue_floor == 1.0
+    assert kept > 0.40                                 # 49% measured; 26% with the old mask
+
+
+def test_faint_hydrogen_stays_gold_because_the_sky_pedestal_comes_off():
+    """A neutral sky reads t = 0.5, far on the oxygen side; without the pedestal
+    the faint rim of a hydrogen nebula went blue-grey (IC 1805's heart)."""
+    data, neb, far = _nebula_frame()
+    rim = (neb > 0.15) & (neb < 0.6) & far
+    lab = nb._srgb_to_oklab(_engine(data))
+    assert _cool(_engine(data))[rim].mean() < 0.05
+    assert lab[..., 2][rim].mean() > 0.01               # gold side: +0.030 measured, -0.021 without
+
+
+def test_the_floor_reads_oxygen_evidence_on_a_crop():
+    """The old floor read the spread of t, which a tight crop shrinks (NGC 7000's
+    Gulf crop: floor 0.00); the evidence of oxygen stays well clear of the ramp.
+    His real crop is pinned in test_his_tight_crops_keep_their_blue."""
+    data, _, _ = _nebula_frame()
+    st = gold_blue_stats(AstroImage(np.ascontiguousarray(data[230:470, 470:800]), is_linear=False))
+    assert st.evidence > 3 * nb.GB_FLOOR_EVIDENCE_HI and st.blue_floor == 1.0
+
+
+_CACHE = ("/private/tmp/claude-501/-Volumes-Work-Code-Editor/"
+          "3c08bfe1-d115-45f9-abe8-0ea76caccfea/scratchpad/nbcache/")
+
+
+@pytest.mark.parametrize("name,box,minimum", [
+    ("NGC7000", (0.00, 0.28, 0.25, 0.65), 0.55),       # Gulf tight: 67% now, 1% before
+    ("NGC7000", (0.00, 0.35, 0.10, 0.75), 0.50),       # Gulf+Mexico: 63% now, 6% before
+    ("IC1805", (0.45, 0.80, 0.25, 0.60), 0.45),        # heart core: 57% now, 14% before
+])
+def test_his_tight_crops_keep_their_blue(name, box, minimum):
+    import os
+    path = _CACHE + name + ".starless.npy"
+    if not os.path.exists(path):
+        pytest.skip("his cached StarX splits live only on the bench machine")
+    a = np.load(path)
+    h, w = a.shape[:2]
+    x0, x1, y0, y1 = box
+    kept, st = _still_blue(a, np.s_[int(y0 * h):int(y1 * h), int(x0 * w):int(x1 * w)])
+    assert st.blue_floor == 1.0
+    assert kept >= minimum
+
+
+def test_noise_free_hydrogen_does_not_read_as_oxygen():
+    """With no noise the residual's tiny width over a near-zero noise read as
+    strong evidence (19 on a construction of NGC 6992); the noise floor stops it."""
+    data = _pure_ha(noise=0.0)
+    st = gold_blue_stats(AstroImage(data, is_linear=False))
+    assert st.blue_floor == 0.0
+    assert _blue_share(_engine(data), data) < 0.02
+
+
+@pytest.mark.parametrize("m,noise", [(0.02, 0.0), (0.005, 1e-4)])
+def test_a_stretched_pure_hydrogen_frame_does_not_read_as_oxygen(m, noise):
+    """After a stretch OIII is a curve in Ha, not a line: a quadratic fit left
+    that curve in the residual and scored it 7.6-9.1, i.e. full blue."""
+    from nocturne.core.autostretch import _mtf
+    lin = (_pure_ha(noise=0.0) - 0.07) * 0.05 + 0.002
+    lin = lin + noise * np.random.default_rng(9).standard_normal(lin.shape)
+    data = np.clip(_mtf(m, np.clip(lin, 0, 1)), 0, 1).astype(np.float32)
+    assert gold_blue_stats(AstroImage(data, is_linear=False)).blue_floor == 0.0
+    assert _blue_share(_engine(data), data) < 0.02
+
+
+def test_oxygen_at_low_hydrogen_is_evidence_a_rising_fit_cannot_absorb():
+    """Three flat blocks — sky, hydrogen, oxygen. Any curve through the three
+    clusters (a quartic, or binned medians left free to fall) explains the
+    oxygen block away (0.41 / 0.00); a fit made to RISE with Ha cannot."""
+    ha = np.full((60, 120), 0.05, np.float32); oiii = np.full((60, 120), 0.04, np.float32)
+    ha[10:50, 5:55], oiii[10:50, 5:55] = 0.75, 0.10
+    ha[10:50, 65:115], oiii[10:50, 65:115] = 0.10, 0.75
+    st = gold_blue_stats(AstroImage(np.stack([ha, oiii, oiii], axis=2), is_linear=False))
+    assert st.evidence > 10 * nb.GB_FLOOR_EVIDENCE_HI
+
+
+def test_a_small_bright_hydrogen_nebula_is_not_oxygen_at_its_brightest():
+    """When the nebula is a few percent of the frame its brightest pixels lie
+    beyond the last bin's centre; a fit held flat there left the brightest
+    hydrogen as residual (his pure-hydrogen IC 1805 construction scored 7.9)."""
+    rng = np.random.default_rng(5)
+    h, w = 720, 1280
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    ha = 0.08 + 0.85 * np.exp(-((xx - 640) ** 2 + (yy - 360) ** 2) / (2 * 40.0 ** 2))
+    o = 0.08 + 0.3 * (ha - 0.08)
+    data = np.clip(np.stack([ha, o, o], 2) + 0.003 * rng.standard_normal((h, w, 3)), 0, 1)
+    st = gold_blue_stats(AstroImage(data.astype(np.float32), is_linear=False))
+    assert st.evidence < nb.GB_FLOOR_EVIDENCE_LO

@@ -58,8 +58,7 @@ def normalize_to_reference(secondary: np.ndarray, reference: np.ndarray,
 def _match_levels(sec: np.ndarray, ref: np.ndarray,
                   blackpoint: float) -> tuple[float, float] | None:
     """The (black point, MTF midtone) normalize_to_reference applies, or None
-    for its identity fallback. Split out so the gold-and-blue palette can
-    measure them on the preview-sized copy and apply them at full size."""
+    for its identity fallback."""
     M_sec, E0_sec = channel_level(sec, blackpoint)
     M_ref, E0_ref = channel_level(ref, blackpoint)
     if 1.0 - M_sec <= 1e-6 or 1.0 - M_ref <= 1e-6:
@@ -241,6 +240,8 @@ GOLD_BLUE_OXYGEN_DEFAULT = 0.60
 #   IC 1805  7.1 / 22.1 / 24.9 deg, sky 3.8 / 3.8 / 3.9 (input 3.8)
 #   M 16    12.6 / 17.6 / 20.9 deg, sky 2.4 / 2.4 / 2.5 (input 2.4)
 #   IC 1396A 23.9 / 29.2 / 30.2,  NGC 7000 22.1 / 27.8 / 28.9 (both <= 35)
+# (Measured on the Task 1 engine; with Task 3's framing changes at 20%:
+# IC 1805 22.4, M 16 27.5, IC 1396A 30.6, NGC 7000 30.7 deg.)
 GOLD_BLUE_PROTECT_DEFAULT = 0.20
 
 
@@ -302,12 +303,21 @@ def preserve_lightness(recolored: np.ndarray, original: np.ndarray) -> np.ndarra
     return np.clip(lab2rgb(lab), 0.0, 1.0).astype(np.float32)
 
 
-def nebula_mask(rgb: np.ndarray, protect: float) -> np.ndarray:
+def nebula_mask(rgb: np.ndarray, protect: float,
+                caps: tuple[float, float] | None = None) -> np.ndarray:
     """Soft 0..1 mask isolating bright nebula from dark sky (luminance
-    percentiles). protect in [0,1]: higher protects more background."""
+    percentiles). protect in [0,1]: higher protects more background.
+
+    `caps` puts a ceiling on the (25th, 99.5th) luminance percentiles. They
+    move with the framing: a tight crop has no sky, so its own 25th percentile
+    is faint NEBULA, and its 99.5th is the core, so the whole nebula reads as
+    background. Only the gold-and-blue palette passes them; the old palettes'
+    mask is unchanged."""
     lum = np.clip(rgb, 0.0, 1.0).mean(axis=2).astype(np.float32)
     lo = float(np.percentile(lum, 25))
     hi = float(np.percentile(lum, 99.5))
+    if caps is not None:
+        lo, hi = min(lo, float(caps[0])), min(hi, float(caps[1]))
     if hi - lo < 1e-4:
         return np.ones_like(lum)
     start = lo - 0.3 * (hi - lo) + float(protect) * (hi - lo) * 1.3
@@ -412,31 +422,77 @@ _GB_T_SIGMA_FRAC = 0.005
 
 # D4, the floor for hydrogen-only objects. Colour is relative, so a picture
 # with no real oxygen would still split into gold and blue along whatever
-# variation its oxygen share has. The blue's chroma ramps from 0 at a spread
-# (p10-p90 of blurred t on the stats copy) of LO to full at HI. Measured
-# 2026-10-08 with the blur above:
-#   pure-hydrogen constructions (G=B = a least-squares line in R, i.e. leak and
-#   background with the real oxygen taken out, of his five exports):
-#     NGC 7000 0.0041, NGC 6992 0.0162, IC 1396A 0.0188, IC 1805 0.0206,
-#     M 16 0.0385;  synthetic Ha + 12.7% leak, any size/noise above: <= 0.0132,
-#     640x480 near noise-free: 0.0253
-#   his five real exports: M 16 0.0432, NGC 7000 0.0518, IC 1805 0.0709,
-#     IC 1396A 0.1268, NGC 6992 0.1538
-# LO sits above every pure-hydrogen construction but M 16's own (whose fitted
-# line still carries M 16's oxygen, so it gets ~0.75); HI is just under M 16,
-# the least-spread real picture whose OIII core must stay blue. Synthetic
-# 1920x1080 pure Ha: 10.0% blue without the floor, 0.0% with it.
-# BLIND SPOT, for the owner: p10-p90 cannot see an oxygen region smaller than
-# ~10% of the nebula mask. A small OIII knot in a hydrogen field leaves the
-# spread at the hydrogen value, so the floor dims that knot's blue.
-GB_FLOOR_SPREAD_LO = 0.028
-GB_FLOOR_SPREAD_HI = 0.042
-# The gold's chroma relative to the blue's. At x1.00 (with the 20% protect
-# default below) warm saturation ran IC 1396A 0.58, IC 1805 0.60, M 16 0.54,
-# NGC 6992 0.74, NGC 7000 0.50 against his examples' 0.25-0.55; at x0.85
-# 0.51 / 0.54 / 0.51 / 0.65 / 0.44, warm hue 28.9 / 23.6 / 19.5 / 29.2 / 27.1.
-# x0.75 cost M 16's hue (18.6) for little.
-_GB_GOLD_SCALE = 0.85
+# variation its oxygen share has. The floor reads the EVIDENCE of oxygen
+# (_oxygen_evidence): OIII fitted as a rising function of Ha, the blurred
+# residual's p10-p90 width over the noise of the unblurred one. It used to read
+# the spread of t, which a tight crop of an oxygen-rich region shrinks — NGC
+# 7000's "Gulf tight" crop measured floor 0.00 and kept 1% of its blue.
+# Measured 2026-10-08 (Task 3) on the 640 px stats copy, fits compared
+# (quadratic / quartic / monotone in 32 bins, the one used):
+#   synthetic pure Ha + 12.7% leak, steps 1/2/3 x noise .003/.006/.01:
+#     0.29-0.43 for all three
+#   pure Ha + leak through an MTF stretch (m 0.02 no noise / m 0.005 noise
+#     1e-4): 7.55 / 9.10, 0.30 / 1.04, 0.11 / 0.45 — a parabola cannot follow
+#     the stretch's curve and READ IT AS OXYGEN
+#   pure-hydrogen constructions of his five exports (G=B a line in R, their
+#     own noise): monotone 0.09-0.29 (quartic up to 0.65)
+#   three flat blocks, sky / hydrogen / oxygen (test_narrowband's description
+#     fixture): quartic 0.41 — any polynomial passes through three clusters,
+#     so it explained the oxygen block away — monotone 1300: oxygen at LOW Ha
+#     is exactly what a rising function cannot absorb
+#   his five full frames (monotone): IC 1805 16.5, NGC 7000 21.4, IC 1396A
+#     22.4, M 16 40.1, NGC 6992 95.3
+#   the reviewer's ten tight crops: 12.7 (IC 1396A trunk tight) - 96.7
+# The ramp sits 4x above the highest hydrogen-only score and 2x below the
+# lowest real one. The noise is floored at 5e-4: a noise-free construction
+# otherwise divided a 1e-4 residual by ~1e-6; real frames measured 9e-4
+# (NGC 6992) to 2.1e-3, so the floor never touches them.
+# BLIND SPOTS, for the owner: (1) p10-p90 cannot see an oxygen region smaller
+# than ~10% of the nebula mask; a small OIII knot alone in a hydrogen field
+# scores like pure hydrogen and its blue is dimmed. (2) Oxygen that is itself a
+# rising function of Ha — a core exactly concentric with the hydrogen peak —
+# is indistinguishable from leak + stretch: a synthetic one scored 2.2 (floor
+# 0.05), the same core moved off the peak 18.7. His M 16, bright OIII core
+# inside bright Ha, scores 40: real nebulae are not that tidy.
+_GB_EVIDENCE_BINS = 32
+GB_FLOOR_EVIDENCE_LO = 2.0
+GB_FLOOR_EVIDENCE_HI = 6.0
+_GB_NOISE_FLOOR = 5e-4
+# Framing (Task 3). A tight crop has no sky, and three things read the sky
+# from percentiles that then land on faint nebula instead. Still-blue share of
+# each crop rendered alone, against the same region of the full-frame render,
+# for the ten reviewer crops (IC 1396A x2, IC 1805 x2, M 16 x2, NGC 6992,
+# NGC 7000 Gulf+Mexico / Gulf tight / Gulf blue only):
+#   before (median-matched OIII, percentile mask, spread floor):
+#     39 30 | 14 4 | 40 23 | 80 | 6 1 0
+#   this palette now: 56 43 | 57 25 | 80 50 | 81 | 63 67 32
+# What remains is the relative centre itself: a crop of mostly-oxygen nebula
+# has a mostly-oxygen median. Handed the full frame's stats the same crops keep
+# 70-100%, so nothing in the per-pixel colour is framing-dependent any more.
+#
+# 1. The oxygen share is read after taking each channel's sky pedestal off,
+#    the 1st percentile capped at 0.09. Without the pedestal a neutral sky
+#    reads t = 0.5, far on the oxygen side, and faint hydrogen went blue-grey
+#    (IC 1805's heart lost its gold rim). The old median-match did this job
+#    but its black point IS the median, which in a crop is nebula: matched,
+#    IC 1805's core crops kept 14% and 4%. Sky p1 of his full frames: Ha
+#    0.000-0.072, OIII 0.052-0.107; the crops' 0.084-0.216, hence the cap.
+# 2. The protect mask's (25th, 99.5th) luminance percentiles are capped at
+#    (0.11, 0.30). His full frames: lo 0.060-0.143, hi 0.251-0.584; crops lo
+#    up to 0.30 (M 16 core) and hi up to 0.71. Uncapped, IC 1805's core crops
+#    kept 17% / 5% even with the pedestal. The caps cost the full frames some
+#    of "before": M 16's high 0.584 is pulled to 0.30, so more of its nebula
+#    gets the palette (warm hue 20.3 -> 27.5 deg), and IC 1396A / NGC 7000
+#    get more blue in their faint parts (IC 1396A faint-region blue 53 -> 65%).
+#    _GB_MASK_CAPS = None restores the old mask exactly.
+_GB_MASK_CAPS = (0.11, 0.30)
+_GB_PEDESTAL_PCT = 1.0
+_GB_PEDESTAL_CAP = 0.09
+# The gold's chroma relative to the blue's. Task 1 measured x0.85 (warm sat
+# 0.51 / 0.54 / 0.51 / 0.65 / 0.44 for IC 1396A / IC 1805 / M 16 / NGC 6992 /
+# NGC 7000). With Task 3's mask caps x0.75 gave 0.51 / 0.50 / 0.58 / 0.62 /
+# 0.52 (M 16 over his 0.55), x0.70 gives 0.48 / 0.48 / 0.55 / 0.59 / 0.49.
+_GB_GOLD_SCALE = 0.70
 
 
 @dataclass(frozen=True)
@@ -445,14 +501,16 @@ class GoldBlueStats:
     from the dialog's preview to Apply so both colour every pixel by the same
     numbers; replay recomputes them from the same downscale and gets the same.
 
-    match:      (OIII black point, MTF midtone) of the oxygen match, or None.
+    pedestal:   (Ha, OIII) sky levels taken off before the oxygen share.
     centre:     median oxygen share over the nebula.
     spread:     its 10th-90th percentile width (never below 1e-4).
-    blue_floor: 0..1 scale on the blue's chroma (D4); small spread -> less blue.
+    evidence:   oxygen varying independently of hydrogen, in noise units (D4).
+    blue_floor: 0..1 scale on the blue's chroma, from the evidence.
     """
-    match: tuple[float, float] | None
+    pedestal: tuple[float, float]
     centre: float
     spread: float
+    evidence: float
     blue_floor: float
 
 
@@ -472,32 +530,100 @@ def _oxygen_share(ha: np.ndarray, o: np.ndarray) -> np.ndarray:
     return o / np.maximum(ha + o, 1e-6)
 
 
-def _blue_floor(spread: float) -> float:
-    lo, hi = GB_FLOOR_SPREAD_LO, GB_FLOOR_SPREAD_HI
+def _sky_pedestal(ha: np.ndarray, oiii: np.ndarray) -> tuple[float, float]:
+    """Each channel's sky level, to take off before the oxygen share."""
+    return (min(float(np.percentile(ha, _GB_PEDESTAL_PCT)), _GB_PEDESTAL_CAP),
+            min(float(np.percentile(oiii, _GB_PEDESTAL_PCT)), _GB_PEDESTAL_CAP))
+
+
+def _gb_share(ha: np.ndarray, oiii: np.ndarray, pedestal: tuple[float, float]) -> np.ndarray:
+    h = np.maximum(ha - np.float32(pedestal[0]), 0.0)
+    o = np.maximum(oiii - np.float32(pedestal[1]), 0.0)
+    return _oxygen_share(h, o)
+
+
+def _blue_floor(evidence: float) -> float:
+    lo, hi = GB_FLOOR_EVIDENCE_LO, GB_FLOOR_EVIDENCE_HI
     if hi <= lo:
         return 1.0
-    return float(np.clip((spread - lo) / (hi - lo), 0.0, 1.0))
+    return float(np.clip((evidence - lo) / (hi - lo), 0.0, 1.0))
+
+
+def _monotone_fit(x: np.ndarray, y: np.ndarray, bins: int):
+    """y as a NON-DECREASING function of x: binned medians made monotone by
+    pool-adjacent-violators, linear between bin centres and beyond the ends."""
+    order = np.argsort(x, kind="stable")
+    xs, ys = x[order], y[order]
+    chunks = [c for c in np.array_split(np.arange(xs.size), bins) if c.size]
+    ctr = np.array([np.median(xs[c]) for c in chunks], dtype=np.float64)
+    med = [float(np.median(ys[c])) for c in chunks]
+    vals, wts, runs = [], [], []
+    for v, c in zip(med, chunks):
+        vals.append(v); wts.append(float(c.size)); runs.append(1)
+        while len(vals) > 1 and vals[-2] > vals[-1]:
+            v2, w2, r2 = vals.pop(), wts.pop(), runs.pop()
+            vals[-1] = (vals[-1] * wts[-1] + v2 * w2) / (wts[-1] + w2)
+            wts[-1] += w2
+            runs[-1] += r2
+    fit = np.repeat(vals, runs)
+    if ctr.size < 2:
+        return lambda q: np.full(np.shape(q), fit[0] if fit.size else 0.0, dtype=np.float32)
+    d0, d1 = ctr[1] - ctr[0], ctr[-1] - ctr[-2]
+    s0 = (fit[1] - fit[0]) / d0 if d0 > 1e-9 else 0.0
+    s1 = (fit[-1] - fit[-2]) / d1 if d1 > 1e-9 else 0.0
+
+    def f(q):
+        out = np.interp(q, ctr, fit)
+        out = np.where(q < ctr[0], fit[0] + s0 * (q - ctr[0]), out)
+        return np.where(q > ctr[-1], fit[-1] + s1 * (q - ctr[-1]), out).astype(np.float32)
+    return f
+
+
+def _oxygen_evidence(ha: np.ndarray, oiii: np.ndarray, sel: np.ndarray, sigma: float) -> float:
+    """How much the oxygen varies INDEPENDENTLY of the hydrogen, in units of
+    the picture's own pixel noise. Everything pure hydrogen can do to the OIII
+    plane — the sensor's leak, the background, the stretch's curve — makes it a
+    rising function of Ha, so OIII is fitted as one (_monotone_fit); oxygen is
+    what that cannot explain: the blurred residual's p10-p90 width over the
+    nebula, over the noise of the unblurred residual."""
+    from scipy.ndimage import gaussian_filter
+    hb = gaussian_filter(ha, sigma)
+    ob = gaussian_filter(oiii, sigma)
+    if float(hb.max() - hb.min()) < 1e-6:
+        return 0.0
+    f = _monotone_fit(hb.ravel(), ob.ravel(), _GB_EVIDENCE_BINS)
+    res_b = ob - f(hb)
+    res = oiii - f(ha)
+    hp = res - gaussian_filter(res, 1.5)
+    noise = 1.4826 * float(np.median(np.abs(hp - np.median(hp))))
+    vals = res_b[sel] if sel.any() else res_b.ravel()
+    p10, p90 = np.percentile(vals, [10, 90])
+    return float(p90 - p10) / max(noise, _GB_NOISE_FLOOR)
 
 
 def gold_blue_stats(img: AstroImage, blackpoint: float = 1.0) -> GoldBlueStats:
     """Measure the gold-and-blue statistics from the preview-sized copy of
-    `img` (the image itself when it is already that small)."""
+    `img` (the image itself when it is already that small). `blackpoint` is
+    accepted for the old palettes' signature and not used: this palette does
+    not median-match the OIII (see _GB_MASK_CAPS for why)."""
     if not img.is_color:
         raise ValueError("Narrowband needs a colour image")
     small = np.clip(_stats_copy(np.asarray(img.data, dtype=np.float32)), 0.0, 1.0)
     ha = small[..., 0].astype(np.float32)
     oiii = ((small[..., 1] + small[..., 2]) / 2.0).astype(np.float32)
-    match = _match_levels(oiii, ha, blackpoint)
-    t = _oxygen_share(ha, _apply_match(oiii, match))
+    pedestal = _sky_pedestal(ha, oiii)
+    t = _gb_share(ha, oiii, pedestal)
     from scipy.ndimage import gaussian_filter
-    t = gaussian_filter(t, sigma=max(1e-3, _GB_T_SIGMA_FRAC * min(t.shape)))
-    sel = nebula_mask(small, _GB_MASK_PROTECT) > 0.5
+    sigma = max(1e-3, _GB_T_SIGMA_FRAC * min(t.shape))
+    t = gaussian_filter(t, sigma=sigma)
+    sel = nebula_mask(small, _GB_MASK_PROTECT, _GB_MASK_CAPS) > 0.5
     vals = t[sel] if sel.any() else t.ravel()
     centre = float(np.median(vals))
     p10, p90 = np.percentile(vals, [10, 90])
     spread = max(float(p90 - p10), 1e-4)
-    return GoldBlueStats(match=match, centre=centre, spread=spread,
-                         blue_floor=_blue_floor(spread))
+    evidence = _oxygen_evidence(ha, oiii, sel, sigma)
+    return GoldBlueStats(pedestal=pedestal, centre=centre, spread=spread, evidence=evidence,
+                         blue_floor=_blue_floor(evidence))
 
 
 def _render_gold_blue(img: AstroImage, params: NarrowbandParams, has_stars: bool,
@@ -505,7 +631,7 @@ def _render_gold_blue(img: AstroImage, params: NarrowbandParams, has_stars: bool
     st = stats if stats is not None else gold_blue_stats(img, params.blackpoint)
     data = np.clip(np.asarray(img.data, dtype=np.float32), 0.0, 1.0)
     ha, oiii = extract_ha_oiii(img)
-    t = _oxygen_share(ha, _apply_match(oiii, st.match))
+    t = _gb_share(ha, oiii, st.pedestal)
     oxygen = float(params.oxygen_strength)
     # Less oxygen moves the balance point toward oxygen, so fewer pixels turn
     # blue; at 1.0 the picture's own median is the middle.
@@ -566,7 +692,8 @@ def render(img: AstroImage, params: NarrowbandParams, *,
     out = AstroImage(brightness(out.data, params.brightness),
                      is_linear=False, metadata=dict(img.metadata))
     if params.protect_background > 0:
-        m = nebula_mask(original, params.protect_background)[..., None]
+        levels = _GB_MASK_CAPS if params.palette == GOLD_BLUE else None
+        m = nebula_mask(original, params.protect_background, levels)[..., None]
         blended = m * out.data + (1.0 - m) * original
         out = AstroImage(np.clip(blended, 0.0, 1.0).astype(np.float32),
                          is_linear=False, metadata=dict(img.metadata))
