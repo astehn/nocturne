@@ -106,3 +106,10 @@ def test_clicking_a_level_then_apply_commits_that_level(qtbot, tmp_path, stage_i
         return opt.get("level") if isinstance(opt, dict) else opt
     qtbot.waitUntil(lambda: committed() == "strong", timeout=10000)
     assert win._has_pending() is False
+    # The click itself must tell the panel: Apply turns green at once, not on
+    # the next unrelated refresh. (Apply reads the level directly, so only this
+    # catches buttons that stop announcing a change.)
+    apply_btn = win._panel.apply_btn
+    assert apply_btn.state() != "pending"
+    next(b for b in box.buttons() if b.text() == "Light").click()
+    assert apply_btn.state() == "pending"
