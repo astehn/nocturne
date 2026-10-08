@@ -175,8 +175,7 @@ QPushButton#level[seg="first"] {{ border-top-left-radius: 8px; border-bottom-lef
     border-left-width: 1px; }}
 QPushButton#level[seg="last"] {{ border-top-right-radius: 8px; border-bottom-right-radius: 8px; }}
 QPushButton#level[seg="only"] {{ border-radius: 8px; border-left-width: 1px; }}
-QPushButton#level:checked {{ background: #565b64; color: #ffffff; font-weight: 600;
-    border-color: #6a707a; }}
+QPushButton#level:checked {{ background: #565b64; color: #ffffff; font-weight: 600; }}
 QPushButton#level:checked:disabled {{ background: #34373c; color: {TEXT_DIM}; }}
 /* A one-glyph button in a narrow fixed width (Share's ↺). */
 QPushButton#glyph {{ padding: 8px 0; }}

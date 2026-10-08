@@ -470,8 +470,8 @@ def build_panel(
 
         box.currentTextChanged.connect(_update_enabled)
         if on_option_change is not None:
-            # The pending label reads the dropdown, so it has to hear the
-            # dropdown. Without this it only caught up on the next _refresh,
+            # The pending label reads the level buttons, so it has to hear
+            # them. Without this it only caught up on the next _refresh,
             # which for a compute stage means it lagged until the user did
             # something else entirely.
             box.currentTextChanged.connect(lambda _t: on_option_change())
@@ -544,7 +544,7 @@ def build_panel(
         controls.addWidget(QLabel("Strength"))
         controls.addWidget(box)
         if show_model is not None:
-            # A control, directly under the dropdown it checks the result of
+            # A control, directly under the level buttons it checks the result of
             # (it sat below Apply while Apply was in the panel).
             controls.addWidget(show_model)
             w.show_model_check = show_model
@@ -566,7 +566,7 @@ def build_panel(
         notes.addWidget(note)
         _update_enabled()
         w.option_box = box
-        # What the dropdown read on arrival. "Pending" means "moved since the
+        # What the level buttons read on arrival. "Pending" means "moved since the
         # last commit or since I got here", and only the panel can answer that:
         # the committed history stores whatever the step recorded — a dict for
         # Noise Reduction, nothing at all for Background "off" — and a rebuilt

@@ -85,3 +85,24 @@ def test_the_buttons_dim_while_the_step_works_and_keep_the_choice(qtbot, tmp_pat
         win._set_busy(False)
     assert all(b.isEnabled() for b in box.buttons())
     assert box.currentText() == before
+
+
+@pytest.mark.parametrize("stage_id", ["deconvolution", "noise_sharpen"])
+def test_clicking_a_level_then_apply_commits_that_level(qtbot, tmp_path, stage_id):
+    """End to end through a real click: the panel turns pending, and Apply
+    commits the clicked level. (Background needs GraXpert, so it is covered
+    by the commit-model tests instead.)"""
+    from tests.ui.test_step_commit_model import _win
+    win = _win(qtbot, tmp_path)
+    win._go_to_id(stage_id)
+    box = win._panel.option_box
+    target = next(b for b in box.buttons() if not b.isChecked() and b.text() == "Strong")
+    target.click()
+    assert box.currentText() == "strong" and win._has_pending() is True
+    win._panel.apply_btn.click()
+
+    def committed():
+        opt = win._committed_option(stage_id)
+        return opt.get("level") if isinstance(opt, dict) else opt
+    qtbot.waitUntil(lambda: committed() == "strong", timeout=10000)
+    assert win._has_pending() is False
