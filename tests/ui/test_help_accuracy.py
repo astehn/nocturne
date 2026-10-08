@@ -512,7 +512,8 @@ def test_narrowband_help_names_every_control_the_dialog_shows():
     Reset button — were absent from the topic entirely, and the two that were
     named were named without a value or a default. Pin each row label to the
     widget that draws it."""
-    from nocturne.core.narrowband import PALETTES, _combine
+    from nocturne.core.image import AstroImage
+    from nocturne.core.narrowband import PALETTES, NarrowbandParams, _combine, render
     from nocturne.recipe import _NAME_TO_STAGE
     from nocturne.ui.narrowband_dialog import PALETTES as UI_PALETTES
     b = _body("narrowband")
@@ -522,9 +523,10 @@ def test_narrowband_help_names_every_control_the_dialog_shows():
     assert list(UI_PALETTES) == list(PALETTES), "the dialog and the engine disagree"
     ha = np.linspace(0.1, 0.9, 64).reshape(8, 8).astype(np.float32)
     oiii = np.linspace(0.9, 0.1, 64).reshape(8, 8).astype(np.float32)
+    img = AstroImage(np.stack([ha, oiii, oiii], axis=2), is_linear=False)
     for palette in PALETTES:
         assert palette in b, f"palette {palette!r} is not described"
-        _combine(ha, oiii, palette, 0.6)          # must be a palette that renders
+        render(img, NarrowbandParams(palette=palette))   # must be a palette that renders
     with pytest.raises(ValueError):
         _combine(ha, oiii, "SHO", 0.6)            # the help says SHO is not available
     assert "no sulfur" in b
@@ -552,25 +554,32 @@ def test_narrowband_help_quotes_the_defaults_the_dialog_opens_with(qtbot):
     from nocturne.core.image import AstroImage
     from nocturne.settings import Settings
     from nocturne.ui.narrowband_dialog import NarrowbandDialog
+    from nocturne.core.narrowband import GOLD_BLUE
     b = _body("narrowband")
     d = NarrowbandDialog(Settings(), AstroImage(np.zeros((8, 8, 3), np.float32),
                                                 is_linear=False))
     qtbot.addWidget(d)
     p = d._params()
 
-    assert p.palette == "HOO" and "Start here" in b
-    assert p.oxygen_strength == 0.85 and d.oxygen_val.text() == "×0.85"
-    assert "Oxygen strength (default ×0.85)" in b
+    assert p.palette == GOLD_BLUE and f"<b>{GOLD_BLUE}</b> — the dialog opens on this one" in b
+    assert p.oxygen_strength == 0.60 and d.oxygen_val.text() == "60%"
+    assert p.protect_background == 0.2 and d.protect_val.text() == "20%"
+    assert "Oxygen strength (default 60% in SHO-style, ×0.85 in the others)" in b
+    assert "Protect background (default 20% in SHO-style, 40% in the others)" in b
     assert p.brightness == 1.0 and d.bright_val.text() == "×1.00"
     assert "Brightness (default ×1.00)" in b
     assert p.blend_amount == 0.6 and d.blend_val.text() == "0.60"
     assert "Green blend — HOO only (default 0.60)" in b
-    assert p.protect_background == 0.4 and d.protect_val.text() == "40%"
-    assert "Protect background (default 40%)" in b
     assert p.saturation == 0.85 and d.sat_val.text() == "0.85"
     assert "Saturation (default 0.85)" in b
     assert d.lightness_check.isChecked() is False
     assert "Preserve lightness — off by default" in b
+
+    # the others, reached by switching with nothing touched
+    d.palette_box.setCurrentText("HOO")
+    p = d._params()
+    assert p.oxygen_strength == 0.85 and d.oxygen_val.text() == "×0.85"
+    assert p.protect_background == 0.4 and d.protect_val.text() == "40%"
 
     d.oxygen_slider.setValue(d.oxygen_slider.maximum())
     assert d.oxygen_val.text() == "×2.00", "the oxygen strength range moved"
@@ -581,11 +590,13 @@ def test_narrowband_help_warns_that_green_blend_is_inert_outside_hoo():
     """The control the user is most likely to read as broken: it is live in HOO
     and does nothing at all in the other two palettes, because only HOO builds a
     synthetic green."""
-    from nocturne.core.narrowband import PALETTES, PALETTES_USING_BLEND, _combine
+    from nocturne.core.image import AstroImage
+    from nocturne.core.narrowband import (GOLD_BLUE, PALETTES, PALETTES_USING_BLEND,
+                                          NarrowbandParams, _combine, render)
     b = _body("narrowband")
     # The slider is greyed out there now, so the help must say THAT rather than
     # "the slider moves and the picture does not", which stopped being true.
-    assert "greyed out in Pseudo-SHO and Pseudo-bicolor" in b
+    assert "greyed out in Pseudo-SHO, Pseudo-bicolor and SHO-style (gold and blue)" in b
     for palette in PALETTES:
         if palette not in PALETTES_USING_BLEND:
             assert palette in b, f"the help must name {palette} as one where it is inert"
@@ -601,6 +612,52 @@ def test_narrowband_help_warns_that_green_blend_is_inert_outside_hoo():
     assert differs("HOO"), "Green blend no longer does anything in HOO either"
     assert not differs("Pseudo-SHO"), "Pseudo-SHO now uses the blend; update the help"
     assert not differs("Pseudo-bicolor"), "Pseudo-bicolor now uses the blend; update the help"
+    img = AstroImage(np.stack([ha, oiii, oiii], axis=2), is_linear=False)
+    lo, hi = (render(img, NarrowbandParams(palette=GOLD_BLUE, blend_amount=a)).data
+              for a in (0.0, 1.0))
+    assert np.array_equal(lo, hi), "SHO-style now uses the blend; update the help"
+
+
+def test_narrowband_help_is_right_about_gold_and_blue_and_lightness(qtbot):
+    """Preserve lightness is greyed for SHO-style because that palette always
+    keeps the picture's lightness — measured, not trusted — and the help says
+    what a palette switch does to the sliders, which the dialog decides."""
+    from nocturne.core.image import AstroImage
+    from nocturne.core.narrowband import GOLD_BLUE, NarrowbandParams, render
+    from nocturne.settings import Settings
+    from nocturne.ui.narrowband_dialog import NarrowbandDialog
+    b = _body("narrowband")
+    assert "Greyed out in <b>SHO-style (gold and blue)</b>" in b
+    rng = np.random.default_rng(3)
+    img = AstroImage(rng.random((24, 24, 3)).astype(np.float32), is_linear=False)
+    off, on = (render(img, NarrowbandParams(palette=GOLD_BLUE, lightness_preserve=v)).data
+               for v in (False, True))
+    assert np.array_equal(off, on), "SHO-style now honours Preserve lightness; update the help"
+    assert "no sulfur" in b and "SHO-style" in b
+
+    # Saturation: in SHO-style 0.85 is the designed colour and the slider
+    # scales it in proportion — half the setting, half the colour; zero, grey.
+    assert "the default 0.85 <i>is</i> the palette as designed" in b
+    from nocturne.core.narrowband import _srgb_to_oklab
+    ha = np.full((60, 120), 0.05, np.float32); oiii = np.full((60, 120), 0.04, np.float32)
+    ha[10:50, 5:55], oiii[10:50, 5:55] = 0.75, 0.10
+    ha[10:50, 65:115], oiii[10:50, 65:115] = 0.10, 0.75
+    framed = AstroImage(np.stack([ha, oiii, oiii], axis=2), is_linear=False)
+
+    def chroma(sat):
+        out = render(framed, NarrowbandParams(palette=GOLD_BLUE, saturation=sat,
+                                              protect_background=0.0), has_stars=False)
+        lab = _srgb_to_oklab(out.data[15:45])
+        return float(np.hypot(lab[..., 1], lab[..., 2]).mean())
+    full, half, none = chroma(0.85), chroma(0.425), chroma(0.0)
+    assert none < 1e-3 and abs(half / full - 0.5) < 0.05, (full, half, none)
+
+    assert "leaves one you have moved where you put it" in b
+    d = NarrowbandDialog(Settings(), img)
+    qtbot.addWidget(d)
+    d.oxygen_slider.setValue(130)
+    d.palette_box.setCurrentText("HOO")
+    assert d.oxygen_slider.value() == 130 and d.protect_slider.value() == 40
 
 
 def test_narrowband_help_describes_the_palettes_and_the_green_cap_correctly():

@@ -99,3 +99,32 @@ def test_a_current_recipe_still_runs():
     # "substitute", because it falls back to the built-in star separator. What
     # matters here is that a current recipe is not REFUSED.
     assert plan.outcome != "fail", plan.reason
+
+
+def test_a_partial_dict_takes_its_own_palettes_defaults():
+    """A partial option naming gold and blue must start at THAT palette's
+    Oxygen 0.60 / Protect 0.20, not HOO's 0.85 / 0.40 — through the step and
+    through recipe deserialisation alike."""
+    from nocturne.core.narrowband import GOLD_BLUE, palette_defaults
+    for parse in (parse_narrowband_option,
+                  lambda d: deserialize_option("narrowband", d)):
+        p = parse({"palette": GOLD_BLUE, "saturation": 0.5})
+        import dataclasses
+        assert p == dataclasses.replace(palette_defaults(GOLD_BLUE), saturation=0.5)
+        assert p.oxygen_strength == 0.60 and p.protect_background == 0.20
+        # a field it was given still wins over the palette default
+        assert parse({"palette": GOLD_BLUE, "oxygen_strength": 1.1}).oxygen_strength == 1.1
+
+
+def test_a_partial_dict_for_an_old_palette_reads_exactly_as_before():
+    """Capture what the old reading gave — NarrowbandParams(**given) — and
+    require the same object, field for field, for every old palette."""
+    import dataclasses
+    fields = {f.name for f in dataclasses.fields(NarrowbandParams)}
+    cases = [{"palette": "HOO"}, {"palette": "Pseudo-SHO", "saturation": 0.5},
+             {"palette": "Pseudo-bicolor", "protect_background": 0.1, "junk": 3},
+             {"oxygen_strength": 1.2}, {}]
+    for given in cases:
+        old = NarrowbandParams(**{k: v for k, v in given.items() if k in fields})
+        assert parse_narrowband_option(given) == old, given
+        assert deserialize_option("narrowband", given) == old, given

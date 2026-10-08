@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..core.image import AstroImage
-from ..core.narrowband import NarrowbandParams, render, screen
+from ..core.narrowband import NarrowbandParams, palette_defaults, render, screen
 from ..history.step import Step
 from ..tools.base import run_cli
 from ..tools.rcastro import RCAstro
@@ -16,7 +16,13 @@ def parse_narrowband_option(option) -> NarrowbandParams:
     if isinstance(option, dict):
         import dataclasses
         fields = {f.name for f in dataclasses.fields(NarrowbandParams)}
-        return NarrowbandParams(**{k: v for k, v in option.items() if k in fields})
+        # Missing fields take the NAMED palette's own starting point: the
+        # gold-and-blue palette starts at Oxygen 0.60 / Protect 0.20, and a
+        # partial dict naming it must not render at HOO's 0.85 / 0.40. For the
+        # old palettes palette_defaults(p) IS NarrowbandParams(palette=p).
+        base = palette_defaults(option.get("palette", NarrowbandParams().palette))
+        given = {k: v for k, v in option.items() if k in fields}
+        return dataclasses.replace(base, **given)
     return NarrowbandParams()
 
 

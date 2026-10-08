@@ -216,12 +216,12 @@ PALETTES_USING_BLEND = frozenset({"HOO"})
 # 0.00/1.00/0.00 in Pseudo-bicolor — and a test re-measures it, because a
 # description that drifts from the picture is worse than no description.
 PALETTE_DESCRIPTIONS = {
-    "HOO": "Hydrogen red, oxygen teal. The most natural-looking of the three, "
+    "HOO": "Hydrogen red, oxygen teal. The most natural-looking of the four, "
            "and the only one where Green blend does anything.",
     "Pseudo-SHO": "Hubble-like: hydrogen gold, oxygen blue. Dualband data holds no "
                   "real SII, so hydrogen stands in for it — hence \u201cpseudo\u201d.",
     "Pseudo-bicolor": "Hydrogen magenta, oxygen green. The boldest and least "
-                      "natural of the three.",
+                      "natural of the four.",
     GOLD_BLUE: "Gold hydrogen, steel-blue oxygen \u2014 the Hubble look, built from "
                "the differences in your own picture.",
 }

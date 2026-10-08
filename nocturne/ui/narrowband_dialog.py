@@ -10,8 +10,8 @@ from PySide6.QtWidgets import (
 
 from ..core.image import AstroImage
 from ..core.narrowband import (
-    PALETTE_DESCRIPTIONS, PALETTES as _CORE_PALETTES, PALETTES_USING_BLEND,
-    NarrowbandParams, render, screen,
+    GOLD_BLUE, PALETTE_DESCRIPTIONS, PALETTES as _CORE_PALETTES, PALETTES_USING_BLEND,
+    NarrowbandParams, gold_blue_stats, palette_defaults, render, screen,
 )
 from ..settings import resolve_binary
 from ..steps.star_split import preferred_splitter, splitter_name
@@ -29,7 +29,19 @@ _SPLIT_MSG = "Separating stars…\n(one-time, then tweak live)"
 
 _TAME_SPAN = 4.0     # slider 100% -> highlight_reduction 5.0
 
-_ENGINE_DEFAULTS = NarrowbandParams()
+# THE REVERT SWITCH: the palette the dialog opens on (and Reset returns to).
+# Set to "Pseudo-SHO" (or "HOO") to go back to the old opening palette; every
+# starting slider position follows from palette_defaults() of whatever is here.
+# Saved projects and recipes are unaffected either way — they store the palette.
+DEFAULT_PALETTE = GOLD_BLUE
+
+_ENGINE_DEFAULTS = palette_defaults(DEFAULT_PALETTE)
+
+# Controls that cannot bite in a palette, and the tooltip that says why. Greyed
+# rather than hidden, and their VALUES are kept for the palette they serve.
+_LIGHTNESS_INERT_TIP = (
+    f"{GOLD_BLUE} always keeps the picture's own lightness, so this has no "
+    f"effect here.")
 
 
 def _slider_positions(p: NarrowbandParams) -> dict:
@@ -91,6 +103,9 @@ class NarrowbandDialog(QDialog):
         self.last_engine = ""
         self._prev_starless = None
         self._prev_stars = None
+        # Gold-and-blue statistics, measured ONCE per split from the preview
+        # copy and handed to both the preview and Apply (spec D6).
+        self._gb_stats = None
         self._last = None                 # last COMPOSED AstroImage (what the preview shows)
         self._started = False
         self._applying = False
@@ -174,6 +189,11 @@ class NarrowbandDialog(QDialog):
             return wrap
 
         controls = QFormLayout()
+        # "SHO-style (gold and blue)" is wider than the field column under the
+        # dark theme (209 px wanted, 186 given) and was cut to "...(gold and bl".
+        # A row whose field cannot fit drops below its label instead; the
+        # sliders all fit, so only that one row ever moves.
+        controls.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         controls.addRow("Palette", self.palette_box)
         controls.addRow(self.palette_desc)      # spans both columns: see below
         controls.addRow("Oxygen strength", _row(self.oxygen_slider, self.oxygen_val))
@@ -185,6 +205,7 @@ class NarrowbandDialog(QDialog):
         controls.addRow(self.lightness_check)
         controls.addRow("Compare", self.mode_box)
         self._controls = controls   # walked by the help-accuracy guard
+        self._shown_palette = self.palette_box.currentText()
         self._update_value_labels()
         self._describe_palette(self.palette_box.currentText())
         self._restrict_blend(self.palette_box.currentText())
@@ -247,6 +268,10 @@ class NarrowbandDialog(QDialog):
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
+        # The theme's font lands at polish, after __init__ sized the row from
+        # the default one: under the dark theme the gold-and-blue description
+        # needed 51 px and got 45, slicing its last line off. Re-measure now.
+        self._fit_description()
         if self._started:
             return
         self._started = True
@@ -295,6 +320,7 @@ class NarrowbandDialog(QDialog):
             self._on_split(self._starless, self._stars, self.last_engine)
         self._prev_starless = _downscale(self._starless)
         self._prev_stars = None if self._stars is None else _downscale(self._stars)
+        self._gb_stats = None
         self._before_q = to_qimage(_downscale(self._base))
         self._do_render()
 
@@ -324,29 +350,70 @@ class NarrowbandDialog(QDialog):
         self._do_render()
 
     def _on_palette_change(self, palette: str) -> None:
+        self._carry_defaults(self._shown_palette, palette)
+        self._shown_palette = palette
         self._describe_palette(palette)
         self._restrict_blend(palette)
+        self._update_value_labels()
         self._schedule_render()
+
+    def _sliders(self) -> dict:
+        return {"oxygen": self.oxygen_slider, "blend": self.blend_slider,
+                "sat": self.sat_slider, "bright": self.bright_slider,
+                "protect": self.protect_slider, "tame": self.tame_slider}
+
+    def _carry_defaults(self, old: str, new: str) -> None:
+        """Palettes start from different places (gold and blue: Oxygen 60%,
+        Protect 20%). A slider still at the OLD palette's default was never
+        touched, so it moves to the new palette's; one the user moved is
+        theirs and stays put. Judged by position, so a slider moved and put
+        back exactly on its default counts as untouched."""
+        was, now = _slider_positions(palette_defaults(old)), _slider_positions(palette_defaults(new))
+        for key, slider in self._sliders().items():
+            if slider.value() == was[key] and was[key] != now[key]:
+                slider.setValue(now[key])
 
     def _describe_palette(self, palette: str) -> None:
         self.palette_desc.setText(PALETTE_DESCRIPTIONS.get(palette, ""))
+        self._fit_description()
+
+    def _fit_description(self) -> None:
+        lbl = self.palette_desc
+        need = lbl.fontMetrics().height() * 3
+        if lbl.width() > 0:
+            need = max(need, lbl.heightForWidth(lbl.width()))
+        lbl.setMinimumHeight(need)
 
     def _restrict_blend(self, palette: str) -> None:
         """Grey Green blend out where it cannot bite.
 
-        Only HOO builds a synthetic green; the other two take green straight
-        from Ha or OIII, so the slider moved and the picture did not change —
+        Only HOO builds a synthetic green; the pseudo palettes take green
+        straight from Ha or OIII and gold and blue never makes one, so the
+        slider moved and the picture did not change —
         which reads as a broken app in the moment, and the help saying so does
         not undo that. Greyed rather than hidden, so the control stays
         discoverable, and its VALUE is kept: it applies again the moment you
         return to HOO.
+
+        Preserve lightness is greyed the same way for gold and blue, which
+        always keeps the picture's own lightness.
         """
         active = palette in PALETTES_USING_BLEND
         self.blend_slider.setEnabled(active)
         self.blend_val.setEnabled(active)
-        self.blend_slider.setToolTip("" if active else (
-            f"{palette} builds its green directly from one channel, so the blend "
-            f"has no effect here. Switch to HOO to use it."))
+        if active:
+            tip = ""
+        elif palette == GOLD_BLUE:
+            tip = (f"{palette} colours each pixel by its share of oxygen and never "
+                   f"builds a green, so the blend has no effect here. Switch to HOO "
+                   f"to use it.")
+        else:
+            tip = (f"{palette} builds its green directly from one channel, so the "
+                   f"blend has no effect here. Switch to HOO to use it.")
+        self.blend_slider.setToolTip(tip)
+        lightness = palette != GOLD_BLUE
+        self.lightness_check.setEnabled(lightness)
+        self.lightness_check.setToolTip("" if lightness else _LIGHTNESS_INERT_TIP)
 
     def _on_mode_changed(self, index: int) -> None:
         self.preview.set_mode(MODE_CHOICES[index][1])
@@ -365,11 +432,16 @@ class NarrowbandDialog(QDialog):
         """Show each slider's mapped value. OIII boost / Brightness read as a
         multiplier (×1.33) to match the numbers a tutorial or PixInsight uses."""
         oxy = max(0.3, self.oxygen_slider.value() / 100.0)
-        # 1.00 is the photometric match — the one value here that means
-        # something beyond taste, and where the colour minimum sits. Naming it
-        # makes it a place you can go back to.
-        self.oxygen_val.setText(f"×{oxy:.2f} · matched" if abs(oxy - 1.0) < 5e-3
-                                else f"×{oxy:.2f}")
+        if self.palette_box.currentText() == GOLD_BLUE:
+            # Here it is an amount of blue, not a gain on OIII: 100% is the
+            # picture's own balance point, and nothing is "matched" at it.
+            self.oxygen_val.setText(f"{round(oxy * 100)}%")
+        else:
+            # 1.00 is the photometric match — the one value here that means
+            # something beyond taste, and where the colour minimum sits. Naming
+            # it makes it a place you can go back to.
+            self.oxygen_val.setText(f"×{oxy:.2f} · matched" if abs(oxy - 1.0) < 5e-3
+                                    else f"×{oxy:.2f}")
         self.bright_val.setText(f"×{max(0.3, self.bright_slider.value() / 50.0):.2f}")
         self.blend_val.setText(f"{self.blend_slider.value() / 100.0:.2f}")
         self.sat_val.setText(f"{self.sat_slider.value() / 100.0:.2f}")
@@ -401,8 +473,10 @@ class NarrowbandDialog(QDialog):
         try:
             # has_stars=False only when a real split happened: without StarX the
             # base frame IS the 'starless' layer and its stars are still in it.
-            nebula = render(self._prev_starless, self._params(),
-                            has_stars=self._prev_stars is None)
+            params = self._params()
+            nebula = render(self._prev_starless, params,
+                            has_stars=self._prev_stars is None,
+                            stats=self._stats_for(params))
         except ValueError as exc:
             self.status.setText(str(exc))
             return
@@ -419,6 +493,17 @@ class NarrowbandDialog(QDialog):
                 is_linear=nebula.is_linear, metadata=dict(nebula.metadata))
         self._after_q = to_qimage(self._last)
         self._push_images()
+
+    def _stats_for(self, params: NarrowbandParams):
+        """The gold-and-blue statistics, measured once per split from the
+        PREVIEW copy — the copy a full-size render measures them from too (core
+        _stats_copy == ui.preview.downscale), so the preview's colours are the
+        ones Apply and a replay commit. None for the other palettes."""
+        if params.palette != GOLD_BLUE:
+            return None
+        if self._gb_stats is None:
+            self._gb_stats = gold_blue_stats(self._prev_starless, params.blackpoint)
+        return self._gb_stats
 
     def _push_images(self) -> None:
         """Hand the compare widget what is on screen. Zoomed in, both panes get
@@ -454,17 +539,19 @@ class NarrowbandDialog(QDialog):
             return
         self._applying = True
         params = self._params()
+        stats = self._stats_for(params) if self._prev_starless is not None else None
         self._gate.close(self._side)
         self.status.setText("Applying at full resolution…")
         self.status_ring.set_indeterminate()
         self.status_ring.show()
-        run_async(self._pool, lambda: self._compose_full(params),
+        run_async(self._pool, lambda: self._compose_full(params, stats),
                   lambda result: self._on_applied(result, params),
                   self._on_apply_error)
 
-    def _compose_full(self, params: NarrowbandParams) -> AstroImage:
+    def _compose_full(self, params: NarrowbandParams, stats=None) -> AstroImage:
         """Full-resolution recolour plus the star recombine. Runs on the pool."""
-        nebula = render(self._starless, params, has_stars=self._stars is None)
+        nebula = render(self._starless, params, has_stars=self._stars is None,
+                        stats=stats)
         if self._stars is None:
             return nebula
         out = screen(nebula.data, np.clip(self._stars.data, 0.0, 1.0))
