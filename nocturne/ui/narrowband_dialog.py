@@ -30,9 +30,12 @@ _SPLIT_MSG = "Separating stars…\n(one-time, then tweak live)"
 _TAME_SPAN = 4.0     # slider 100% -> highlight_reduction 5.0
 
 # THE REVERT SWITCH: the palette the dialog opens on (and Reset returns to).
-# Set to "Pseudo-SHO" (or "HOO") to go back to the old opening palette; every
-# starting slider position follows from palette_defaults() of whatever is here.
-# Saved projects and recipes are unaffected either way — they store the palette.
+# Before gold and blue the dialog opened on "HOO"; set it back to that (or to
+# any palette) to revert. Every starting slider position and double-click
+# default follows from palette_defaults() of whatever is here. The help's
+# "the dialog opens on this one" line must move with it — a help test fails
+# until it does. Saved projects and recipes are unaffected either way: they
+# store the palette.
 DEFAULT_PALETTE = GOLD_BLUE
 
 _ENGINE_DEFAULTS = palette_defaults(DEFAULT_PALETTE)
@@ -352,6 +355,11 @@ class NarrowbandDialog(QDialog):
     def _on_palette_change(self, palette: str) -> None:
         self._carry_defaults(self._shown_palette, palette)
         self._shown_palette = palette
+        # Double-click resets to THIS palette's default: built once, the
+        # sliders sent HOO's Oxygen to 60% and Protect to 20%.
+        now = _slider_positions(palette_defaults(palette))
+        for key, slider in self._sliders().items():
+            slider.set_default(now[key])
         self._describe_palette(palette)
         self._restrict_blend(palette)
         self._update_value_labels()

@@ -767,3 +767,31 @@ def test_a_larger_font_neither_cuts_the_palette_name_nor_the_description(qtbot):
         box, lbl = d.palette_box, d.palette_desc
         assert box.width() >= box.minimumSizeHint().width(), f"{palette}: name cut"
         assert lbl.height() >= lbl.heightForWidth(lbl.width()), f"{palette}: description cut"
+
+
+def _double_click(slider):
+    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+    pos = QPointF(slider.rect().center())
+    QApplication.sendEvent(slider, QMouseEvent(
+        QEvent.Type.MouseButtonDblClick, pos, slider.mapToGlobal(pos),
+        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier))
+
+
+def test_double_click_resets_a_slider_to_the_current_palettes_default(qtbot):
+    """ResetSlider kept the default it was built with, so in HOO a double-click
+    gave Oxygen x0.60 / Protect 20% — gold and blue's numbers, not HOO's."""
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d.show()
+    qtbot.waitExposed(d)
+    for palette, oxygen, protect in (("HOO", 85, 40), (GOLD_BLUE, 60, 20),
+                                     ("Pseudo-SHO", 85, 40)):
+        d.palette_box.setCurrentText(palette)
+        d.oxygen_slider.setValue(120)
+        d.protect_slider.setValue(70)
+        _double_click(d.oxygen_slider)
+        _double_click(d.protect_slider)
+        assert (d.oxygen_slider.value(), d.protect_slider.value()) == (oxygen, protect), palette

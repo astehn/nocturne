@@ -15,6 +15,15 @@ class ResetSlider(QSlider):
         self._default = default
         self.setToolTip("Double-click to reset")
 
+    def set_default(self, default: int) -> None:
+        """Move the double-click target without moving the slider: a dialog
+        whose modes start from different values (Narrowband's palettes) must
+        reset to the CURRENT mode's default, not the one it was built with."""
+        self._default = default
+
+    def default(self) -> int:
+        return self._default
+
     def mouseDoubleClickEvent(self, event) -> None:  # noqa: N802 (Qt override)
         self.setValue(self._default)
         event.accept()
