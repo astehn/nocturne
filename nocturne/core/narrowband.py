@@ -350,25 +350,32 @@ _OK_M1 = np.array([[0.4122214708, 0.5363325363, 0.0514459929],
 _OK_M2 = np.array([[0.2104542553, 0.7936177850, -0.0040720468],
                    [1.9779984951, -2.4285922050, 0.4505937099],
                    [0.0259040371, 0.7827717662, -0.8086757660]])
-_OK_M1_INV = np.linalg.inv(_OK_M1)
-_OK_M2_INV = np.linalg.inv(_OK_M2)
+# float32 throughout the image path: float64 made this palette 2.3 s against
+# Pseudo-SHO's 1.0 s on an 11.5 MP frame. Against the float64 bench renders of
+# his five exports the output moved by at most 7.2e-7 (1/5000 of an 8-bit level).
+_OK_M1_T = np.ascontiguousarray(_OK_M1.T, dtype=np.float32)
+_OK_M2_T = np.ascontiguousarray(_OK_M2.T, dtype=np.float32)
+_OK_M1_INV_T = np.ascontiguousarray(np.linalg.inv(_OK_M1).T, dtype=np.float32)
+_OK_M2_INV_T = np.ascontiguousarray(np.linalg.inv(_OK_M2).T, dtype=np.float32)
 
 
 def _srgb_to_oklab(rgb: np.ndarray) -> np.ndarray:
-    c = np.clip(np.asarray(rgb, dtype=np.float64), 0.0, 1.0)
-    lin = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
-    return np.cbrt(lin @ _OK_M1.T) @ _OK_M2.T
+    c = np.clip(np.asarray(rgb, dtype=np.float32), 0.0, 1.0)
+    lin = np.where(c <= 0.04045, c / np.float32(12.92),
+                   ((c + np.float32(0.055)) / np.float32(1.055)) ** np.float32(2.4))
+    return np.cbrt(lin @ _OK_M1_T) @ _OK_M2_T
 
 
 def _oklab_to_srgb(lab: np.ndarray) -> np.ndarray:
-    lin = ((lab @ _OK_M2_INV.T) ** 3) @ _OK_M1_INV.T
+    lin = ((np.asarray(lab, dtype=np.float32) @ _OK_M2_INV_T) ** 3) @ _OK_M1_INV_T
     lin = np.clip(lin, 0.0, 1.0)
-    return np.where(lin <= 0.0031308, 12.92 * lin, 1.055 * lin ** (1 / 2.4) - 0.055)
+    return np.where(lin <= 0.0031308, np.float32(12.92) * lin,
+                    np.float32(1.055) * lin ** np.float32(1 / 2.4) - np.float32(0.055))
 
 
 def _ab_direction(rgb) -> np.ndarray:
-    ab = _srgb_to_oklab(np.array(rgb, dtype=np.float64))[1:]
-    return ab / np.hypot(*ab)
+    ab = _srgb_to_oklab(np.array(rgb, dtype=np.float32))[1:].astype(np.float64)
+    return (ab / np.hypot(*ab)).astype(np.float32)
 
 
 _GB_GOLD_RGB = (0.86, 0.58, 0.22)
@@ -394,27 +401,36 @@ _GB_MASK_PROTECT = 0.4
 # rule as nocturne.ui.preview.downscale (PREVIEW_MAX = 640), so the dialog's
 # preview and the full-size Apply measure the identical array (spec D6).
 _GB_STATS_EDGE = 640
+# The centre and spread are read from t BLURRED by this fraction of the stats
+# copy's short edge (as nebula_mask feathers by _MASK_SIGMA_FRAC), so pixel
+# noise and the block-average step stop inflating the spread. Measured on a
+# pure-Ha synthetic at step 1/2/3 and noise 0.003/0.006/0.01: unblurred
+# 0.0126-0.0328 (noise 0.01 at step 1 was 27% blue past the floor), at 0.005
+# 0.0114-0.0125 in all nine. His real spreads barely move (M 16 0.0443->0.0432,
+# NGC 6992 0.183->0.154; the others within 0.005); 0.015 began to eat them.
+_GB_T_SIGMA_FRAC = 0.005
 
 # D4, the floor for hydrogen-only objects. Colour is relative, so a picture
 # with no real oxygen would still split into gold and blue along whatever
 # variation its oxygen share has. The blue's chroma ramps from 0 at a spread
-# (p10-p90 of t on the preview-sized copy) of LO to full at HI. Measured
-# 2026-10-08 on the 640 px stats copy:
+# (p10-p90 of blurred t on the stats copy) of LO to full at HI. Measured
+# 2026-10-08 with the blur above:
 #   pure-hydrogen constructions (G=B = a least-squares line in R, i.e. leak and
 #   background with the real oxygen taken out, of his five exports):
-#     NGC 7000 0.0044, IC 1396A 0.0212, IC 1805 0.0240, NGC 6992 0.0249,
-#     M 16 0.0397;  synthetic Ha + 12.7% leak, 1920x1080 noise 0.003: 0.0134,
-#     3840x2160: 0.0120, 640x480 noise-free: 0.0255
-#   his five real exports: M 16 0.044, NGC 7000 0.053, IC 1805 0.076,
-#     IC 1396A 0.127, NGC 6992 0.183
+#     NGC 7000 0.0041, NGC 6992 0.0162, IC 1396A 0.0188, IC 1805 0.0206,
+#     M 16 0.0385;  synthetic Ha + 12.7% leak, any size/noise above: <= 0.0132,
+#     640x480 near noise-free: 0.0253
+#   his five real exports: M 16 0.0432, NGC 7000 0.0518, IC 1805 0.0709,
+#     IC 1396A 0.1268, NGC 6992 0.1538
 # LO sits above every pure-hydrogen construction but M 16's own (whose fitted
-# line still carries M 16's oxygen); HI is M 16, the least-spread real picture
-# whose OIII core must stay blue. Without the floor the 1920x1080 synthetic
-# came out 10.0% blue, with it 0.0%. The spread is read where block-averaging
-# has already removed the pixel noise: a noisy 640 px synthetic (noise 0.01)
-# reads 0.059 and keeps 5% blue — real frames are never that small.
+# line still carries M 16's oxygen, so it gets ~0.75); HI is just under M 16,
+# the least-spread real picture whose OIII core must stay blue. Synthetic
+# 1920x1080 pure Ha: 10.0% blue without the floor, 0.0% with it.
+# BLIND SPOT, for the owner: p10-p90 cannot see an oxygen region smaller than
+# ~10% of the nebula mask. A small OIII knot in a hydrogen field leaves the
+# spread at the hydrogen value, so the floor dims that knot's blue.
 GB_FLOOR_SPREAD_LO = 0.028
-GB_FLOOR_SPREAD_HI = 0.044
+GB_FLOOR_SPREAD_HI = 0.042
 # The gold's chroma relative to the blue's. At x1.00 (with the 20% protect
 # default below) warm saturation ran IC 1396A 0.58, IC 1805 0.60, M 16 0.54,
 # NGC 6992 0.74, NGC 7000 0.50 against his examples' 0.25-0.55; at x0.85
@@ -473,6 +489,8 @@ def gold_blue_stats(img: AstroImage, blackpoint: float = 1.0) -> GoldBlueStats:
     oiii = ((small[..., 1] + small[..., 2]) / 2.0).astype(np.float32)
     match = _match_levels(oiii, ha, blackpoint)
     t = _oxygen_share(ha, _apply_match(oiii, match))
+    from scipy.ndimage import gaussian_filter
+    t = gaussian_filter(t, sigma=max(1e-3, _GB_T_SIGMA_FRAC * min(t.shape)))
     sel = nebula_mask(small, _GB_MASK_PROTECT) > 0.5
     vals = t[sel] if sel.any() else t.ravel()
     centre = float(np.median(vals))
@@ -504,8 +522,10 @@ def _render_gold_blue(img: AstroImage, params: NarrowbandParams, has_stars: bool
     amt = amt * np.clip(L / _GB_DARK_L, 0.0, 1.0)
     if has_stars:
         # Stars are still in this layer: leave the brightest white rather than
-        # tint them by whatever share their colour happens to give.
-        amt = amt * np.clip((1.0 - L) / 0.15, 0.0, 1.0)
+        # tint them by whatever share their colour happens to give. The 0.15
+        # width in L is a JUDGEMENT, not a measurement — no star-bearing frame
+        # was benched (the bench is starless; stars are screened back).
+        amt = amt * np.clip((1.0 - L) / np.float32(0.15), 0.0, 1.0)
     direction = np.where(blue[..., None], _GB_STEEL, _GB_GOLD)
     lab[..., 1:] = direction * amt[..., None]
     rgb = _oklab_to_srgb(lab).astype(np.float32)

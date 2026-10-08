@@ -310,3 +310,84 @@ def test_mono_is_rejected():
         render(mono, palette_defaults(GOLD_BLUE))
     with pytest.raises(ValueError):
         gold_blue_stats(mono)
+
+
+# --- review round 1: noise-proof floor, and the tuned shape pinned ----------
+
+@pytest.mark.parametrize("shape,step", [((540, 960), 1), ((720, 1280), 2), ((1080, 1920), 3)])
+@pytest.mark.parametrize("noise", [0.003, 0.006, 0.01])
+def test_pure_hydrogen_stays_gold_whatever_the_noise_and_size(shape, step, noise):
+    data = _pure_ha(*shape, noise=noise)
+    assert max(shape) // nb._GB_STATS_EDGE == step                    # the step we mean to test
+    assert gold_blue_stats(AstroImage(data, is_linear=False)).blue_floor == 0.0
+    assert _blue_share(_engine(data), data) < 0.02
+
+
+def test_protect_default_is_the_palettes_own_and_the_old_ones_keep_theirs():
+    assert palette_defaults(GOLD_BLUE).protect_background == 0.20
+    for pal in OLD_PALETTES:
+        assert palette_defaults(pal).protect_background == 0.40
+
+
+def _blue_side(out):
+    """Pixels on the oxygen side by DIRECTION (OKLab b < 0), whatever their chroma."""
+    return int((nb._srgb_to_oklab(out)[..., 2] < -1e-3).sum())
+
+
+def test_less_oxygen_moves_the_balance_point_toward_oxygen():
+    data = _with_oxygen_core(_pure_ha(360, 640), amp=0.3)[0]
+    sides = [_blue_side(_engine(data, oxygen_strength=o)) for o in (0.3, 0.6, 1.0)]
+    assert sides[0] < sides[1] < sides[2]
+    assert sides[0] < 0.8 * sides[2]
+
+
+def test_star_taper_drains_the_brightest_only_in_a_layer_that_still_has_stars():
+    data, core = _with_oxygen_core(_pure_ha(360, 640), amp=0.3)
+    data[175:185, 495:505] = (0.92, 1.0, 1.0)                         # a bright, oxygen-side "star"
+    img = AstroImage(data, is_linear=False)
+    p = palette_defaults(GOLD_BLUE)
+    p.protect_background = 0.0
+    bright = nb._srgb_to_oklab(data)[..., 0] > 0.95
+    assert bright.sum() >= 50
+
+    def chroma(has_stars):
+        lab = nb._srgb_to_oklab(render(img, p, has_stars=has_stars).data)
+        return np.hypot(lab[..., 1], lab[..., 2])[bright]
+    # The taper is linear to zero at L = 1 over 0.15 of L, so at L ~0.98 it
+    # keeps ~13% of the colour; without stars nothing holds it back.
+    with_stars, without = chroma(True), chroma(False)
+    assert np.median(without) > 0.01
+    assert (with_stars <= 0.25 * without).all()
+
+
+# Exact-t probe: match=None makes t = O/(Ha+O) scale-invariant, and centre 0.5,
+# spread 0.5 make d = clip(4t-2, -1, 1), so each pixel's chroma is the formula's.
+_PROBE = GoldBlueStats(match=None, centre=0.5, spread=0.5, blue_floor=1.0)
+
+
+def _probe_chroma(pixels, **kw):
+    p = NarrowbandParams(palette=GOLD_BLUE, oxygen_strength=1.0, saturation=0.425,
+                         protect_background=0.0, **kw)
+    data = np.array([pixels], dtype=np.float32)
+    lab = nb._srgb_to_oklab(render(AstroImage(data, is_linear=False), p,
+                                   has_stars=False, stats=_PROBE).data)
+    return np.hypot(lab[0, :, 1], lab[0, :, 2]), nb._srgb_to_oklab(data)[0, :, 0]
+
+
+def test_colour_ramp_shape_is_gamma_0_6():
+    # t = 0.25 -> d = -1 (full), t = 0.4375 -> d = -0.25 (both gold, both bright)
+    c, L = _probe_chroma([(0.9, 0.3, 0.3), (0.9, 0.7, 0.7)])
+    assert (L >= nb._GB_DARK_L).all()
+    assert c[1] / c[0] == pytest.approx(0.25 ** 0.6, rel=0.03)        # gamma 1.0 would give 0.25
+
+
+def test_gold_is_0_85_of_the_blue_at_the_same_distance():
+    c, L = _probe_chroma([(0.9, 0.3, 0.3), (0.3, 0.9, 0.9)])          # d = -1 and d = +1
+    assert (L >= nb._GB_DARK_L).all()
+    assert c[0] / c[1] == pytest.approx(0.85, rel=0.03)
+
+
+def test_dark_parts_get_colour_in_proportion_to_their_lightness():
+    c, L = _probe_chroma([(0.9, 0.3, 0.3), (0.27, 0.09, 0.09)])        # same t, darker
+    assert L[1] < nb._GB_DARK_L <= L[0]
+    assert c[1] / c[0] == pytest.approx(L[1] / nb._GB_DARK_L, rel=0.03)
