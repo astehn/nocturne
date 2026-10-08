@@ -764,3 +764,34 @@ def test_a_step_click_reads_the_pixels_once(qtbot, tmp_path, monkeypatch):
     seen = _ui_loads(monkeypatch)
     win._go_to_id("background")
     assert len(seen) == 1, seen
+
+
+def test_an_open_landing_inside_the_pending_question_stops_the_quit(qtbot, tmp_path, monkeypatch, saves):
+    """The "apply your pending change?" question is a nested loop too; an open
+    landing inside it must stop the quit just as one inside Save/Discard does
+    (review 2026-10-08, from the reviewer's probe)."""
+    bundle = str(tmp_path / "mine.nocturne")
+    win = _held_open_any(qtbot, tmp_path, monkeypatch, saves, bundle=bundle)
+    win._dirty = False                       # only a pending preview is at stake
+    before = _bytes(bundle)
+    old = win.project
+    monkeypatch.setattr(win, "_has_pending", lambda: win.project is old)
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: (asked.append(1), QMessageBox.StandardButton.Discard)[1])
+
+    def ask(label):
+        saves.release()
+        qtbot.waitUntil(lambda: win.project is not old, timeout=5000)
+        return "discard"
+
+    monkeypatch.setattr(win, "_ask_pending", ask)
+    try:
+        win.close()
+    finally:
+        saves.release()
+        _idle(qtbot, win)
+    assert win.project is not old
+    assert win.isVisible(), "quit went ahead after an open landed inside the pending question"
+    assert "another picture opened" in win._warning.text()
+    assert _bytes(bundle) == before

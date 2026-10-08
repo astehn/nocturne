@@ -1176,6 +1176,10 @@ class MainWindow(QMainWindow):
                     self._show_output(
                         "Applying — try again once it finishes.")
                     return False
+        # Apply above can raise a question of its own (the truncation confirm):
+        # an open landing inside it is caught here, not waved through.
+        if self._replaced_while_asking(gen):
+            return False
         if not self._dirty or self.project is None:
             return True
         resp = QMessageBox.question(
