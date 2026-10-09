@@ -6518,3 +6518,43 @@ def test_undo_lines_are_styled_apart_from_steps(qtbot, tmp_path):
     assert "font-style:italic" in KIND_STYLE["reversal"]
     assert KIND_STYLE["reversal"] != KIND_STYLE["step"]
     assert "↶ Undo:" in win.activity.view.toPlainText() and "italic" in html
+
+
+def test_undo_after_auto_enhance_names_its_last_stage_not_a_later_line(qtbot, tmp_path):
+    """Review I1: Auto Enhance logs no step line per stage, so an Export logged
+    next was taken as the last stage's line and Undo said "Undo: Exported"."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    _crop(win)
+    win._auto_enhance()
+    last = win.project.entries()[-1][0]
+    win.log_panel.append_entry("Exported x.tiff")
+    win._undo()
+    line = _step_lines(win)[-1]
+    assert line.startswith(f"↶ Undo: {last}") and line.endswith("— Auto Enhance"), line
+
+
+def test_a_reset_line_is_not_taken_as_the_older_states_step(qtbot, tmp_path):
+    """Review I2: Reset jumps back to an older state and logs there; that state's
+    step must not be named "Reset ..." when it is undone."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    _crop(win)
+    win._auto_enhance()
+    win._confirm_reset = lambda *a, **k: True
+    win._go_to_id("levels")
+    win._reset_step()
+    before = win.project.entries()[-1][0]
+    win._undo()
+    line = _step_lines(win)[-1]
+    assert line.startswith(f"↶ Undo: {before}") and "Reset" not in line, line
+
+
+def test_an_unremembered_numeric_option_is_kept_in_the_fallback(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)
+    win._step_lines.clear()            # as for a state from a reopened project
+    win._undo()
+    assert _step_lines(win)[-1] == "↶ Undo: Stretch (0.6)"

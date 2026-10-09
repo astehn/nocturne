@@ -485,6 +485,16 @@ def _remove_quietly(path: str) -> None:
         pass
 
 
+def _plain_step_line(name: str, option) -> str:
+    """A step's line rebuilt from its history record, where the line it logged
+    is not known: text and numbers as they are, anything structured left out."""
+    if isinstance(option, bool) or not isinstance(option, (str, int, float)):
+        option = ""
+    elif isinstance(option, float):
+        option = f"{option:g}"
+    return format_log_entry(name, option, None)
+
+
 class MainWindow(QMainWindow):
     _JOB_LOG_EVERY = 10      # percent between log lines; the panel shows every tick
     _recover_prep = _slot_property("_recover_prep")
@@ -2101,6 +2111,10 @@ class MainWindow(QMainWindow):
         def on_result(results) -> None:
             for name, option, img in results:
                 self.project.record_precomputed(name, option, img)
+                # Its stages log no step line of their own, so the next line
+                # (an Export, a Reset) would otherwise be taken as theirs.
+                token = self.project.state_token(self.project.position)
+                self._step_lines[token] = _plain_step_line(name, option) + " \u2014 Auto Enhance"
             if results:
                 self._mark_dirty()
             self._rebuild_panel()
@@ -6622,7 +6636,10 @@ class MainWindow(QMainWindow):
         if p is None or p.position == 0:
             return
         token = p.state_token(p.position)
-        if token[2] > self._step_lines_from:
+        # Only the state written last: a Reset jumps back to an older state
+        # and logs there, and that line is not the line of the step that
+        # made the older state.
+        if token[2] > self._step_lines_from and token[2] == p.writes_so_far:
             self._step_lines.setdefault(token, text)
 
     def _step_line(self, index: int) -> str:
@@ -6632,7 +6649,7 @@ class MainWindow(QMainWindow):
         if line is not None:
             return line
         name, option = self.project.entries_through(index)[-1]
-        return format_log_entry(name, option if isinstance(option, str) else "", None)
+        return _plain_step_line(name, option)
 
     def _undo(self) -> None:
         # Never under a running step: undoing a Crop while Colour calibrated left
