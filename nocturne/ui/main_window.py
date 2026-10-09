@@ -485,6 +485,16 @@ def _remove_quietly(path: str) -> None:
         pass
 
 
+def _plain_step_line(name: str, option) -> str:
+    """A step's line rebuilt from its history record, where the line it logged
+    is not known: text and numbers as they are, anything structured left out."""
+    if isinstance(option, bool) or not isinstance(option, (str, int, float)):
+        option = ""
+    elif isinstance(option, float):
+        option = f"{option:g}"
+    return format_log_entry(name, option, None)
+
+
 class MainWindow(QMainWindow):
     _JOB_LOG_EVERY = 10      # percent between log lines; the panel shows every tick
     _recover_prep = _slot_property("_recover_prep")
@@ -856,6 +866,9 @@ class MainWindow(QMainWindow):
 
         # The old step-log and output-box APIs, over the one activity stream.
         self.log_panel = ActivityChannel(self.activity, "step")
+        self.log_panel.on_entry = self._remember_step_line
+        self._step_lines: dict[tuple, str] = {}
+        self._step_lines_from = -1
         self.output_panel = ActivityChannel(self.activity, "result")
         self._chrome_visible = False
 
@@ -2098,6 +2111,10 @@ class MainWindow(QMainWindow):
         def on_result(results) -> None:
             for name, option, img in results:
                 self.project.record_precomputed(name, option, img)
+                # Its stages log no step line of their own, so the next line
+                # (an Export, a Reset) would otherwise be taken as theirs.
+                token = self.project.state_token(self.project.position)
+                self._step_lines[token] = _plain_step_line(name, option) + " \u2014 Auto Enhance"
             if results:
                 self._mark_dirty()
             self._rebuild_panel()
@@ -3439,6 +3456,7 @@ class MainWindow(QMainWindow):
         self._clear_cache()   # drop a prior session's stale snapshots before the new project writes its own
         os.makedirs(self._cache_dir, exist_ok=True)
         self.project = Project(base, self._cache_dir, written=staged)
+        self._reset_step_lines()
         self._prune_staged()      # what a superseded open left; ours has just moved
         self._project_path = None   # a new Project is not the bundle we came from:
                                     # leaving the old path here meant the next
@@ -3654,6 +3672,7 @@ class MainWindow(QMainWindow):
         if staging is not None:
             _remove_quietly(staging)    # what is left: states past a jump_back
         self.project = loaded.project
+        self._reset_step_lines()
         self._source_label = loaded.source_label
         # Restored, not recomputed: the current state is mid-edit, so measuring
         # it now would bake this session's own clipping into the baseline and
@@ -6599,6 +6618,39 @@ class MainWindow(QMainWindow):
         else:
             self._refresh()
 
+    def _reset_step_lines(self) -> None:
+        """Only states written after this point get a remembered line: a
+        reopened project's states were written by the open, and an Export or a
+        note logged on one of them is not the line of the step that made it."""
+        self._step_lines = {}
+        p = self.project
+        self._step_lines_from = p.writes_so_far if p is not None else -1
+
+    def _remember_step_line(self, text: str) -> None:
+        """The first step-log line after a state is written is that step's own
+        line (e.g. "De-green Stars (on (StarX)) · Δ1.0%"), kept so Undo and Redo
+        can say what they reversed instead of a bare "Undo" (Andreas,
+        2026-10-08). Keyed by the state's token, so a re-apply at the same
+        position gets its own line."""
+        p = self.project
+        if p is None or p.position == 0:
+            return
+        token = p.state_token(p.position)
+        # Only the state written last: a Reset jumps back to an older state
+        # and logs there, and that line is not the line of the step that
+        # made the older state.
+        if token[2] > self._step_lines_from and token[2] == p.writes_so_far:
+            self._step_lines.setdefault(token, text)
+
+    def _step_line(self, index: int) -> str:
+        """What state `index`'s step logged; for a state from before this
+        session (a reopened project) its name and plain option."""
+        line = self._step_lines.get(self.project.state_token(index))
+        if line is not None:
+            return line
+        name, option = self.project.entries_through(index)[-1]
+        return _plain_step_line(name, option)
+
     def _undo(self) -> None:
         # Never under a running step: undoing a Crop while Colour calibrated left
         # the history reading ['Color'] with the crop still in the pixels.
@@ -6606,9 +6658,10 @@ class MainWindow(QMainWindow):
             return
         entries = self.project.entries()
         affected = entries[-1][0] if entries else None   # step being reverted
+        line = self._step_line(self.project.position)
         self.project.undo()
         self._mark_dirty()
-        self.log_panel.append_entry("Undo")
+        self.log_panel.append_reversal(f"\u21b6 Undo: {line}")
         self._navigate_to_step(affected)
 
     def _redo(self) -> None:
@@ -6618,7 +6671,7 @@ class MainWindow(QMainWindow):
         self._mark_dirty()
         entries = self.project.entries()
         affected = entries[-1][0] if entries else None   # step just re-applied
-        self.log_panel.append_entry("Redo")
+        self.log_panel.append_reversal(f"\u21b7 Redo: {self._step_line(self.project.position)}")
         self._navigate_to_step(affected)
 
     def _trim(self) -> None:

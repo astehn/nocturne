@@ -98,6 +98,11 @@ class Project:
     def shape_at(self, index: int) -> tuple:
         return self._shapes[index]
 
+    @property
+    def writes_so_far(self) -> int:
+        """The write count state_token's third field is drawn from."""
+        return self._write_seq
+
     def state_token(self, index: int) -> tuple:
         """Which pixels state `index` holds, without reading them: a re-apply
         rewrites the same index, so the index alone cannot tell (a live preview
@@ -169,3 +174,8 @@ class Project:
 
     def entries(self) -> list[tuple[str, str]]:
         return list(self._records[: self._position])
+
+    def entries_through(self, index: int) -> list[tuple[str, str]]:
+        """The steps that made state `index`, which may lie ahead of the
+        current position (the state a Redo is about to land on)."""
+        return list(self._records[:index])

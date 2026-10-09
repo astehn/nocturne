@@ -44,6 +44,11 @@ KIND_STYLE = {
     # Amber, like the status slot's notice: a consequence of the user's own
     # action is not an error, and copying it here in red undid that.
     "notice": f"color:{NOTICE_COLOUR}",
+    # Undo and Redo lines are steps (they stay in the step log), drawn like
+    # information so a reversal stands out from the step it reverses. The
+    # arrow and the word carry the meaning; this is only a second cue, and it
+    # is gone once the log is copied as text.
+    "reversal": f"color:{TEXT_DIM}; font-style:italic",
 }
 # Smaller than the rest of the window by this many points (or pixels, where
 # the stylesheet sizes in px), for the same reason as the colours.
@@ -104,7 +109,7 @@ class _LargeView(QDialog):
 class ActivityPanel(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._entries: list[tuple[str, str, str]] = []     # (kind, stamp, text)
+        self._entries: list[tuple[str, str, str, str]] = []   # (kind, stamp, text, style)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(2)
@@ -143,12 +148,13 @@ class ActivityPanel(QWidget):
         self.view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         lay.addWidget(self.view, 1)
 
-    def add(self, kind: str, text: str) -> None:
+    def add(self, kind: str, text: str, style: str | None = None) -> None:
         if not text:
             return
         stamp = datetime.now().strftime("%H:%M")
-        self._entries.append((kind, stamp, text))
-        self.view.append(_row_html(kind, stamp, text))
+        style = style or kind
+        self._entries.append((kind, stamp, text, style))
+        self.view.append(_row_html(style, stamp, text))
         self._show_newest()
 
     def _show_newest(self) -> None:
@@ -156,7 +162,7 @@ class ActivityPanel(QWidget):
         bar.setValue(bar.maximum())
 
     def entries(self, kind: str | None = None) -> list[str]:
-        return [f"{stamp} {text}" for k, stamp, text in self._entries
+        return [f"{stamp} {text}" for k, stamp, text, _ in self._entries
                 if kind is None or k == kind]
 
     def text(self) -> str:
@@ -168,8 +174,8 @@ class ActivityPanel(QWidget):
         else:
             self._entries = [e for e in self._entries if e[0] != kind]
         self.view.clear()
-        for k, stamp, text in self._entries:
-            self.view.append(_row_html(k, stamp, text))
+        for _, stamp, text, style in self._entries:
+            self.view.append(_row_html(style, stamp, text))
         self._show_newest()
 
     def copy_all(self) -> None:
@@ -188,10 +194,20 @@ class ActivityChannel:
     def __init__(self, panel: ActivityPanel, kind: str) -> None:
         self._panel = panel
         self._kind = kind
+        # Told about every entry, so the window can remember which line a step
+        # wrote and repeat it when that step is undone or redone.
+        self.on_entry = None
 
     # step-log API
     def append_entry(self, body: str) -> None:
         self._panel.add(self._kind, body)
+        if self.on_entry is not None:
+            self.on_entry(body)
+
+    def append_reversal(self, body: str) -> None:
+        """An Undo or Redo line: in the step log, styled apart, and never taken
+        as the line of the state it lands on."""
+        self._panel.add(self._kind, body, style="reversal")
 
     def append_info(self, body: str) -> None:
         self._panel.add("info", body)
