@@ -288,6 +288,26 @@ def test_the_descriptions_match_what_the_palettes_actually_do():
         assert out[right][..., channel_of[oiii_word]].mean() > 0.4, (
             f"{palette}: description says OIII is {oiii_word} but that channel is dark")
 
+    # Gold and blue is RELATIVE to the picture's own mix, measured over the
+    # nebula against its sky, so it needs a frame that has sky: on the fixture
+    # above (no sky at all) the nebula mask finds only one half, the spread is
+    # nil and the blue floor rightly shuts. Hues, not one bright channel — the
+    # channel check alone passed on that fixture while the "blue" side was warm
+    # grey (R .71 G .65 B .58).
+    from nocturne.core.narrowband import GOLD_BLUE
+    text = PALETTE_DESCRIPTIONS[GOLD_BLUE].lower()
+    assert "gold" in text and "blue" in text
+    ha = np.full((60, 120), 0.05, np.float32); oiii = np.full((60, 120), 0.04, np.float32)
+    ha[10:50, 5:55], oiii[10:50, 5:55] = 0.75, 0.10
+    ha[10:50, 65:115], oiii[10:50, 65:115] = 0.10, 0.75
+    framed = AstroImage(np.stack([ha, oiii, oiii], axis=2), is_linear=False)
+    out = render(framed, NarrowbandParams(palette=GOLD_BLUE, saturation=0.7,
+                                          protect_background=0.0), has_stars=False).data
+    r, g, b = out[15:45, 10:50].reshape(-1, 3).mean(axis=0)
+    assert r > g > b, f"hydrogen is not gold: {r:.3f} {g:.3f} {b:.3f}"
+    r, g, b = out[15:45, 70:110].reshape(-1, 3).mean(axis=0)
+    assert b > g > r, f"oxygen is not blue: {r:.3f} {g:.3f} {b:.3f}"
+
 
 def _chroma(x, mask):
     """Mean distance from grey. Linear, unlike HSV saturation, which reports a

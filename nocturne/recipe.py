@@ -193,10 +193,10 @@ def deserialize_option(stage_id, value):
                                   float(value.get("blue", 0.0))]
         return out
     if stage_id == "narrowband":
-        import dataclasses
-        from .core.narrowband import NarrowbandParams
-        fields = {f.name for f in dataclasses.fields(NarrowbandParams)}
-        return NarrowbandParams(**{k: v for k, v in value.items() if k in fields})
+        # One reading of a stored option, shared with the step: a partial dict
+        # takes its palette's own defaults, not HOO's.
+        from .steps.narrowband_step import parse_narrowband_option
+        return parse_narrowband_option(value)
     return value
 
 

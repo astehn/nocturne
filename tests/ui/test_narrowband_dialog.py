@@ -6,8 +6,10 @@ from nocturne.ui.compare_view import MODE_CHOICES
 pytest.importorskip("PySide6")
 from nocturne.core.image import AstroImage           # noqa: E402
 from nocturne.settings import Settings               # noqa: E402
-from nocturne.core.narrowband import NarrowbandParams  # noqa: E402
-from nocturne.ui.narrowband_dialog import NarrowbandDialog, PALETTES  # noqa: E402
+from nocturne.core.narrowband import (  # noqa: E402
+    GOLD_BLUE, NarrowbandParams, palette_defaults)
+from nocturne.ui.narrowband_dialog import (  # noqa: E402
+    DEFAULT_PALETTE, NarrowbandDialog, PALETTES)
 
 
 def _img():
@@ -23,8 +25,18 @@ def _dialog(qtbot, **kw):
     return d
 
 
-def test_palettes_are_the_three_expected():
-    assert list(PALETTES) == ["HOO", "Pseudo-SHO", "Pseudo-bicolor"]
+def test_palettes_are_the_three_offered():
+    # Pseudo-bicolor is retired (2026-10-09): not a choice any more, but the
+    # engine still renders it so old projects replay.
+    assert list(PALETTES) == ["HOO", "Pseudo-SHO", "SHO-style (gold and blue)"]
+
+
+def test_a_retired_palette_is_not_in_the_dropdown(qtbot):
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    items = [d.palette_box.itemText(i) for i in range(d.palette_box.count())]
+    assert items == list(PALETTES)
+    d.palette_box.setCurrentText("Pseudo-bicolor")
+    assert d.palette_box.currentText() != "Pseudo-bicolor"
 
 
 def test_dialog_builds_with_seeded_layers(qtbot):
@@ -64,6 +76,10 @@ def test_oxygen_slider_changes_the_render(qtbot):
 def test_value_labels_and_default_preserve_off(qtbot):
     d = _dialog(qtbot, starless=_img(), stars=None)
     assert d.lightness_check.isChecked() is False          # brighter combine is the default
+    # Gold and blue: an amount of blue, shown as a percentage.
+    assert d.palette_box.currentText() == GOLD_BLUE
+    assert d.oxygen_val.text() == "60%"
+    d.palette_box.setCurrentText("HOO")
     assert d.oxygen_val.text().startswith("×")               # shown as a multiplier
     d.oxygen_slider.setValue(150)                             # 150/100 = 1.5
     assert d.oxygen_val.text() == "×1.50"
@@ -82,7 +98,8 @@ def test_apply_screens_stars_back_and_calls_on_apply(qtbot):
     #                                                    renders at full resolution
     assert got and isinstance(got[0][0], AstroImage)
     assert got[0][0].data[5, 5].max() > 0.5          # star screened back
-    assert got[0][1].palette == "HOO"                # params passed through
+    assert got[0][1] == d._params()                  # params passed through
+    assert got[0][1].palette == DEFAULT_PALETTE
 
 
 def _with_stars(h=64, w=64):
@@ -203,7 +220,7 @@ def test_the_dialog_defaults_are_the_engine_defaults(qtbot):
     image from the same tool used interactively.
     """
     d = _dialog(qtbot, starless=_img(), stars=None)
-    assert d._params() == NarrowbandParams()
+    assert d._params() == palette_defaults(DEFAULT_PALETTE)
 
 
 def test_preserve_lightness_ships_OFF(qtbot):
@@ -232,7 +249,7 @@ def test_reset_restores_the_engine_defaults(qtbot):
     d.protect_slider.setValue(5)
     d.lightness_check.setChecked(True)
     d.reset()
-    assert d._params() == NarrowbandParams()
+    assert d._params() == palette_defaults(DEFAULT_PALETTE)
 
 
 def test_the_dialog_tells_the_engine_whether_the_layer_is_starless(qtbot, monkeypatch):
@@ -293,9 +310,11 @@ def test_tame_core_is_off_by_default_and_renders_identically(qtbot):
     assert d.tame_slider.value() == 0
     assert d.tame_val.text() == "off"
     assert d._params().highlight_reduction == 1.0
-    a = render(_img(), d._params(), has_stars=False).data
-    b = render(_img(), NarrowbandParams(), has_stars=False).data
-    assert np.array_equal(a, b), "off must be bit-identical to the old default"
+    for palette in PALETTES:
+        d.palette_box.setCurrentText(palette)
+        a = render(_img(), d._params(), has_stars=False).data
+        b = render(_img(), palette_defaults(palette), has_stars=False).data
+        assert np.array_equal(a, b), f"{palette}: off must be bit-identical to the default"
 
 
 def test_tame_core_actually_pulls_the_blown_core_down(qtbot):
@@ -322,7 +341,7 @@ def test_tame_core_resets_and_stays_inside_the_defaults_guard(qtbot):
     d.tame_slider.setValue(70)
     d.reset()
     assert d.tame_slider.value() == 0
-    assert d._params() == NarrowbandParams(), "the new field must round-trip too"
+    assert d._params() == palette_defaults(DEFAULT_PALETTE), "the new field must round-trip too"
 
 
 def _mode(d, label):
@@ -450,6 +469,7 @@ def test_the_matched_point_is_labelled_on_the_slider(qtbot):
     d = NarrowbandDialog(Settings(), AstroImage(np.zeros((8, 8, 3), np.float32),
                                                 is_linear=False))
     qtbot.addWidget(d)
+    d.palette_box.setCurrentText("HOO")       # the match is a gain on OIII: not gold and blue
 
     d.oxygen_slider.setValue(100)             # 100 / 100 = 1.00
     assert d.oxygen_val.text() == "×1.00 · matched"
@@ -463,6 +483,8 @@ def test_the_matched_point_is_labelled_on_the_slider(qtbot):
     # was 42, which read back as 0.84 — a control that could not express its own
     # default, and the help would have quoted a number the dialog never showed.
     d.reset()
+    assert d._params().oxygen_strength == 0.60 and d.oxygen_val.text() == "60%"
+    d.palette_box.setCurrentText("HOO")       # untouched: takes HOO's default
     assert d._params().oxygen_strength == 0.85
     assert d.oxygen_val.text() == "×0.85"
 
@@ -571,3 +593,212 @@ def test_the_ring_covers_the_preview_while_the_stars_are_separated(qtbot, monkey
     assert d.waiting.isVisible()
     assert d.waiting.geometry() == d.preview.rect()
     assert not d.mode_box.isEnabled() and not d.fit_btn.isEnabled()
+
+
+# --- SHO-style (gold and blue): opening palette, carried defaults, D6 -------
+
+def test_the_dialog_opens_on_gold_and_blue_at_its_own_defaults(qtbot):
+    """The revert switch is DEFAULT_PALETTE; pinned here so flipping it back is
+    a decision this test makes you state, not a drift."""
+    assert DEFAULT_PALETTE == GOLD_BLUE
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    assert d.palette_box.currentText() == GOLD_BLUE
+    assert d.oxygen_slider.value() == 60 and d.oxygen_val.text() == "60%"
+    assert d.protect_slider.value() == 20 and d.protect_val.text() == "20%"
+    assert d._params() == palette_defaults(GOLD_BLUE)
+
+
+def _positions(d):
+    return {k: s.value() for k, s in d._sliders().items()}
+
+
+def test_switching_palette_moves_untouched_sliders_to_the_new_defaults(qtbot):
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    before = _positions(d)
+    d.palette_box.setCurrentText("Pseudo-SHO")
+    after = _positions(d)
+    assert after["oxygen"] == 85 and after["protect"] == 40
+    # every slider the palettes agree on is unchanged
+    for key in before.keys() - {"oxygen", "protect"}:
+        assert after[key] == before[key], key
+    assert d._params() == NarrowbandParams(palette="Pseudo-SHO")
+    d.palette_box.setCurrentText(GOLD_BLUE)
+    assert _positions(d) == before
+
+
+def test_switching_palette_keeps_a_slider_the_user_moved(qtbot):
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d.oxygen_slider.setValue(140)
+    d.palette_box.setCurrentText("HOO")
+    assert d.oxygen_slider.value() == 140, "a moved slider is the user's"
+    assert d.protect_slider.value() == 40, "an untouched one takes HOO's default"
+    d.protect_slider.setValue(33)
+    d.palette_box.setCurrentText(GOLD_BLUE)
+    assert d.oxygen_slider.value() == 140 and d.protect_slider.value() == 33
+
+
+def test_gold_and_blue_greys_green_blend_and_preserve_lightness_saying_why(qtbot):
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d._on_starless((d._base, None))
+    d.palette_box.setCurrentText("HOO")
+    d.lightness_check.setChecked(True)
+    assert d.lightness_check.isEnabled() and d.lightness_check.toolTip() == ""
+    d.palette_box.setCurrentText(GOLD_BLUE)
+    assert not d.blend_slider.isEnabled() and not d.lightness_check.isEnabled()
+    assert "never builds a green" in d.blend_slider.toolTip()
+    assert "own lightness" in d.lightness_check.toolTip()
+    assert d.lightness_check.isChecked(), "greyed, not cleared"
+    # the busy gate gives back what it took; the palette rule still holds after
+    d._gate.close(d._side)
+    d._release_controls()
+    assert not d.lightness_check.isEnabled() and not d.blend_slider.isEnabled()
+    for palette in ("HOO", "Pseudo-SHO"):
+        d.palette_box.setCurrentText(palette)
+        assert d.lightness_check.isEnabled(), palette
+
+
+def _gb_layers(h=720, w=1300, seed=7):
+    """Big enough that the preview copy is genuinely smaller (step 2), with a
+    real oxygen region so the blue floor is open, and real stars."""
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    ha = (0.25 + 0.45 * np.exp(-((xx - 500) ** 2 + (yy - 360) ** 2) / (2 * 260.0 ** 2))
+          + 0.01 * rng.standard_normal((h, w))).astype(np.float32)
+    oiii = (0.10 + 0.35 * np.exp(-((xx - 850) ** 2 + (yy - 330) ** 2) / (2 * 160.0 ** 2))
+            + 0.01 * rng.standard_normal((h, w))).astype(np.float32)
+    starless = AstroImage(np.clip(np.stack([ha, oiii, oiii], axis=2), 0, 1), is_linear=False)
+    stars = np.zeros_like(starless.data)
+    for y, x in zip(rng.integers(3, h - 3, 60), rng.integers(3, w - 3, 60)):
+        stars[y - 1:y + 2, x - 1:x + 2] = 0.9
+    stars = AstroImage(stars, is_linear=False)
+    from nocturne.core.narrowband import screen
+    base = AstroImage(screen(starless.data, stars.data), is_linear=False)
+    return base, starless, stars
+
+
+def test_preview_and_apply_use_the_same_stats_and_replay_matches(qtbot, monkeypatch):
+    """Spec D6. The preview renders a small copy and Apply the full frame; the
+    gold-and-blue centre and spread must be the SAME numbers in both, measured
+    once per split — and a recipe replay through the step, which measures
+    them itself, must give Apply's pixels exactly."""
+    import nocturne.ui.narrowband_dialog as nd
+    from nocturne.core.narrowband import gold_blue_stats
+    from nocturne.recipe import deserialize_option, serialize_option
+    from nocturne.steps.narrowband_step import NarrowbandStep
+    base, starless, stars = _gb_layers()
+    seen, measured = [], []
+    real_render, real_stats = nd.render, nd.gold_blue_stats
+    monkeypatch.setattr(nd, "render", lambda img, p, **kw: (
+        seen.append((img.data.shape, kw.get("stats"))), real_render(img, p, **kw))[1])
+    monkeypatch.setattr(nd, "gold_blue_stats", lambda *a, **k: (
+        measured.append(1), real_stats(*a, **k))[1])
+    got = []
+    d = NarrowbandDialog(Settings(), base, starless=starless, stars=stars,
+                         on_apply=lambda r, p: got.append((r, p)))
+    qtbot.addWidget(d)
+    d._on_starless((starless, stars))
+    d.oxygen_slider.setValue(75)
+    d._do_render()
+    d.apply()
+    qtbot.waitUntil(lambda: bool(got), timeout=15000)
+
+    expected = gold_blue_stats(starless)            # what a full-size render measures
+    assert expected.blue_floor > 0.0, "the fixture must open the blue floor"
+    previews = [st for shape, st in seen if shape[0] < starless.data.shape[0]]
+    applies = [st for shape, st in seen if shape[0] == starless.data.shape[0]]
+    assert previews and len(applies) == 1
+    assert all(st == expected for st in previews + applies)
+    assert len(measured) == 1, "measured once per split, not per render"
+
+    result, params = got[0]
+
+    class SameSplit:
+        def remove_stars(self, image, runner=None):
+            return starless, stars
+    option = deserialize_option("narrowband", serialize_option("narrowband", params))
+    replay = NarrowbandStep(SameSplit()).apply(base, option)
+    assert np.array_equal(replay.data, result.data), "replay must give Apply's pixels"
+
+
+def test_a_new_split_measures_new_stats(qtbot):
+    base, starless, stars = _gb_layers(h=300, w=500)
+    _, starless2, stars2 = _gb_layers(h=300, w=500, seed=8)
+    starless2 = AstroImage(np.ascontiguousarray(starless2.data[:, ::-1]), is_linear=False)
+    from nocturne.core.narrowband import gold_blue_stats
+    d = NarrowbandDialog(Settings(), base, starless=starless, stars=stars)
+    qtbot.addWidget(d)
+    d._on_starless((starless, stars))
+    first = d._gb_stats
+    d._on_starless((starless2, stars2))
+    assert d._gb_stats == gold_blue_stats(starless2) != first
+
+
+def test_old_palettes_render_through_the_dialog_as_before(qtbot):
+    """Switching from the new opening palette to an old one must land on that
+    palette's stored defaults exactly, and Apply must equal the step replaying
+    NarrowbandParams(palette=p) — what every old project and recipe holds."""
+    from nocturne.steps.narrowband_step import NarrowbandStep
+    base, starless, stars = _gb_layers(h=200, w=300)
+
+    class SameSplit:
+        def remove_stars(self, image, runner=None):
+            return starless, stars
+    for palette in ("HOO", "Pseudo-SHO"):
+        got = []
+        d = NarrowbandDialog(Settings(), base, starless=starless, stars=stars,
+                             on_apply=lambda r, p: got.append((r, p)))
+        qtbot.addWidget(d)
+        d._on_starless((starless, stars))
+        d.palette_box.setCurrentText(palette)
+        assert d._params() == NarrowbandParams(palette=palette)
+        d.apply()
+        qtbot.waitUntil(lambda: bool(got), timeout=8000)
+        old = NarrowbandStep(SameSplit()).apply(base, NarrowbandParams(palette=palette))
+        assert np.array_equal(got[0][0].data, old.data), palette
+
+
+def test_a_larger_font_neither_cuts_the_palette_name_nor_the_description(qtbot):
+    """Under the dark theme's font the new palette's name was cut to "(gold and
+    bl" and the last line of its description sliced off. A bigger font on
+    the dialog stands in for the theme without touching the app-wide style.
+    A STYLE SHEET, as the theme does it: the font then arrives at polish, after
+    __init__ sized the description row — a setFont() before show() did not
+    reproduce the cut description."""
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d.setStyleSheet("* { font-size: 17px; }")
+    d.show()
+    qtbot.waitExposed(d)
+    for palette in [GOLD_BLUE] + [p for p in PALETTES if p != GOLD_BLUE] + [GOLD_BLUE]:
+        d.palette_box.setCurrentText(palette)
+        qtbot.wait(20)
+        box, lbl = d.palette_box, d.palette_desc
+        assert box.width() >= box.minimumSizeHint().width(), f"{palette}: name cut"
+        assert lbl.height() >= lbl.heightForWidth(lbl.width()), f"{palette}: description cut"
+
+
+def _double_click(slider):
+    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QEvent, QPointF
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+    pos = QPointF(slider.rect().center())
+    QApplication.sendEvent(slider, QMouseEvent(
+        QEvent.Type.MouseButtonDblClick, pos, slider.mapToGlobal(pos),
+        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier))
+
+
+def test_double_click_resets_a_slider_to_the_current_palettes_default(qtbot):
+    """ResetSlider kept the default it was built with, so in HOO a double-click
+    gave Oxygen x0.60 / Protect 20% — gold and blue's numbers, not HOO's."""
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d.show()
+    qtbot.waitExposed(d)
+    for palette, oxygen, protect in (("HOO", 85, 40), (GOLD_BLUE, 60, 20),
+                                     ("Pseudo-SHO", 85, 40)):
+        d.palette_box.setCurrentText(palette)
+        d.oxygen_slider.setValue(120)
+        d.protect_slider.setValue(70)
+        _double_click(d.oxygen_slider)
+        _double_click(d.protect_slider)
+        assert (d.oxygen_slider.value(), d.protect_slider.value()) == (oxygen, protect), palette

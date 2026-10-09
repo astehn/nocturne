@@ -99,3 +99,49 @@ def test_a_current_recipe_still_runs():
     # "substitute", because it falls back to the built-in star separator. What
     # matters here is that a current recipe is not REFUSED.
     assert plan.outcome != "fail", plan.reason
+
+
+def test_a_partial_dict_takes_its_own_palettes_defaults():
+    """A partial option naming gold and blue must start at THAT palette's
+    Oxygen 0.60 / Protect 0.20, not HOO's 0.85 / 0.40 — through the step and
+    through recipe deserialisation alike."""
+    from nocturne.core.narrowband import GOLD_BLUE, palette_defaults
+    for parse in (parse_narrowband_option,
+                  lambda d: deserialize_option("narrowband", d)):
+        p = parse({"palette": GOLD_BLUE, "saturation": 0.5})
+        import dataclasses
+        assert p == dataclasses.replace(palette_defaults(GOLD_BLUE), saturation=0.5)
+        assert p.oxygen_strength == 0.60 and p.protect_background == 0.20
+        # a field it was given still wins over the palette default
+        assert parse({"palette": GOLD_BLUE, "oxygen_strength": 1.1}).oxygen_strength == 1.1
+
+
+def test_a_partial_dict_for_an_old_palette_reads_exactly_as_before():
+    """Capture what the old reading gave — NarrowbandParams(**given) — and
+    require the same object, field for field, for every old palette."""
+    import dataclasses
+    fields = {f.name for f in dataclasses.fields(NarrowbandParams)}
+    cases = [{"palette": "HOO"}, {"palette": "Pseudo-SHO", "saturation": 0.5},
+             {"palette": "Pseudo-bicolor", "protect_background": 0.1, "junk": 3},
+             {"oxygen_strength": 1.2}, {}]
+    for given in cases:
+        old = NarrowbandParams(**{k: v for k, v in given.items() if k in fields})
+        assert parse_narrowband_option(given) == old, given
+        assert deserialize_option("narrowband", given) == old, given
+
+
+def test_a_saved_pseudo_bicolor_step_still_replays():
+    """Pseudo-bicolor left the dialog on 2026-10-09 but not the engine: a project
+    or recipe saved with it must reopen to the same pixels, not error or recolour.
+    The byte-level pins against main live in test_narrowband_gold_blue
+    (OLD_PALETTES); this guards the route a saved step takes."""
+    from nocturne.core.narrowband import OFFERED_PALETTES, RETIRED_PALETTES
+    assert "Pseudo-bicolor" in RETIRED_PALETTES and "Pseudo-bicolor" not in OFFERED_PALETTES
+    rng = np.random.default_rng(5)
+    img = AstroImage(rng.random((24, 24, 3)).astype(np.float32), is_linear=False)
+    stored = serialize_option("narrowband", NarrowbandParams(palette="Pseudo-bicolor",
+                                                             protect_background=0.0))
+    out = NarrowbandStep(None).apply(img, deserialize_option("narrowband", stored)).data
+    assert np.array_equal(out, render(img, NarrowbandParams(palette="Pseudo-bicolor",
+                                                            protect_background=0.0)).data)
+    assert np.allclose(out[..., 0], out[..., 2], atol=1e-6), "no longer magenta/green"
