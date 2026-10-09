@@ -6514,10 +6514,11 @@ def test_undo_lines_are_styled_apart_from_steps(qtbot, tmp_path):
     win._go_to_id("stretch")
     win.apply_current(0.6)
     win._undo()
-    html = win.activity.view.toHtml()
     assert "font-style:italic" in KIND_STYLE["reversal"]
     assert KIND_STYLE["reversal"] != KIND_STYLE["step"]
-    assert "↶ Undo:" in win.activity.view.toPlainText() and "italic" in html
+    rows = [(style, text) for _, _, text, style in win.activity._entries]
+    assert rows[-1][0] == "reversal" and rows[-1][1].startswith("↶ Undo:")
+    assert rows[-2][0] == "step", "the step itself keeps the step style"
 
 
 def test_undo_after_auto_enhance_names_its_last_stage_not_a_later_line(qtbot, tmp_path):
