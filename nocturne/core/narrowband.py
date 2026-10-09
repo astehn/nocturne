@@ -192,6 +192,12 @@ class NarrowbandParams:
     lightness_preserve: bool = False
     protect_background: float = 0.4
     scnr: bool = True
+    # SHO-style (gold and blue) only: how strong each side's colour is, 1.0 =
+    # the look approved on 2026-10-08. Neither moves the boundary between gold
+    # and blue — only Oxygen strength does — so no setting paints a gas where
+    # the picture has none. Ignored by the other palettes.
+    gold_strength: float = 1.0
+    blue_strength: float = 1.0
 
 
 GOLD_BLUE = "SHO-style (gold and blue)"
@@ -527,6 +533,10 @@ _GB_DATA_EPS = 1e-4
 # NGC 7000). With Task 3's mask caps x0.75 gave 0.51 / 0.50 / 0.58 / 0.62 /
 # 0.52 (M 16 over his 0.55), x0.70 gives 0.48 / 0.48 / 0.55 / 0.59 / 0.49.
 _GB_GOLD_SCALE = 0.70
+# The blue's chroma at Blue 100%. It was x Oxygen strength until Gold and Blue
+# got sliders of their own (2026-10-09); 0.60 is that palette's default Oxygen,
+# so 100% is the blue he approved at Oxygen 60% (GOLD_BLUE_OXYGEN_DEFAULT).
+GB_BLUE_REF = 0.60
 
 
 @dataclass(frozen=True)
@@ -692,7 +702,7 @@ def _render_gold_blue(img: AstroImage, params: NarrowbandParams, has_stars: bool
     chroma = _GB_CHROMA * max(0.0, float(params.saturation)) / _GB_SAT_REF
     blue = d > 0
     gold_amt = chroma * w * _GB_GOLD_SCALE
-    blue_amt = chroma * w * oxygen
+    blue_amt = chroma * w * GB_BLUE_REF
     lab = _srgb_to_oklab(data)
     L = lab[..., 0]
     shade = np.clip(L / _GB_DARK_L, 0.0, 1.0)
@@ -715,6 +725,13 @@ def _render_gold_blue(img: AstroImage, params: NarrowbandParams, has_stars: bool
     if f < 1.0:
         even_gold = _GB_GOLD * np.float32(chroma * _GB_GOLD_SCALE)
         vec = f * vec + (1.0 - f) * even_gold
+    # Gold and Blue scale each side AFTER the floor has decided it: scaled
+    # before, a half-open floor mixes blue with even gold and the Gold slider
+    # alone would drag a pixel across. Scaling a vector never flips it, so the
+    # side map is Oxygen strength's alone, and 0 is grey, not the other colour.
+    gold, blue_s = max(0.0, float(params.gold_strength)), max(0.0, float(params.blue_strength))
+    if gold != 1.0 or blue_s != 1.0:
+        vec = vec * np.where(vec[..., 1:2] > 0, np.float32(gold), np.float32(blue_s))
     lab[..., 1:] = vec * shade[..., None]
     rgb = _oklab_to_srgb(lab).astype(np.float32)
     rgb = highlight_reduction(rgb, params.highlight_reduction)

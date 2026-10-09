@@ -145,3 +145,46 @@ def test_a_saved_pseudo_bicolor_step_still_replays():
     assert np.array_equal(out, render(img, NarrowbandParams(palette="Pseudo-bicolor",
                                                             protect_background=0.0)).data)
     assert np.allclose(out[..., 0], out[..., 2], atol=1e-6), "no longer magenta/green"
+
+
+def _gb_img():
+    rng = np.random.default_rng(9)
+    yy, xx = np.mgrid[0:120, 0:200].astype(np.float32)
+    ha = 0.2 + 0.5 * np.exp(-((xx - 70) ** 2 + (yy - 60) ** 2) / 1800.0)
+    oiii = 0.1 + 0.4 * np.exp(-((xx - 140) ** 2 + (yy - 55) ** 2) / 900.0)
+    data = np.stack([ha, oiii, oiii], 2) + 0.01 * rng.standard_normal((120, 200, 3))
+    return AstroImage(np.clip(data, 0, 1).astype(np.float32), is_linear=False)
+
+
+def test_gold_and_blue_survive_the_recipe_round_trip():
+    """Preview == Apply == replay: the two strengths are in the stored option
+    and come back as the same numbers and the same pixels."""
+    from nocturne.core.narrowband import GOLD_BLUE, palette_defaults
+    import dataclasses
+    params = dataclasses.replace(palette_defaults(GOLD_BLUE), gold_strength=1.6,
+                                 blue_strength=0.35)
+    ser = serialize_option("narrowband", params)
+    assert ser["gold_strength"] == 1.6 and ser["blue_strength"] == 0.35
+    import json
+    back = deserialize_option("narrowband", json.loads(json.dumps(ser)))
+    assert back == params
+    live = NarrowbandStep(None).apply(_gb_img(), params).data
+    assert np.array_equal(NarrowbandStep(None).apply(_gb_img(), back).data, live)
+    # and they reach the picture: the default strengths render differently
+    assert not np.array_equal(NarrowbandStep(None).apply(_gb_img(), palette_defaults(GOLD_BLUE)).data,
+                              live)
+
+
+def test_an_option_stored_before_gold_and_blue_replays_at_100_percent():
+    """A SHO-style dict saved before the split has no gold/blue fields: it reads
+    as 1.0 each — and its blue now comes from 0.60, not its stored oxygen
+    (accepted: SHO-style was unreleased)."""
+    from nocturne.core.narrowband import GOLD_BLUE, palette_defaults
+    import dataclasses
+    old = serialize_option("narrowband", palette_defaults(GOLD_BLUE))
+    old.pop("gold_strength"), old.pop("blue_strength")
+    old["oxygen_strength"] = 0.9
+    for parse in (parse_narrowband_option, lambda d: deserialize_option("narrowband", d)):
+        p = parse(dict(old))
+        assert p.gold_strength == 1.0 and p.blue_strength == 1.0
+        assert p == dataclasses.replace(palette_defaults(GOLD_BLUE), oxygen_strength=0.9)

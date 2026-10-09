@@ -63,6 +63,8 @@ def _slider_positions(p: NarrowbandParams) -> dict:
         "oxygen": round(p.oxygen_strength * 100),
         "blend": round(p.blend_amount * 100),
         "sat": round(p.saturation * 100),
+        "gold": round(p.gold_strength * 100),
+        "blue": round(p.blue_strength * 100),
         "bright": round(p.brightness * 50),
         "protect": round(p.protect_background * 100),
         # highlight_reduction is identity at 1.0 and rolls the highlights down
@@ -137,6 +139,8 @@ class NarrowbandDialog(QDialog):
         self.blend_slider = ResetSlider(pos["blend"])
         self.oxygen_slider = ResetSlider(pos["oxygen"], maximum=200)
         self.sat_slider = ResetSlider(pos["sat"])
+        self.gold_slider = ResetSlider(pos["gold"], maximum=200)
+        self.blue_slider = ResetSlider(pos["blue"], maximum=200)
         self.bright_slider = ResetSlider(pos["bright"])
         self.protect_slider = ResetSlider(pos["protect"])
         self.tame_slider = ResetSlider(pos["tame"])
@@ -144,6 +148,8 @@ class NarrowbandDialog(QDialog):
         self.blend_val = QLabel()
         self.protect_val = QLabel()
         self.sat_val = QLabel()
+        self.gold_val = QLabel()
+        self.blue_val = QLabel()
         self.bright_val = QLabel()
         self.tame_val = QLabel()
         self.palette_desc = QLabel()
@@ -174,6 +180,7 @@ class NarrowbandDialog(QDialog):
         self._render_timer.timeout.connect(self._do_render)
         self.palette_box.currentTextChanged.connect(self._on_palette_change)
         for s in (self.blend_slider, self.oxygen_slider, self.sat_slider,
+                  self.gold_slider, self.blue_slider,
                   self.bright_slider, self.protect_slider, self.tame_slider):
             s.valueChanged.connect(lambda _v: self._on_slider_change())
         self.lightness_check.toggled.connect(lambda _v: self._schedule_render())
@@ -203,7 +210,16 @@ class NarrowbandDialog(QDialog):
         controls.addRow("Oxygen strength", _row(self.oxygen_slider, self.oxygen_val))
         controls.addRow("Green blend", _row(self.blend_slider, self.blend_val))
         controls.addRow("Protect background", _row(self.protect_slider, self.protect_val))
-        controls.addRow("Saturation", _row(self.sat_slider, self.sat_val))
+        # Saturation for HOO / Pseudo-SHO; Gold and Blue in its place for
+        # SHO-style. Swapped rather than greyed: the panel has to fit 1280x800,
+        # and two dead rows on two palettes of three is clutter. Hidden rows
+        # keep their values for when you switch back.
+        self._sat_row = _row(self.sat_slider, self.sat_val)
+        self._gold_row = _row(self.gold_slider, self.gold_val)
+        self._blue_row = _row(self.blue_slider, self.blue_val)
+        controls.addRow("Saturation", self._sat_row)
+        controls.addRow("Gold", self._gold_row)
+        controls.addRow("Blue", self._blue_row)
         controls.addRow("Tame core", _row(self.tame_slider, self.tame_val))
         controls.addRow("Brightness", _row(self.bright_slider, self.bright_val))
         controls.addRow(self.lightness_check)
@@ -346,6 +362,8 @@ class NarrowbandDialog(QDialog):
         self.blend_slider.setValue(pos["blend"])
         self.oxygen_slider.setValue(pos["oxygen"])
         self.sat_slider.setValue(pos["sat"])
+        self.gold_slider.setValue(pos["gold"])
+        self.blue_slider.setValue(pos["blue"])
         self.bright_slider.setValue(pos["bright"])
         self.protect_slider.setValue(pos["protect"])
         self.tame_slider.setValue(pos["tame"])
@@ -368,7 +386,8 @@ class NarrowbandDialog(QDialog):
 
     def _sliders(self) -> dict:
         return {"oxygen": self.oxygen_slider, "blend": self.blend_slider,
-                "sat": self.sat_slider, "bright": self.bright_slider,
+                "sat": self.sat_slider, "gold": self.gold_slider,
+                "blue": self.blue_slider, "bright": self.bright_slider,
                 "protect": self.protect_slider, "tame": self.tame_slider}
 
     def _carry_defaults(self, old: str, new: str) -> None:
@@ -405,7 +424,9 @@ class NarrowbandDialog(QDialog):
         return to HOO.
 
         Preserve lightness is greyed the same way for gold and blue, which
-        always keeps the picture's own lightness.
+        always keeps the picture's own lightness. Saturation is different: it
+        is REPLACED there by Gold and Blue, so those rows are swapped, not
+        greyed (see the form layout).
         """
         active = palette in PALETTES_USING_BLEND
         self.blend_slider.setEnabled(active)
@@ -423,6 +444,10 @@ class NarrowbandDialog(QDialog):
         lightness = palette != GOLD_BLUE
         self.lightness_check.setEnabled(lightness)
         self.lightness_check.setToolTip("" if lightness else _LIGHTNESS_INERT_TIP)
+        gb = palette == GOLD_BLUE
+        self._controls.setRowVisible(self._sat_row, not gb)
+        self._controls.setRowVisible(self._gold_row, gb)
+        self._controls.setRowVisible(self._blue_row, gb)
 
     def _on_mode_changed(self, index: int) -> None:
         self.preview.set_mode(MODE_CHOICES[index][1])
@@ -454,6 +479,8 @@ class NarrowbandDialog(QDialog):
         self.bright_val.setText(f"×{max(0.3, self.bright_slider.value() / 50.0):.2f}")
         self.blend_val.setText(f"{self.blend_slider.value() / 100.0:.2f}")
         self.sat_val.setText(f"{self.sat_slider.value() / 100.0:.2f}")
+        self.gold_val.setText(f"{self.gold_slider.value()}%")
+        self.blue_val.setText(f"{self.blue_slider.value()}%")
         self.protect_val.setText(f"{self.protect_slider.value()}%")
         # "off", not "×1.00": the raw number means nothing outside the PixInsight
         # formula it comes from, and zero genuinely does nothing at all.
@@ -461,11 +488,24 @@ class NarrowbandDialog(QDialog):
         self.tame_val.setText("off" if tame == 0 else f"{tame}%")
 
     def _params(self) -> NarrowbandParams:
+        palette = self.palette_box.currentText()
+        # Each palette reads only the rows it shows: SHO-style takes Gold and
+        # Blue at the default saturation, the others Saturation at Gold and
+        # Blue 100%. A hidden slider's value never reaches the picture or the
+        # history line.
+        if palette == GOLD_BLUE:
+            sat = palette_defaults(GOLD_BLUE).saturation
+            gold, blue = self.gold_slider.value() / 100.0, self.blue_slider.value() / 100.0
+        else:
+            sat = self.sat_slider.value() / 100.0
+            gold = blue = 1.0
         return NarrowbandParams(
-            palette=self.palette_box.currentText(),
+            palette=palette,
             blend_amount=self.blend_slider.value() / 100.0,
             oxygen_strength=max(0.3, self.oxygen_slider.value() / 100.0),
-            saturation=self.sat_slider.value() / 100.0,
+            saturation=sat,
+            gold_strength=gold,
+            blue_strength=blue,
             brightness=max(0.3, self.bright_slider.value() / 50.0),
             protect_background=self.protect_slider.value() / 100.0,
             highlight_reduction=1.0 + self.tame_slider.value() / 100.0 * _TAME_SPAN,

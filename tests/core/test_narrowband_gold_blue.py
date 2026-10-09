@@ -177,13 +177,16 @@ def test_floor_ramps_between_its_two_calibration_points():
 
 # --- no green (Review Focus 4) ---------------------------------------------
 
-@pytest.mark.parametrize("oxygen,saturation", [(0.3, 0.85), (0.6, 0.85), (2.0, 1.0), (1.0, 0.5)])
-def test_never_paints_green(oxygen, saturation):
+@pytest.mark.parametrize("oxygen,saturation,gold,blue", [
+    (0.3, 0.85, 1.0, 1.0), (0.6, 0.85, 1.0, 1.0), (2.0, 1.0, 1.0, 1.0), (1.0, 0.5, 1.0, 1.0),
+    (0.6, 0.85, 0.0, 2.0), (0.6, 0.85, 2.0, 0.0), (2.0, 0.85, 2.0, 2.0), (0.3, 0.85, 0.5, 2.0)])
+def test_never_paints_green(oxygen, saturation, gold, blue):
     rng = np.random.default_rng(7)
     base = _with_oxygen_core(_pure_ha(360, 640, noise=0.02), amp=0.3)[0]
     noise = rng.random(base.shape).astype(np.float32) * 0.3
     data = np.clip(base * 0.8 + noise, 0, 1).astype(np.float32)
-    h, s = _hsv(_engine(data, oxygen_strength=oxygen, saturation=saturation))
+    h, s = _hsv(_engine(data, oxygen_strength=oxygen, saturation=saturation,
+                        gold_strength=gold, blue_strength=blue))
     green = (h >= 75) & (h < 165) & (s > 0.10)
     assert green.mean() < 0.001, f"{green.mean():.4%} green"
 
@@ -407,10 +410,15 @@ def test_colour_ramp_shape_is_gamma_0_6():
     assert c[1] / c[0] == pytest.approx(0.25 ** 0.6, rel=0.03)        # gamma 1.0 would give 0.25
 
 
-def test_gold_is_0_70_of_the_blue_at_the_same_distance():
+def test_gold_and_blue_at_100_percent_keep_the_approved_balance():
+    # Gold 0.70 of the chroma, blue 0.60 (GB_BLUE_REF, the Oxygen 60% he
+    # approved) — so at d = -1 and d = +1 gold is 0.70/0.60 of the blue,
+    # whatever Oxygen strength says. Before the Gold/Blue split the blue was
+    # x oxygen and this probe (oxygen 1.0) read 0.70.
     c, L = _probe_chroma([(0.9, 0.3, 0.3), (0.3, 0.9, 0.9)])          # d = -1 and d = +1
     assert (L >= nb._GB_DARK_L).all()
-    assert c[0] / c[1] == pytest.approx(0.70, rel=0.03)
+    assert nb.GB_BLUE_REF == 0.60
+    assert c[0] / c[1] == pytest.approx(0.70 / 0.60, rel=0.03)
 
 
 def test_dark_parts_get_colour_in_proportion_to_their_lightness():
@@ -668,3 +676,139 @@ def test_a_small_bright_hydrogen_nebula_is_not_oxygen_at_its_brightest():
     data = np.clip(np.stack([ha, o, o], 2) + 0.003 * rng.standard_normal((h, w, 3)), 0, 1)
     st = gold_blue_stats(AstroImage(data.astype(np.float32), is_linear=False))
     assert st.evidence < nb.GB_FLOOR_EVIDENCE_LO
+
+
+# --- separate Gold and Blue strength (2026-10-09) ---------------------------
+# Oxygen strength decides WHERE the boundary sits; Gold and Blue only how
+# strong each side is. "No gas appears where it isn't": a pixel's side never
+# depends on Gold or Blue.
+
+# sha256 of _engine(...) at the palette's defaults, captured at ada3254 BEFORE
+# Gold/Blue existed (blue was then x Oxygen 0.60). 100% on both = that look.
+_DEFAULT_LOOK = {
+    "open": "cc3dddaca97c6bb05c973da814f4346e05e9580959b49bd58ed26a38dd2f8d79",
+    "pure": "a82415e490a5d88aa21243f5457b523735f41516563f7c8615d78f38181670fc",
+    "mid": "4cc490372cbb9ab4b497cff897ad142deb527ef8f6267d29ffddca12d5bb0c8f",
+    "default_protect": "4f4358739c3fab1572d278a8708d9286f972d2e0ebce1f552ba56f209232d4ec",
+}
+
+
+def _sha(a):
+    return hashlib.sha256(np.ascontiguousarray(a).tobytes()).hexdigest()
+
+
+def _core_frame():
+    return _with_oxygen_core(_pure_ha(360, 640), amp=0.3)[0]
+
+
+def _floor_part_open(monkeypatch, data, f=0.7):
+    """Put the frame's evidence on the floor's ramp, so the relative colour is
+    blended with the even gold — where a naive per-side scale would let Gold
+    or Blue drag a pixel across. At 0.5 this fixture has no blue left at all,
+    so the side tests use 0.7 (both sides present, the blend still biting)."""
+    ev = gold_blue_stats(AstroImage(data, is_linear=False)).evidence
+    monkeypatch.setattr(nb, "GB_FLOOR_EVIDENCE_LO", ev - 2.0 * f)
+    monkeypatch.setattr(nb, "GB_FLOOR_EVIDENCE_HI", ev + 2.0 * (1.0 - f))
+    assert gold_blue_stats(AstroImage(data, is_linear=False)).blue_floor == pytest.approx(f)
+
+
+def _lab_side(out, eps=1e-3):
+    """(side, coloured): +1 gold / -1 blue by the sign of OKLab b, and where
+    there is any colour at all to have a side."""
+    lab = nb._srgb_to_oklab(out)
+    return np.sign(lab[..., 2]), np.hypot(lab[..., 1], lab[..., 2]) > eps
+
+
+def test_100_percent_gold_and_blue_is_the_approved_default_look(monkeypatch):
+    assert palette_defaults(GOLD_BLUE).gold_strength == 1.0
+    assert palette_defaults(GOLD_BLUE).blue_strength == 1.0
+    data = _core_frame()
+    assert _sha(_engine(data)) == _DEFAULT_LOOK["open"]
+    assert _sha(_engine(_pure_ha(360, 640))) == _DEFAULT_LOOK["pure"]
+    assert _sha(render(AstroImage(data, is_linear=False),
+                       palette_defaults(GOLD_BLUE)).data) == _DEFAULT_LOOK["default_protect"]
+    _floor_part_open(monkeypatch, data, 0.5)
+    assert _sha(_engine(data)) == _DEFAULT_LOOK["mid"]
+
+
+@pytest.mark.parametrize("floor", ["open", "part"])
+def test_gold_and_blue_never_move_a_pixel_to_the_other_side(monkeypatch, floor):
+    data = _core_frame()
+    if floor == "part":
+        _floor_part_open(monkeypatch, data)
+    else:
+        assert gold_blue_stats(AstroImage(data, is_linear=False)).blue_floor == 1.0
+    base = _engine(data)
+    side0, col0 = _lab_side(base)
+    # Any colour at all at 100%, an order below the side threshold: x2 cannot
+    # lift a pixel from below this to above 1e-3, so a hit is a NEW colour.
+    _, tinted0 = _lab_side(base, eps=1e-4)
+    # the fixture really has both sides, in quantity
+    assert (col0 & (side0 > 0)).sum() > 5000 and (col0 & (side0 < 0)).sum() > 5000
+    for g, b in itertools.product((0.0, 0.5, 1.0, 2.0), repeat=2):
+        side, col = _lab_side(_engine(data, gold_strength=g, blue_strength=b))
+        both = col0 & col
+        assert np.array_equal(side[both], side0[both]), f"gold {g} blue {b} moved pixels"
+        # nothing that was neutral turned coloured
+        assert not (col & ~tinted0).any(), f"gold {g} blue {b} coloured a neutral pixel"
+
+
+@pytest.mark.parametrize("floor", ["open", "part"])
+def test_zero_makes_that_side_neutral_and_leaves_the_other_untouched(monkeypatch, floor):
+    data = _core_frame()
+    if floor == "part":
+        _floor_part_open(monkeypatch, data)
+    base = _engine(data)
+    side0, col0 = _lab_side(base)
+    for zero, keep in (("gold_strength", -1), ("blue_strength", +1)):
+        out = _engine(data, **{zero: 0.0})
+        assert np.isfinite(out).all()
+        lab = nb._srgb_to_oklab(out)
+        chroma = np.hypot(lab[..., 1], lab[..., 2])
+        gone = side0 == -keep
+        assert gone.sum() > 5000
+        assert float(chroma[gone].max()) < 2e-3, f"{zero}=0 left colour on its side"
+        kept = side0 == keep
+        assert np.array_equal(out[kept], base[kept]), f"{zero}=0 touched the other side"
+
+
+def test_gold_zero_on_a_hydrogen_only_frame_is_neutral_not_gold():
+    """The floor's even gold follows the Gold slider too: at 0% it is grey."""
+    data = _pure_ha(360, 640)
+    assert gold_blue_stats(AstroImage(data, is_linear=False)).blue_floor == 0.0
+    out = _engine(data, gold_strength=0.0)
+    assert np.isfinite(out).all()
+    assert float((out.max(2) - out.min(2)).max()) < 2e-3
+
+
+def test_each_strength_scales_its_own_colour_in_proportion():
+    # d = -1 (gold) and d = +1 (blue) on the exact probe
+    c1, _ = _probe_chroma([(0.9, 0.3, 0.3), (0.3, 0.9, 0.9)])
+    c2, _ = _probe_chroma([(0.9, 0.3, 0.3), (0.3, 0.9, 0.9)], gold_strength=0.5, blue_strength=1.5)
+    assert c2[0] / c1[0] == pytest.approx(0.5, rel=0.03)
+    assert c2[1] / c1[1] == pytest.approx(1.5, rel=0.03)
+
+
+def test_oxygen_strength_no_longer_changes_how_strong_the_blue_is():
+    # t ~0.95 sits at d = +1 for every oxygen setting below (clipped), so only
+    # a chroma scale by Oxygen could tell them apart — and there is none now.
+    cs = []
+    for o in (0.3, 0.6, 1.0, 2.0):
+        p = NarrowbandParams(palette=GOLD_BLUE, oxygen_strength=o, saturation=0.425,
+                             protect_background=0.0)
+        data = np.array([[(0.05, 0.9, 0.9)]], dtype=np.float32)
+        lab = nb._srgb_to_oklab(render(AstroImage(data, is_linear=False), p,
+                                       has_stars=False, stats=_PROBE).data)
+        cs.append(float(np.hypot(lab[0, 0, 1], lab[0, 0, 2])))
+    assert max(cs) - min(cs) < 1e-6, cs
+
+
+@pytest.mark.parametrize("data,has_stars", [
+    (np.zeros((20, 30, 3), np.float32), True),
+    (np.ones((20, 30, 3), np.float32), False),
+    (np.full((20, 30, 3), 0.3, np.float32), False),
+])
+def test_zero_strengths_stay_finite_on_degenerate_inputs(data, has_stars):
+    p = dataclasses.replace(palette_defaults(GOLD_BLUE), gold_strength=0.0, blue_strength=0.0)
+    out = render(AstroImage(data, is_linear=False), p, has_stars=has_stars).data
+    assert np.isfinite(out).all() and out.min() >= 0.0 and out.max() <= 1.0

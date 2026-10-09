@@ -575,7 +575,15 @@ def test_narrowband_help_quotes_the_defaults_the_dialog_opens_with(qtbot):
     assert p.blend_amount == 0.6 and d.blend_val.text() == "0.60"
     assert "Green blend — HOO only (default 0.60)" in b
     assert p.saturation == 0.85 and d.sat_val.text() == "0.85"
-    assert "Saturation (default 0.85)" in b
+    assert "Saturation — HOO and Pseudo-SHO (default 0.85)" in b
+    assert (p.gold_strength, p.blue_strength) == (1.0, 1.0)
+    assert d.gold_val.text() == d.blue_val.text() == "100%"
+    assert "Gold and Blue — SHO-style only (default 100%)" in b
+    d.gold_slider.setValue(0)
+    d.blue_slider.setValue(d.blue_slider.maximum())
+    assert (d.gold_val.text(), d.blue_val.text()) == ("0%", "200%")
+    assert "0% leaves that colour grey, and 200% doubles it" in b
+    assert "runs out of screen colour at about 1.6 times" in b
     assert d.lightness_check.isChecked() is False
     assert "Preserve lightness — off by default" in b
 
@@ -638,22 +646,40 @@ def test_narrowband_help_is_right_about_gold_and_blue_and_lightness(qtbot):
     assert np.array_equal(off, on), "SHO-style now honours Preserve lightness; update the help"
     assert "no sulfur" in b and "SHO-style" in b
 
-    # Saturation: in SHO-style 0.85 is the designed colour and the slider
-    # scales it in proportion — half the setting, half the colour; zero, grey.
-    assert "the default 0.85 <i>is</i> the palette as designed" in b
+    # Gold and Blue: each scales its own colour — 0% grey, 200% double —
+    # and neither moves the line between them (only Oxygen strength does).
+    assert "It is not shown in <b>SHO-style (gold and blue)</b>" in b
+    assert "that is <b>Oxygen strength</b>'s job alone" in b
+    assert "never the other colour" in b
     from nocturne.core.narrowband import _srgb_to_oklab
     ha = np.full((60, 120), 0.05, np.float32); oiii = np.full((60, 120), 0.04, np.float32)
     ha[10:50, 5:55], oiii[10:50, 5:55] = 0.75, 0.10
     ha[10:50, 65:115], oiii[10:50, 65:115] = 0.10, 0.75
     framed = AstroImage(np.stack([ha, oiii, oiii], axis=2), is_linear=False)
 
-    def chroma(sat):
-        out = render(framed, NarrowbandParams(palette=GOLD_BLUE, saturation=sat,
-                                              protect_background=0.0), has_stars=False)
-        lab = _srgb_to_oklab(out.data[15:45])
-        return float(np.hypot(lab[..., 1], lab[..., 2]).mean())
-    full, half, none = chroma(0.85), chroma(0.425), chroma(0.0)
-    assert none < 1e-3 and abs(half / full - 0.5) < 0.05, (full, half, none)
+    def lab_of(**kw):
+        out = render(framed, NarrowbandParams(palette=GOLD_BLUE, protect_background=0.0,
+                                              **kw), has_stars=False)
+        return _srgb_to_oklab(out.data[15:45])
+
+    def chroma(lab, cols):
+        return float(np.hypot(lab[:, cols, 1], lab[:, cols, 2]).mean())
+    gold_side, blue_side = slice(10, 50), slice(70, 110)
+    base = lab_of()
+    assert (base[:, gold_side, 2] > 0.01).all() and (base[:, blue_side, 2] < -0.01).all()
+    for g, bl in ((0.0, 2.0), (2.0, 0.0), (0.5, 0.5), (2.0, 2.0)):
+        lab = lab_of(gold_strength=g, blue_strength=bl)
+        for cols, k, want_sign in ((gold_side, g, 1), (blue_side, bl, -1)):
+            ratio = chroma(lab, cols) / chroma(base, cols)
+            if cols is gold_side and k == 2.0:
+                # fully-gold pixels hit sRGB's edge (blue channel at 0): measured 1.64
+                assert 1.55 < ratio < 1.7, (g, bl, ratio)
+            else:
+                assert abs(ratio - k) < 0.05, (g, bl, ratio)
+            if k > 0:      # still on its own side: no gas moved
+                assert (np.sign(lab[:, cols, 2]) == want_sign).all(), (g, bl)
+    oxy = [float((lab_of(oxygen_strength=o)[..., 2] < -1e-3).mean()) for o in (0.6, 1.4)]
+    assert oxy == sorted(oxy) and oxy[1] >= oxy[0], "Oxygen strength should still move the line"
 
     assert "leaves one you have moved where you put it" in b
     d = NarrowbandDialog(Settings(), img)
@@ -1480,6 +1506,28 @@ def test_the_narrowband_help_names_every_control_the_dialog_shows(qtbot):
     assert labels, "no labelled controls found — the walk is broken, not the help"
     for name in labels:
         assert name in b, f"the narrowband help never mentions the {name!r} control"
+
+    # Per palette, the rows actually SHOWN — the help must say which palette
+    # each palette-only row belongs to, or someone hunts for a slider that
+    # is not there.
+    from nocturne.core.narrowband import GOLD_BLUE, OFFERED_PALETTES
+    shown = {}
+    for palette in OFFERED_PALETTES:
+        d.palette_box.setCurrentText(palette)
+        rows = set()
+        for i in range(d._controls.rowCount()):
+            item = d._controls.itemAt(i, QFormLayout.ItemRole.LabelRole)
+            if d._controls.isRowVisible(i) and item is not None and item.widget() is not None:
+                rows.add(item.widget().text().strip())
+        shown[palette] = rows
+        for name in rows - {""}:
+            assert name in b, f"{palette}: the help never mentions {name!r}"
+    only_gb = shown[GOLD_BLUE] - shown["HOO"]
+    assert only_gb == {"Gold", "Blue"}, only_gb
+    assert "Saturation" not in shown[GOLD_BLUE]
+    assert all("Saturation" in shown[p] for p in OFFERED_PALETTES if p != GOLD_BLUE)
+    assert "<h4>Gold and Blue — SHO-style only" in b
+    assert "<h4>Saturation — HOO and Pseudo-SHO" in b
 
 
 def test_the_haoiii_help_covers_strictness_and_trim():
