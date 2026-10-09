@@ -6450,3 +6450,71 @@ def test_upscale_is_told_whether_noise_reduction_ran(qtbot, tmp_path, monkeypatc
     win.project.run_step(_PrecomputedStep("Noise Reduction", win.project.current()), "medium")
     win._upscale()
     assert seen["denoised"] is True
+
+
+def _step_lines(win):
+    return [line.split(" ", 1)[1] for line in win.log_panel.entries()]
+
+
+def test_undo_and_redo_say_which_step_they_reversed(qtbot, tmp_path):
+    """Andreas, 2026-10-08: a bare "Undo" in the log does not say what was
+    undone. The line repeats the step's own line, exactly as it was logged."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)
+    win._go_to_id("levels")
+    win.apply_current((0.2, 1.0, 1.0))
+    stretch_line, levels_line = _step_lines(win)[-2:]
+    assert stretch_line.startswith("Stretch") and levels_line.startswith("Levels")
+
+    win._undo()
+    assert _step_lines(win)[-1] == f"↶ Undo: {levels_line}"
+    win._undo()
+    assert _step_lines(win)[-1] == f"↶ Undo: {stretch_line}"
+    win._redo()
+    assert _step_lines(win)[-1] == f"↷ Redo: {stretch_line}"
+    # Undo/Redo lines are never mistaken for the line of the state they land
+    # on: undoing Stretch again still names Stretch, not "Redo: ...".
+    win._undo()
+    assert _step_lines(win)[-1] == f"↶ Undo: {stretch_line}"
+
+
+def test_a_reapplied_step_is_undone_under_its_new_line(qtbot, tmp_path):
+    """Undo, then a different step at the same position: the state index is the
+    same, so a line keyed by index alone would name the step that was replaced."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)
+    first = _step_lines(win)[-1]
+    win._undo()
+    win.apply_current(0.3)
+    second = _step_lines(win)[-1]
+    assert second != first
+    win._undo()
+    assert _step_lines(win)[-1] == f"↶ Undo: {second}"
+
+
+def test_a_line_logged_after_a_step_is_not_taken_as_its_name(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)
+    line = _step_lines(win)[-1]
+    win.log_panel.append_entry("Exported test.tif")
+    win._undo()
+    assert _step_lines(win)[-1] == f"↶ Undo: {line}"
+
+
+def test_undo_lines_are_styled_apart_from_steps(qtbot, tmp_path):
+    from nocturne.ui.activity_panel import KIND_STYLE
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.6)
+    win._undo()
+    html = win.activity.view.toHtml()
+    assert "font-style:italic" in KIND_STYLE["reversal"]
+    assert KIND_STYLE["reversal"] != KIND_STYLE["step"]
+    assert "↶ Undo:" in win.activity.view.toPlainText() and "italic" in html
