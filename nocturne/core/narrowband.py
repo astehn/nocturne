@@ -215,7 +215,7 @@ OFFERED_PALETTES = tuple(p for p in PALETTES if p not in RETIRED_PALETTES)
 PALETTES_USING_BLEND = frozenset({"HOO"})
 
 # What each palette does, in the user's terms rather than the formula's. The
-# dropdown reads HOO / Pseudo-SHO / Pseudo-bicolor, which tells a newcomer
+# palette names alone (HOO / Pseudo-SHO / ...) tell a newcomer
 # nothing about what they are about to get. Colour words are MEASURED: rendering
 # pure Ha against pure OIII gives Ha 1.00/0.02/0.00 and OIII 0.00/0.42/0.95 in
 # HOO, 0.95/0.42/0.00 and 0.00/0.00/1.00 in Pseudo-SHO, and 0.88/0.00/0.88 and
@@ -671,7 +671,8 @@ def gold_blue_stats(img: AstroImage) -> GoldBlueStats:
 # noise in t, so noise alone flipped neighbours between the two sides: 44% of
 # the nebula went grey (final review, 2026-10-09). His five targets measure
 # 0.071-0.200, so a floor of 0.02 sits 3.5x below the smallest real one and
-# leaves all five byte-identical.
+# leaves all five within 7.2e-07 (operation order only; a few hundred samples
+# per frame round to the neighbouring 16-bit level, at most 10 to an 8-bit one).
 _GB_MIN_SPREAD = 0.02
 
 
