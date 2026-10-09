@@ -222,7 +222,7 @@ PALETTE_DESCRIPTIONS = {
     "Pseudo-bicolor": "Hydrogen magenta, oxygen green. The boldest and least "
                       "natural of the four.",
     GOLD_BLUE: "Gold hydrogen, steel-blue oxygen \u2014 the Hubble look, built from "
-               "the differences in your own picture.",
+               "the differences in your own picture. Best on large emission nebulae.",
 }
 
 # The gold-and-blue palette's own Oxygen strength default (spec D3, Andreas
