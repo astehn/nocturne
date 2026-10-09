@@ -153,7 +153,8 @@ def test_pure_hydrogen_gets_almost_no_blue_and_the_floor_is_why(monkeypatch):
     # Same image without the floor: relative colouring paints noise blue.
     monkeypatch.setattr(nb, "GB_FLOOR_EVIDENCE_LO", 0.0)
     monkeypatch.setattr(nb, "GB_FLOOR_EVIDENCE_HI", 0.0)
-    assert _blue_share(_engine(data), data) > 0.10
+    # 0.066 since _GB_MIN_SPREAD damped the noise (it was > 0.10 before).
+    assert _blue_share(_engine(data), data) > 0.04
 
 
 def test_a_real_oxygen_core_stays_blue_through_the_floor():
@@ -233,9 +234,12 @@ def test_full_size_pixel_gets_the_preview_pixels_colour_given_the_same_stats():
 
 
 def test_passed_stats_are_what_the_render_uses():
-    data = _with_oxygen_core(_pure_ha(360, 640))[0]
+    # Real oxygen, so the floor is open: under a closed floor the render is one
+    # even gold and the centre rightly has no effect.
+    data = _with_oxygen_core(_pure_ha(360, 640), amp=0.3)[0]
     img = AstroImage(data, is_linear=False)
     st = gold_blue_stats(img)
+    assert st.blue_floor == 1.0
     p = palette_defaults(GOLD_BLUE)
     shifted = dataclasses.replace(st, centre=st.centre + 0.5 * st.spread)
     assert not np.array_equal(render(img, p, stats=st).data, render(img, p, stats=shifted).data)
@@ -326,6 +330,23 @@ def test_pure_hydrogen_stays_gold_whatever_the_noise_and_size(shape, step, noise
     assert max(shape) // nb._GB_STATS_EDGE == step                    # the step we mean to test
     assert gold_blue_stats(AstroImage(data, is_linear=False)).blue_floor == 0.0
     assert _blue_share(_engine(data), data) < 0.02
+
+
+@pytest.mark.parametrize("shape", [(720, 1280), (1440, 2560)])
+def test_pure_hydrogen_is_gold_all_over_not_gold_speckled_with_grey(shape):
+    """Final review I-1: with the floor closed the oxygen side used to go grey,
+    and with a stats-copy spread far below one pixel's noise in t, noise picked
+    the side per pixel. At 1440x2560, 44% of the nebula came out grey and
+    neighbouring pixels jumped by half the gold's chroma."""
+    data = _pure_ha(*shape)
+    assert gold_blue_stats(AstroImage(data, is_linear=False)).blue_floor == 0.0
+    lab = nb._srgb_to_oklab(_engine(data))
+    chroma = np.hypot(lab[..., 1], lab[..., 2])
+    neb = nb.nebula_mask(data, 0.4) > 0.5
+    assert (lab[..., 2][neb] >= 0).mean() > 0.99, "hydrogen-only must be on the gold side"
+    assert (chroma[neb] < 0.01).mean() < 0.05, "grey pixels inside a hydrogen nebula"
+    jump = np.abs(np.diff(chroma, axis=1))[neb[:, 1:] & neb[:, :-1]].mean()
+    assert jump < 0.25 * chroma[neb].mean(), f"speckle: neighbour jump {jump:.4f}"
 
 
 def test_protect_default_is_the_palettes_own_and_the_old_ones_keep_theirs():

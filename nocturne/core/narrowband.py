@@ -665,6 +665,16 @@ def gold_blue_stats(img: AstroImage) -> GoldBlueStats:
                          blue_floor=_blue_floor(evidence))
 
 
+# The smallest spread of t the per-pixel ramp divides by. The spread is measured
+# on the blurred stats copy, but every full-size pixel is judged against it
+# unblurred. On a hydrogen-only frame it was 0.0006-0.006, far below one pixel's
+# noise in t, so noise alone flipped neighbours between the two sides: 44% of
+# the nebula went grey (final review, 2026-10-09). His five targets measure
+# 0.071-0.200, so a floor of 0.02 sits 3.5x below the smallest real one and
+# leaves all five byte-identical.
+_GB_MIN_SPREAD = 0.02
+
+
 def _render_gold_blue(img: AstroImage, params: NarrowbandParams, has_stars: bool,
                       stats: GoldBlueStats | None) -> AstroImage:
     st = stats if stats is not None else gold_blue_stats(img)
@@ -674,25 +684,37 @@ def _render_gold_blue(img: AstroImage, params: NarrowbandParams, has_stars: bool
     oxygen = float(params.oxygen_strength)
     # Less oxygen moves the balance point toward oxygen, so fewer pixels turn
     # blue; at 1.0 the picture's own median is the middle.
-    centre = st.centre + (1.0 - oxygen) * 0.5 * st.spread
-    d = np.clip((t - centre) / st.spread, -0.5, 0.5) * 2.0       # -1 hydrogen .. +1 oxygen
+    spread = max(st.spread, _GB_MIN_SPREAD)
+    centre = st.centre + (1.0 - oxygen) * 0.5 * spread
+    d = np.clip((t - centre) / spread, -0.5, 0.5) * 2.0          # -1 hydrogen .. +1 oxygen
     w = np.abs(d) ** _GB_GAMMA                                     # 0 at the middle: never green
     chroma = _GB_CHROMA * max(0.0, float(params.saturation)) / _GB_SAT_REF
     blue = d > 0
     gold_amt = chroma * w * _GB_GOLD_SCALE
-    blue_amt = chroma * w * oxygen * st.blue_floor
-    amt = np.where(blue, blue_amt, gold_amt)
+    blue_amt = chroma * w * oxygen
     lab = _srgb_to_oklab(data)
     L = lab[..., 0]
-    amt = amt * np.clip(L / _GB_DARK_L, 0.0, 1.0)
+    shade = np.clip(L / _GB_DARK_L, 0.0, 1.0)
     if has_stars:
         # Stars are still in this layer: leave the brightest white rather than
         # tint them by whatever share their colour happens to give. The 0.15
         # width in L is a JUDGEMENT, not a measurement — no star-bearing frame
         # was benched (the bench is starless; stars are screened back).
-        amt = amt * np.clip((1.0 - L) / np.float32(0.15), 0.0, 1.0)
-    direction = np.where(blue[..., None], _GB_STEEL, _GB_GOLD)
-    lab[..., 1:] = direction * amt[..., None]
+        shade = shade * np.clip((1.0 - L) / np.float32(0.15), 0.0, 1.0)
+    vec = np.where(blue[..., None], _GB_STEEL * blue_amt[..., None],
+                   _GB_GOLD * gold_amt[..., None])
+    # The floor (no evidence of oxygen) blends toward one even gold. On a
+    # hydrogen-only object every pixel has the same mix, so the relative
+    # colour has nothing real to show and noise alone picked each pixel's side
+    # and amount: 44% of the nebula went grey, and neighbours jumped by half
+    # the gold (final review I-1). With the floor open, as on all five of his
+    # targets and his ten crops (evidence 12.7-96.7), this is the relative
+    # colour unchanged.
+    f = np.float32(st.blue_floor)
+    if f < 1.0:
+        even_gold = _GB_GOLD * np.float32(chroma * _GB_GOLD_SCALE)
+        vec = f * vec + (1.0 - f) * even_gold
+    lab[..., 1:] = vec * shade[..., None]
     rgb = _oklab_to_srgb(lab).astype(np.float32)
     rgb = highlight_reduction(rgb, params.highlight_reduction)
     rgb = highlight_recover(rgb, params.highlight_recover)
