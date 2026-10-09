@@ -450,7 +450,13 @@ def _ab_direction(rgb) -> np.ndarray:
     return (ab / np.hypot(*ab)).astype(np.float32)
 
 
-_GB_GOLD_RGB = (0.86, 0.58, 0.22)
+# The gold's hue: HSV 39 deg (was 34). The first value came from his example
+# images, which are bright; on his own darker nebulae the same hue read as
+# "rust" (Andreas, 2026-10-09: warm parts measured hue 29-31 deg at 24-35%
+# brightness, RGB 59/37/18 in the dialog and 89/59/28 after Starless Levels).
+# Shown 34/38/41/44 deg on IC 1396A after his Starless Levels: 38-40 reads as
+# gold, 44 turns the faint parts mustard. Same saturation and value as before.
+_GB_GOLD_RGB = (0.86, 0.636, 0.22)
 _GB_STEEL_RGB = (0.25, 0.56, 0.78)
 _GB_GOLD = _ab_direction(_GB_GOLD_RGB)
 _GB_STEEL = _ab_direction(_GB_STEEL_RGB)

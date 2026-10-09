@@ -683,13 +683,15 @@ def test_a_small_bright_hydrogen_nebula_is_not_oxygen_at_its_brightest():
 # strong each side is. "No gas appears where it isn't": a pixel's side never
 # depends on Gold or Blue.
 
-# sha256 of _engine(...) at the palette's defaults, captured at ada3254 BEFORE
-# Gold/Blue existed (blue was then x Oxygen 0.60). 100% on both = that look.
+# sha256 of _engine(...) at the palette's defaults. First captured at ada3254
+# BEFORE Gold/Blue existed (blue was then x Oxygen 0.60), so 100% on both = that
+# look; those pins passed unchanged on 5804170. Re-pinned once, for the gold hue
+# 34 -> 39 deg (his "rust", 2026-10-09) and nothing else.
 _DEFAULT_LOOK = {
-    "open": "cc3dddaca97c6bb05c973da814f4346e05e9580959b49bd58ed26a38dd2f8d79",
-    "pure": "a82415e490a5d88aa21243f5457b523735f41516563f7c8615d78f38181670fc",
-    "mid": "4cc490372cbb9ab4b497cff897ad142deb527ef8f6267d29ffddca12d5bb0c8f",
-    "default_protect": "4f4358739c3fab1572d278a8708d9286f972d2e0ebce1f552ba56f209232d4ec",
+    "open": "47ef2783c783c4336008e27a5e4399846052ccdcb7e4e25dc09eb1c89f86dc8b",
+    "pure": "48ab9429afe5e56defa08052a38b9b63122f52226b5cec92ab386fd0ae85ebe8",
+    "mid": "b36009e981d15739679497b1b94b7b5f15ea9c8d55926eb19af1c3d2775f8c8c",
+    "default_protect": "42469e38113084f53bccc0931a88f9854b59459bac04cd1558ce840cb28c42df",
 }
 
 
