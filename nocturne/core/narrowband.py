@@ -420,6 +420,31 @@ def _oklab_to_srgb(lab: np.ndarray) -> np.ndarray:
                     np.float32(1.055) * lin ** np.float32(1 / 2.4) - np.float32(0.055))
 
 
+def _fit_to_gamut(lab: np.ndarray, steps: int = 14) -> np.ndarray:
+    """Shrink each pixel's colour (a, b) just enough to fit sRGB, keeping its
+    hue and lightness. Clipping channel by channel instead turned a strong gold
+    orange: at Gold 200% on M 16 and NGC 6992 the hue moved -13.7 degrees while
+    the colour grew only 1.64x (Gold/Blue review, 2026-10-09). Bisection on the
+    out-of-gamut pixels only; 14 halvings resolve the scale to 1e-4."""
+    lin = (lab @ _OK_M2_INV_T) ** 3 @ _OK_M1_INV_T
+    out = (lin < -1e-6).any(-1) | (lin > 1.0 + 1e-6).any(-1)
+    if not out.any():
+        return lab
+    sub = lab[out]
+    lo = np.zeros(len(sub), np.float32)
+    hi = np.ones(len(sub), np.float32)
+    for _ in range(steps):
+        mid = (lo + hi) / 2
+        trial = np.concatenate([sub[:, :1], sub[:, 1:] * mid[:, None]], axis=1)
+        l2 = (trial @ _OK_M2_INV_T) ** 3 @ _OK_M1_INV_T
+        fits = ((l2 >= -1e-6) & (l2 <= 1.0 + 1e-6)).all(-1)
+        lo = np.where(fits, mid, lo)
+        hi = np.where(fits, hi, mid)
+    fitted = lab.copy()
+    fitted[out, 1:] = sub[:, 1:] * lo[:, None]
+    return fitted
+
+
 def _ab_direction(rgb) -> np.ndarray:
     ab = _srgb_to_oklab(np.array(rgb, dtype=np.float32))[1:].astype(np.float64)
     return (ab / np.hypot(*ab)).astype(np.float32)
@@ -733,6 +758,11 @@ def _render_gold_blue(img: AstroImage, params: NarrowbandParams, has_stars: bool
     if gold != 1.0 or blue_s != 1.0:
         vec = vec * np.where(vec[..., 1:2] > 0, np.float32(gold), np.float32(blue_s))
     lab[..., 1:] = vec * shade[..., None]
+    if gold != 1.0 or blue_s != 1.0:
+        # Only off the default, so 100%/100% stays the look he approved, byte
+        # for byte. Past the screen's limit a stronger colour stops growing
+        # instead of changing hue.
+        lab = _fit_to_gamut(lab)
     rgb = _oklab_to_srgb(lab).astype(np.float32)
     rgb = highlight_reduction(rgb, params.highlight_reduction)
     rgb = highlight_recover(rgb, params.highlight_recover)

@@ -467,8 +467,9 @@ class NarrowbandDialog(QDialog):
         multiplier (×1.33) to match the numbers a tutorial or PixInsight uses."""
         oxy = max(0.3, self.oxygen_slider.value() / 100.0)
         if self.palette_box.currentText() == GOLD_BLUE:
-            # Here it is an amount of blue, not a gain on OIII: 100% is the
-            # picture's own balance point, and nothing is "matched" at it.
+            # Here it is how much of the picture is blue (where the gold/blue
+            # line sits), not a gain on OIII and not how strong the blue is —
+            # that is the Blue slider. 100% is the picture's own balance point.
             self.oxygen_val.setText(f"{round(oxy * 100)}%")
         else:
             # 1.00 is the photometric match — the one value here that means
