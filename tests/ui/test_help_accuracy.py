@@ -513,20 +513,24 @@ def test_narrowband_help_names_every_control_the_dialog_shows():
     named were named without a value or a default. Pin each row label to the
     widget that draws it."""
     from nocturne.core.image import AstroImage
-    from nocturne.core.narrowband import PALETTES, NarrowbandParams, _combine, render
+    from nocturne.core.narrowband import (OFFERED_PALETTES, PALETTES, RETIRED_PALETTES,
+                                          NarrowbandParams, _combine, render)
     from nocturne.recipe import _NAME_TO_STAGE
     from nocturne.ui.narrowband_dialog import PALETTES as UI_PALETTES
     b = _body("narrowband")
     nd = _src("nocturne/ui/narrowband_dialog.py")
 
     # two palette lists, one truth: the help is checked against the core one
-    assert list(UI_PALETTES) == list(PALETTES), "the dialog and the engine disagree"
+    assert list(UI_PALETTES) == list(OFFERED_PALETTES), "the dialog and the engine disagree"
     ha = np.linspace(0.1, 0.9, 64).reshape(8, 8).astype(np.float32)
     oiii = np.linspace(0.9, 0.1, 64).reshape(8, 8).astype(np.float32)
     img = AstroImage(np.stack([ha, oiii, oiii], axis=2), is_linear=False)
-    for palette in PALETTES:
+    for palette in OFFERED_PALETTES:
         assert palette in b, f"palette {palette!r} is not described"
-        render(img, NarrowbandParams(palette=palette))   # must be a palette that renders
+    for palette in PALETTES:   # retired ones too: old projects replay them
+        render(img, NarrowbandParams(palette=palette))
+    for palette in RETIRED_PALETTES:
+        assert palette not in b, f"retired palette {palette!r} is still in the help"
     with pytest.raises(ValueError):
         _combine(ha, oiii, "SHO", 0.6)            # the help says SHO is not available
     assert "no sulfur" in b
@@ -591,13 +595,13 @@ def test_narrowband_help_warns_that_green_blend_is_inert_outside_hoo():
     and does nothing at all in the other two palettes, because only HOO builds a
     synthetic green."""
     from nocturne.core.image import AstroImage
-    from nocturne.core.narrowband import (GOLD_BLUE, PALETTES, PALETTES_USING_BLEND,
+    from nocturne.core.narrowband import (GOLD_BLUE, OFFERED_PALETTES, PALETTES_USING_BLEND,
                                           NarrowbandParams, _combine, render)
     b = _body("narrowband")
     # The slider is greyed out there now, so the help must say THAT rather than
     # "the slider moves and the picture does not", which stopped being true.
-    assert "greyed out in Pseudo-SHO, Pseudo-bicolor and SHO-style (gold and blue)" in b
-    for palette in PALETTES:
+    assert "greyed out in Pseudo-SHO and SHO-style (gold and blue)" in b
+    for palette in OFFERED_PALETTES:
         if palette not in PALETTES_USING_BLEND:
             assert palette in b, f"the help must name {palette} as one where it is inert"
     rng = np.random.default_rng(11)
@@ -611,7 +615,6 @@ def test_narrowband_help_warns_that_green_blend_is_inert_outside_hoo():
 
     assert differs("HOO"), "Green blend no longer does anything in HOO either"
     assert not differs("Pseudo-SHO"), "Pseudo-SHO now uses the blend; update the help"
-    assert not differs("Pseudo-bicolor"), "Pseudo-bicolor now uses the blend; update the help"
     img = AstroImage(np.stack([ha, oiii, oiii], axis=2), is_linear=False)
     lo, hi = (render(img, NarrowbandParams(palette=GOLD_BLUE, blend_amount=a)).data
               for a in (0.0, 1.0))
@@ -661,20 +664,16 @@ def test_narrowband_help_is_right_about_gold_and_blue_and_lightness(qtbot):
 
 
 def test_narrowband_help_describes_the_palettes_and_the_green_cap_correctly():
-    """Which gas lands in which channel is the whole content of a palette. And
-    green is clamped in two of the three — the help says which, and says why the
-    third is left alone."""
+    """Which gas lands in which channel is the whole content of a palette, and
+    green is clamped in HOO and Pseudo-SHO — the help says so. Pseudo-bicolor
+    is retired, so the help no longer describes it at all."""
     from nocturne.core.narrowband import _combine
     b = _body("narrowband")
     rng = np.random.default_rng(13)
     ha = rng.random((16, 16)).astype(np.float32)
     oiii = rng.random((16, 16)).astype(np.float32)
 
-    r, g, bl = _combine(ha, oiii, "Pseudo-bicolor", 0.6)
-    assert np.allclose(r, ha) and np.allclose(bl, ha), \
-        "Pseudo-bicolor no longer puts hydrogen in red AND blue"
-    assert np.allclose(g, oiii), "Pseudo-bicolor's green is no longer the real oxygen"
-    assert "hydrogen in red and blue, oxygen in green" in b
+    assert "bicolor" not in b.lower(), "a retired palette is still in the help"
 
     for palette in ("HOO", "Pseudo-SHO"):
         r, g, bl = _combine(ha, oiii, palette, 1.0)
@@ -683,7 +682,6 @@ def test_narrowband_help_describes_the_palettes_and_the_green_cap_correctly():
     r, g, bl = _combine(ha, oiii, "HOO", 1.0, scnr=False)
     assert np.any(g > (r + bl) / 2.0 + 1e-6)
     assert "capped at the average of red and blue" in b
-    assert "Pseudo-bicolor's green is the real oxygen" in b
 
 
 def test_narrowband_help_gets_the_direction_of_the_two_headline_sliders_right():
@@ -775,14 +773,14 @@ def test_dualband_help_agrees_with_both_engines_about_which_gas_is_where():
 
 
 def test_dualband_help_is_right_that_sho_is_unavailable_and_names_the_real_palettes():
-    from nocturne.core.narrowband import PALETTES, _combine
+    from nocturne.core.narrowband import OFFERED_PALETTES, _combine
     b = _body("dualband")
     ha = np.linspace(0.1, 0.9, 64).reshape(8, 8).astype(np.float32)
     oiii = np.linspace(0.9, 0.1, 64).reshape(8, 8).astype(np.float32)
     with pytest.raises(ValueError):
         _combine(ha, oiii, "SHO", 0.6)
     assert "SHO is not offered anywhere in Nocturne" in b
-    for palette in PALETTES:
+    for palette in OFFERED_PALETTES:
         assert f"<b>{palette}</b>" in b, f"the topic does not name the {palette!r} palette"
 
 

@@ -198,6 +198,13 @@ GOLD_BLUE = "SHO-style (gold and blue)"
 
 PALETTES = ("HOO", "Pseudo-SHO", "Pseudo-bicolor", GOLD_BLUE)
 
+# Pseudo-bicolor left the dialog on 2026-10-09. Andreas: "I think that is not
+# good... I don't see that anyone would actually use it". It still renders,
+# because a saved project or recipe stores the palette's name and must replay
+# to the same pixels. That is why it is retired and not deleted.
+RETIRED_PALETTES = frozenset({"Pseudo-bicolor"})
+OFFERED_PALETTES = tuple(p for p in PALETTES if p not in RETIRED_PALETTES)
+
 # Only HOO builds a synthetic green, so the Green blend amount reaches the
 # picture there and nowhere else: Pseudo-SHO takes green straight from Ha and
 # Pseudo-bicolor straight from OIII. Measured rather than assumed — between
@@ -215,7 +222,7 @@ PALETTES_USING_BLEND = frozenset({"HOO"})
 # 0.00/1.00/0.00 in Pseudo-bicolor — and a test re-measures it, because a
 # description that drifts from the picture is worse than no description.
 PALETTE_DESCRIPTIONS = {
-    "HOO": "Hydrogen red, oxygen teal. The most natural-looking of the four, "
+    "HOO": "Hydrogen red, oxygen teal. The most natural-looking of the three, "
            "and the only one where Green blend does anything.",
     "Pseudo-SHO": "Hubble-like: hydrogen gold, oxygen blue. Dualband data holds no "
                   "real SII, so hydrogen stands in for it — hence \u201cpseudo\u201d.",

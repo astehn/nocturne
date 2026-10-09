@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
 
 from ..core.image import AstroImage
 from ..core.narrowband import (
-    GOLD_BLUE, PALETTE_DESCRIPTIONS, PALETTES as _CORE_PALETTES, PALETTES_USING_BLEND,
+    GOLD_BLUE, PALETTE_DESCRIPTIONS, OFFERED_PALETTES as _CORE_PALETTES, PALETTES_USING_BLEND,
     NarrowbandParams, gold_blue_stats, palette_defaults, render, screen,
 )
 from ..settings import resolve_binary
@@ -76,6 +76,7 @@ def _slider_positions(p: NarrowbandParams) -> dict:
 _DEBOUNCE_MS = 90
 # Taken from the engine rather than retyped: this list and core.PALETTES were
 # two copies of the same fact, which is exactly how lightness_preserve drifted.
+# Only the offered ones: a retired palette still replays but is not a choice.
 PALETTES = list(_CORE_PALETTES)
 
 

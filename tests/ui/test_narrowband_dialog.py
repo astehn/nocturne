@@ -25,11 +25,18 @@ def _dialog(qtbot, **kw):
     return d
 
 
-def test_palettes_are_the_four_expected():
-    # The three old ones first and in their old order — a saved index or a
-    # recipe written before the fourth existed still means the same palette.
-    assert list(PALETTES) == ["HOO", "Pseudo-SHO", "Pseudo-bicolor",
-                              "SHO-style (gold and blue)"]
+def test_palettes_are_the_three_offered():
+    # Pseudo-bicolor is retired (2026-10-09): not a choice any more, but the
+    # engine still renders it so old projects replay.
+    assert list(PALETTES) == ["HOO", "Pseudo-SHO", "SHO-style (gold and blue)"]
+
+
+def test_a_retired_palette_is_not_in_the_dropdown(qtbot):
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    items = [d.palette_box.itemText(i) for i in range(d.palette_box.count())]
+    assert items == list(PALETTES)
+    d.palette_box.setCurrentText("Pseudo-bicolor")
+    assert d.palette_box.currentText() != "Pseudo-bicolor"
 
 
 def test_dialog_builds_with_seeded_layers(qtbot):
@@ -645,7 +652,7 @@ def test_gold_and_blue_greys_green_blend_and_preserve_lightness_saying_why(qtbot
     d._gate.close(d._side)
     d._release_controls()
     assert not d.lightness_check.isEnabled() and not d.blend_slider.isEnabled()
-    for palette in ("HOO", "Pseudo-SHO", "Pseudo-bicolor"):
+    for palette in ("HOO", "Pseudo-SHO"):
         d.palette_box.setCurrentText(palette)
         assert d.lightness_check.isEnabled(), palette
 
@@ -736,7 +743,7 @@ def test_old_palettes_render_through_the_dialog_as_before(qtbot):
     class SameSplit:
         def remove_stars(self, image, runner=None):
             return starless, stars
-    for palette in ("HOO", "Pseudo-SHO", "Pseudo-bicolor"):
+    for palette in ("HOO", "Pseudo-SHO"):
         got = []
         d = NarrowbandDialog(Settings(), base, starless=starless, stars=stars,
                              on_apply=lambda r, p: got.append((r, p)))

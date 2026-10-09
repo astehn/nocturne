@@ -128,3 +128,20 @@ def test_a_partial_dict_for_an_old_palette_reads_exactly_as_before():
         old = NarrowbandParams(**{k: v for k, v in given.items() if k in fields})
         assert parse_narrowband_option(given) == old, given
         assert deserialize_option("narrowband", given) == old, given
+
+
+def test_a_saved_pseudo_bicolor_step_still_replays():
+    """Pseudo-bicolor left the dialog on 2026-10-09 but not the engine: a project
+    or recipe saved with it must reopen to the same pixels, not error or recolour.
+    The byte-level pins against main live in test_narrowband_gold_blue
+    (OLD_PALETTES); this guards the route a saved step takes."""
+    from nocturne.core.narrowband import OFFERED_PALETTES, RETIRED_PALETTES
+    assert "Pseudo-bicolor" in RETIRED_PALETTES and "Pseudo-bicolor" not in OFFERED_PALETTES
+    rng = np.random.default_rng(5)
+    img = AstroImage(rng.random((24, 24, 3)).astype(np.float32), is_linear=False)
+    stored = serialize_option("narrowband", NarrowbandParams(palette="Pseudo-bicolor",
+                                                             protect_background=0.0))
+    out = NarrowbandStep(None).apply(img, deserialize_option("narrowband", stored)).data
+    assert np.array_equal(out, render(img, NarrowbandParams(palette="Pseudo-bicolor",
+                                                            protect_background=0.0)).data)
+    assert np.allclose(out[..., 0], out[..., 2], atol=1e-6), "no longer magenta/green"
