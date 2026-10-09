@@ -594,11 +594,14 @@ def test_a_border_around_nebula_that_fills_the_frame_does_not_bleed_in(size, box
     the border's zeros do not leak into the picture's edge. Measured p99 dE
     0.0084 at both sizes with data-only blurs, 0.0112 with plain ones (the
     preview size takes nebula_mask's direct-blur branch, full size the
-    quarter-resolution one)."""
+    quarter-resolution one). Since the gold takes its colour early in Protect's
+    soft edge (_GB_EDGE_GOLD, 2026-10-09) the same mask nudge shows ~3x more
+    in colour: p99 0.0132 at both sizes, mean unchanged at 0.0028. The p99
+    limit is 0.015, still under a visible step (OKLab dE ~0.02)."""
     d, _, _ = _nebula_frame(*size)
     fill = np.ascontiguousarray(d[box])
     mean, p99, border_max = _border_change(fill, _black_border(fill, 0.10))
-    assert mean < 0.004 and p99 < 0.010, (mean, p99)
+    assert mean < 0.004 and p99 < 0.015, (mean, p99)
     assert border_max == 0.0
 
 
@@ -691,7 +694,7 @@ _DEFAULT_LOOK = {
     "open": "47ef2783c783c4336008e27a5e4399846052ccdcb7e4e25dc09eb1c89f86dc8b",
     "pure": "48ab9429afe5e56defa08052a38b9b63122f52226b5cec92ab386fd0ae85ebe8",
     "mid": "b36009e981d15739679497b1b94b7b5f15ea9c8d55926eb19af1c3d2775f8c8c",
-    "default_protect": "42469e38113084f53bccc0931a88f9854b59459bac04cd1558ce840cb28c42df",
+    "default_protect": "e660a81524fdecc05d87ba8d911dfff94a8c783cf93feb0db8877ab084459bde",   # gold edge, 2026-10-09
 }
 
 
@@ -814,3 +817,34 @@ def test_zero_strengths_stay_finite_on_degenerate_inputs(data, has_stars):
     p = dataclasses.replace(palette_defaults(GOLD_BLUE), gold_strength=0.0, blue_strength=0.0)
     out = render(AstroImage(data, is_linear=False), p, has_stars=has_stars).data
     assert np.isfinite(out).all() and out.min() >= 0.0 and out.max() <= 1.0
+
+
+def test_faint_hydrogen_at_protects_edge_is_gold_not_the_originals_red():
+    """Andreas's Pacman, 2026-10-09: a "rust" halo where Protect background's
+    soft edge mixed the gold with the original's red. The gold side now takes
+    the palette's colour early in the edge; the blue side and the sky do not."""
+    data = _with_oxygen_core(_pure_ha(360, 640), amp=0.3)[0]
+    img = AstroImage(data, is_linear=False)
+    p = palette_defaults(GOLD_BLUE)
+    out = render(img, p, has_stars=False).data
+    m = nb.nebula_mask(data, p.protect_background, nb._GB_MASK_CAPS, nb._has_data(data))
+    p0 = dataclasses.replace(p, protect_background=0.0)
+    pal = render(img, p0, has_stars=False).data
+    old = m[..., None] * pal + (1.0 - m[..., None]) * data      # the plain blend
+    lab, lab_old, lab_pal = (nb._srgb_to_oklab(x) for x in (out, old, pal))
+    edge = (m > 0.02) & (m < nb._GB_EDGE_GOLD)
+    gold = edge & (lab_pal[..., 2] > 0.01)
+    assert gold.sum() > 500, "the fixture must have a gold soft edge"
+    def hue(x):
+        return np.degrees(np.arctan2(x[..., 2], x[..., 1]))[gold]
+    # every gold edge pixel is closer to the palette's gold than the plain
+    # blend left it; the outermost edge still fades in, so not all the way
+    new_off, old_off = np.abs(hue(lab) - hue(lab_pal)), np.abs(hue(lab_old) - hue(lab_pal))
+    assert (new_off <= old_off + 0.5).mean() > 0.99
+    assert np.median(new_off) < 0.8 * np.median(old_off), (np.median(new_off), np.median(old_off))
+    blue = edge & (lab_pal[..., 2] < -0.01)
+    if blue.any():   # blue side: the plain blend, up to blending in OKLab vs RGB
+        de = np.linalg.norm(lab[blue] - lab_old[blue], axis=-1)
+        assert np.percentile(de, 99) < 0.01, np.percentile(de, 99)
+    sky = m < 1e-4
+    assert np.abs(out[sky] - data[sky]).max() < 2e-3, "the empty sky must stay as it was"

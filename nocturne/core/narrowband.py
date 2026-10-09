@@ -809,10 +809,37 @@ def render(img: AstroImage, params: NarrowbandParams, *,
     if params.protect_background > 0:
         if params.palette == GOLD_BLUE:
             m = nebula_mask(original, params.protect_background, _GB_MASK_CAPS,
-                            _has_data(original))[..., None]
+                            _has_data(original))
+            blended = _gb_protect_blend(out.data, original, m)
         else:
             m = nebula_mask(original, params.protect_background)[..., None]
-        blended = m * out.data + (1.0 - m) * original
+            blended = m * out.data + (1.0 - m) * original
         out = AstroImage(np.clip(blended, 0.0, 1.0).astype(np.float32),
                          is_linear=False, metadata=dict(img.metadata))
     return out
+
+
+# How far into Protect background's soft edge the gold reaches full strength
+# (mask value). A plain blend mixed the gold with the original's red there: the
+# faint edges came out red-orange, a "rust" halo — hue 19/24 deg on the faintest
+# parts of IC 1805 / M 16 and 24 deg on his Pacman, against 36-37 deg in the
+# main nebula. With the gold's colour taken from the palette from mask 0.3 up,
+# the faint parts read 36-37 deg; the darkest sky moves by at most 1.4/255.
+_GB_EDGE_GOLD = 0.3
+
+
+def _gb_protect_blend(rendered: np.ndarray, original: np.ndarray,
+                      m: np.ndarray) -> np.ndarray:
+    """Protect background for the gold-and-blue palette. Lightness blends as
+    before. On the gold side the colour comes from the palette from early in
+    the soft edge, so faint hydrogen is faint gold, not the original's red. The
+    blue side blends as before: taking its colour early too put faint blue-grey
+    patches above Pacman, areas with no hydrogen surplus but little real oxygen
+    either (Andreas, 2026-10-09: "they do actually" bother me)."""
+    lo = _srgb_to_oklab(original)
+    lp = _srgb_to_oklab(rendered)
+    wc = np.where(lp[..., 2] > 0, np.clip(m / _GB_EDGE_GOLD, 0.0, 1.0), m)
+    lab = lo.copy()
+    lab[..., 0] = m * lp[..., 0] + (1.0 - m) * lo[..., 0]
+    lab[..., 1:] = wc[..., None] * lp[..., 1:] + (1.0 - wc[..., None]) * lo[..., 1:]
+    return _oklab_to_srgb(_fit_to_gamut(lab.astype(np.float32)))
