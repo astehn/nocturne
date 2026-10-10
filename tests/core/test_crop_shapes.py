@@ -126,3 +126,20 @@ def test_a_new_recipe_states_the_turned_name():
     assert stored["aspect"] == "2:3"
     assert deserialize_option("crop", stored).aspect == "2:3"
     assert serialize_option("crop", CropParams())["aspect"] == FREE
+
+
+@pytest.mark.parametrize("stored, shown", [("Picture", "Original"), ("Original", "Free"),
+                                           ("9:16", "9:16")])
+def test_the_report_names_the_shape_on_the_button_never_the_token(stored, shown):
+    """Review M1: "Picture" is an internal name and a legacy "Original" means
+    Free; the report must say what the user saw."""
+    import datetime
+    from nocturne.core import provenance
+    entries = [("Crop", CropParams(bounds=(0, 4, 0, 4), aspect=stored)),
+               ("Trim", {"aspect": stored})]
+    r = provenance.build_report(entries, {}, app_version="t",
+                                date=datetime.date(2026, 10, 10))
+    assert f"1. Crop — {shown}" in r and f"2. Trim — {shown}" in r
+    assert f"- aspect: {shown}" in r
+    if stored != shown:
+        assert f"— {stored}" not in r and f"aspect: {stored}" not in r

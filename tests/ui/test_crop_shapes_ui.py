@@ -40,7 +40,7 @@ def test_a_portrait_crop_is_tall_and_says_so_everywhere(qtbot, tmp_path):
     win = _crop_window(qtbot, tmp_path)
     p = win._panel.shape_picker
     p.button("3:2").click()
-    p.orientation.buttons()[1].click()                     # Portrait -> 2:3
+    p.orientation.click()                     # Portrait -> 2:3
     win.image_view.show_crop_box()                         # the first click
     assert win.image_view.crop_box_modified() is False, "no work to lose yet"
     win._apply_crop()
@@ -86,7 +86,7 @@ def test_choosing_a_shape_after_the_box_is_up_reshapes_it(qtbot, tmp_path):
     win.image_view.show_crop_box()
     p = win._panel.shape_picker
     p.button("16:9").click()
-    p.orientation.buttons()[1].click()
+    p.orientation.click()
     t, b, l, r = win.image_view.crop_bounds()
     assert abs((r - l) / (b - t) - 9 / 16) < 0.05
 
@@ -105,7 +105,7 @@ def test_share_portrait_frames_a_tall_picture_and_names_the_file(qtbot):
     d = _share(qtbot)
     assert "Free" not in d.shape_picker.labels()
     d.shape_picker.button("16:9").click()
-    d.shape_picker.orientation.buttons()[1].click()
+    d.shape_picker.orientation.click()
     t, b, l, r = d._current_crop()
     assert abs((r - l) / (b - t) - 9 / 16) < 0.03
     out = d._compose_current()
@@ -153,7 +153,7 @@ def test_upscale_opens_free_as_before_and_its_original_is_locked(qtbot):
 def test_upscale_portrait_crop_enlarges_a_tall_region(qtbot):
     d = _upscale(qtbot)
     d.shape_picker.button("3:2").click()
-    d.shape_picker.orientation.buttons()[1].click()
+    d.shape_picker.orientation.click()
     t, b, l, r = d.picker.crop_bounds()
     d._run_upscale()
     rh, rw = d._result.data.shape[:2]
@@ -182,10 +182,52 @@ def test_the_crop_panel_does_not_widen_the_right_column_at_1280x800(qtbot, tmp_p
         win._go_to_id("crop", user_initiated=False); qtbot.wait(50)
         assert win._side.width() == side_w, "the Crop panel widened the right column"
         p = win._panel.shape_picker
-        for b in p.buttons() + p.orientation.buttons() + win._panel.guides_box.buttons() + [
+        for b in p.buttons() + [p.orientation] + win._panel.guides_box.buttons() + [
                 win._panel.rotate_btn, win._panel.flip_h_btn, win._panel.flip_v_btn]:
             assert b.width() >= b.minimumSizeHint().width(), b.text()
             assert b.mapTo(win._side, b.rect().topRight()).x() <= win._side.width(), b.text()
         assert p.buttons()[0].width() >= 52, "a shape button too narrow for its label"
+    finally:
+        app.setStyleSheet(before)
+
+
+def _crop_controls(panel):
+    p = panel.shape_picker
+    return ([(b.text(), b) for b in p.buttons()] + [("orientation", p.orientation)]
+            + [(b.text(), b) for b in (panel.rotate_btn, panel.flip_h_btn, panel.flip_v_btn)]
+            + [(b.text(), b) for b in panel.guides_box.buttons()])
+
+
+@pytest.mark.parametrize("size", [(1280, 800), (1440, 900 - 30 - 28)])
+def test_every_crop_control_is_in_view_without_scrolling(qtbot, tmp_path, size):
+    """The step card's scroll zone is ~208 px tall on a MacBook (review I1,
+    2026-10-10): the first layout put Rotate/Flip and Guides wholly below it.
+    Measured in the real window, real stylesheet, side panel and histogram in."""
+    from PySide6.QtCore import QRect
+    from PySide6.QtWidgets import QApplication
+    from nocturne.ui.theme import build_stylesheet
+    app = QApplication.instance()
+    before = app.styleSheet()
+    app.setStyleSheet(build_stylesheet())
+    try:
+        win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False,
+                         telemetry=False)
+        win._async_enabled = False
+        qtbot.addWidget(win)
+        win.open_fits(_fits(tmp_path))
+        win.resize(*size); win.show(); qtbot.waitExposed(win)
+        win._go_to_id("crop", user_initiated=False); qtbot.wait(80)
+        scroll = win._side.scroll
+        assert scroll.verticalScrollBar().value() == 0
+        view = scroll.viewport()
+        port = view.rect()
+        for name, w in _crop_controls(win._panel):
+            assert w.isVisible(), name
+            top_left = w.mapTo(view, w.rect().topLeft())
+            r = QRect(top_left, w.size())
+            assert port.contains(r), f"{name} at {r.getRect()} outside the {port.height()} px view"
+            # Within 200 px, not just the 208 measured offscreen: Cocoa's fonts
+            # are not offscreen's, and a 2 px margin would not survive them.
+            assert r.bottom() <= 200, f"{name} ends at {r.bottom()} px"
     finally:
         app.setStyleSheet(before)

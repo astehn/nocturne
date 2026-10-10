@@ -67,7 +67,8 @@ def test_crop_and_trim_help_name_exactly_the_shape_controls_that_exist(qtbot):
         b = _body(topic)
         for gone in ("Aspect ratio", "Rule of thirds", "Center cross", "Rotate 90"):
             assert gone not in b, f"{topic} help still names {gone!r}"
-        assert "<b>Shape</b>" in b and "<b>Orientation</b>" in b
+        assert "<b>Shape</b>" in b and "<b>Portrait</b>" in b
+        assert picker.orientation.text() == "Portrait"
         assert "Free" in b and "Original" in b
         assert picker.labels()[:2] == ["Free", "Original"]
         for g in GUIDES[1:]:
@@ -78,8 +79,11 @@ def test_crop_and_trim_help_name_exactly_the_shape_controls_that_exist(qtbot):
         assert name in b, f"the crop help never lists {name}"
     for btn in (crop.rotate_btn, crop.flip_h_btn, crop.flip_v_btn):
         assert f"<b>{btn.text().replace(chr(176), '&deg;')}</b>" in b, btn.text()
-    assert "turned to portrait is 2:3" in crop.shape_picker.note.text()
-    assert "Portrait</b> makes 3:2 into 2:3" in b
+    assert "3:2 becomes 2:3" in crop.shape_picker.orientation.toolTip()
+    assert "<b>Portrait</b>, turns the chosen shape: it makes 3:2 into" in b
+    from PySide6.QtWidgets import QLabel
+    assert any("APPLY INSTANTLY" in lb.text() for lb in crop.findChildren(QLabel)), \
+        "the help says the heading says so"
 
 
 def test_share_has_no_free_shape_and_upscale_has_one(qtbot):
@@ -89,7 +93,12 @@ def test_share_has_no_free_shape_and_upscale_has_one(qtbot):
     d = _upscale_dialog(qtbot)
     assert d.shape_picker.labels()[0] == "Free" and d.shape_picker.ratio() is None
     assert "no Free button" in b_share and "<b>Free</b> (any shape you drag, where it opens)" in b_up
-    assert "<b>Orientation</b>" in b_share and "<b>Orientation</b>" in b_up
+    assert "<b>Portrait</b>" in b_share and "<b>Portrait</b>" in b_up
+    # Review M5: the compare pane is "Before", so "Original" names one thing here.
+    from PySide6.QtWidgets import QLabel
+    panes = [lb.text() for lb in d._pair.findChildren(QLabel)]
+    assert "Before" in panes and "Original" not in panes
+    assert "<b>Before</b>" in b_up
 
 
 def test_stacking_help_names_the_real_controls():

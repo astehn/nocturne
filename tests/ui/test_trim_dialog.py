@@ -75,7 +75,7 @@ def test_a_wide_aspect_gives_a_wide_box(qtbot):
     t, b, l, r = d.view.crop_bounds()
     wide = (r - l) / max(1, b - t)
     d.shape_picker.button("5:4").click()
-    d.shape_picker.orientation.buttons()[1].click()      # Portrait: 4:5
+    d.shape_picker.orientation.click()      # Portrait: 4:5
     t, b, l, r = d.view.crop_bounds()
     tall = (r - l) / max(1, b - t)
     assert wide > tall, f"16:9 ({wide:.2f}) is not wider than 4:5 ({tall:.2f})"
@@ -105,7 +105,7 @@ def test_a_portrait_trim_really_is_tall(qtbot):
     d = TrimDialog(_img(h=200, w=300)); qtbot.addWidget(d); d.show()
     qtbot.waitExposed(d)
     d.shape_picker.button("3:2").click()
-    d.shape_picker.orientation.buttons()[1].click()
+    d.shape_picker.orientation.click()
     t, b, l, r = d.view.crop_bounds()
     assert abs((r - l) / (b - t) - 2 / 3) < 0.03
     assert d.shape() == "2:3"

@@ -457,7 +457,7 @@ def test_crop_panel_shape_buttons_report_the_turned_name(qapp):
     p = w.shape_picker
     assert p.labels() == ["Free", "Original", "1:1", "5:4", "4:3", "3:2", "16:9"]
     p.button("3:2").click()
-    p.orientation.buttons()[1].click()
+    p.orientation.click()
     assert seen == ["3:2", "2:3"]
     assert [b.text() for b in (w.rotate_btn, w.flip_h_btn, w.flip_v_btn)] == \
         ["\u21bb 90\u00b0", "\u21cb Flip H", "\u21f5 Flip V"]

@@ -181,7 +181,8 @@ QPushButton#level:checked:disabled {{ background: #34373c; color: {TEXT_DIM}; }}
    Rotate / Flip), from the approved crop mock-up: separate rounded keys, the
    chosen one tinted with the accent rather than filled with it. */
 QPushButton#shapeSeg {{ background: {BG_3}; border: 1px solid #3a3d43; border-radius: 6px;
-    padding: 6px 2px; font-size: 12px; }}
+    padding: 3px 2px; font-size: 12px; }}
+QPushButton#shapeSeg:focus {{ border-color: {ACCENT_HI}; }}
 QPushButton#shapeSeg:hover {{ border-color: {TEXT_FAINT}; }}
 QPushButton#shapeSeg:checked {{ background: rgba(74, 144, 226, 46); border-color: {ACCENT}; }}
 QPushButton#shapeSeg:disabled {{ color: {TEXT_FAINT}; border-color: #34373c; }}

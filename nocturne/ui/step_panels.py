@@ -429,11 +429,13 @@ def build_panel(
         if on_guides_change is not None:
             guides.currentTextChanged.connect(
                 lambda t: on_guides_change(GUIDE_KINDS[t]))
+        # Compact on purpose: the whole card must fit the ~208 px a MacBook
+        # leaves it (test_every_crop_control_is_in_view_without_scrolling).
+        # "Apply instantly" lives in the heading, not a line of its own.
+        controls.setSpacing(4)
         controls.addWidget(shapes)
-        controls.addSpacing(6)
-        controls.addWidget(section_label("Rotate / flip"))
+        controls.addWidget(section_label("Rotate / flip \u00b7 apply instantly"))
         controls.addWidget(turns)
-        controls.addWidget(_desc_label("Rotate / Flip apply instantly"))
         controls.addWidget(section_label("Guides"))
         controls.addWidget(guides)
         # The crop's size readout: a status line, so it goes with the notes.

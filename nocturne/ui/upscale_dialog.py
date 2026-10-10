@@ -218,7 +218,9 @@ class UpscaleDialog(QDialog):
         for v in (self.original_view, self.result_view, self.wipe_view):
             v.setMinimumSize(240, 220)
         self._pair = QWidget(); pl = QHBoxLayout(self._pair); pl.setContentsMargins(0, 0, 0, 0)
-        pl.addWidget(_labelled("Original", self.original_view), 1)
+        # "Before", not "Original": a shape button two panes away is called
+        # Original and means the picture's proportions (review M5).
+        pl.addWidget(_labelled("Before", self.original_view), 1)
         self.original_view.setToolTip(ORIGINAL_TIP)
         pl.addWidget(_labelled("Nocturne", self.result_view), 1)
         self.views = QStackedWidget(); self.views.addWidget(self._pair); self.views.addWidget(self.wipe_view)

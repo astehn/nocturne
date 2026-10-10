@@ -85,7 +85,7 @@ def test_the_selected_aspect_is_visible(qtbot):
     assert checked == ["Original"], "the starting aspect must be shown as active"
 
     dlg.shape_picker.button("5:4").click()
-    dlg.shape_picker.orientation.buttons()[1].click()       # Portrait
+    dlg.shape_picker.orientation.click()       # Portrait
     checked = [b.text() for b in dlg.shape_picker.buttons() if b.isChecked()]
     assert checked == ["4:5"], "exactly one aspect is active at a time"
     assert dlg._aspect_label == "4:5"
