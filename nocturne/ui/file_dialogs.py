@@ -59,10 +59,16 @@ def _first_selected(dlg: QFileDialog) -> str:
     return files[0] if files else ""
 
 
-def choose_folder(parent, caption: str, directory: str = "") -> str:
-    """A directory, or "" if cancelled. Mirrors QFileDialog.getExistingDirectory."""
+def choose_folder(parent, caption: str, directory: str = "", accept: str = "Choose") -> str:
+    """A directory, or "" if cancelled. Mirrors QFileDialog.getExistingDirectory.
+
+    `accept` names the button. The macOS folder panel says "Open" by default,
+    which read as the wrong action on an export (Andreas, 2026-10-10: "does not
+    say Export or Save on the action button but rather Open"). Qt passes an
+    explicitly set Accept label to the native panel as its prompt."""
     dlg = _prepare(parent, caption, directory, "")
     dlg.setFileMode(QFileDialog.FileMode.Directory)
+    dlg.setLabelText(QFileDialog.DialogLabel.Accept, accept)
     dlg.setOption(QFileDialog.Option.ShowDirsOnly, True)
     return _first_selected(dlg) if dlg.exec() else ""
 

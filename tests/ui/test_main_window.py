@@ -716,7 +716,9 @@ def test_export_final_split_writes_two_tiffs(qtbot, tmp_path, monkeypatch):
     win.settings = Settings(rcastro_path=str(rc_bin))
 
     out = tmp_path / "splitout"; out.mkdir()
-    monkeypatch.setattr(file_dialogs, "choose_folder", (lambda *a, **k: str(out)))
+    asked = []
+    monkeypatch.setattr(file_dialogs, "choose_folder",
+                        (lambda *a, **k: asked.append(k.get("accept")) or str(out)))
 
     class _FakeRC:
         def __init__(self, *a, **k):
@@ -734,6 +736,7 @@ def test_export_final_split_writes_two_tiffs(qtbot, tmp_path, monkeypatch):
     win.export_final("Starless + Stars (two TIFFs)")
     assert (out / "starless.tif").exists()
     assert (out / "stars.tif").exists()
+    assert asked == ["Export"], "the folder panel's button must say Export, not Open"
 
 
 def test_export_final_single_file(qtbot, tmp_path, monkeypatch):

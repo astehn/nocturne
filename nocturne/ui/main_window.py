@@ -7033,7 +7033,8 @@ class MainWindow(QMainWindow):
             if not rcastro_valid(self.settings):
                 self._show_warning("Starless + stars split needs RC-Astro (see Settings).")
                 return
-            folder = file_dialogs.choose_folder(self, "Export starless + stars to…", start_dir(self.settings.base_dir))
+            folder = file_dialogs.choose_folder(self, "Export starless + stars to…", start_dir(self.settings.base_dir),
+                                                accept="Export")
             if not folder:
                 return
 

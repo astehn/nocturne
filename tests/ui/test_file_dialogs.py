@@ -142,3 +142,14 @@ def test_no_modal_session_leaves_the_parent_alone(qtbot):
     w = QWidget(); qtbot.addWidget(w)
     assert _reachable_parent(w) is w
     assert _reachable_parent(None) is None
+
+
+def test_the_folder_button_names_the_action_not_open(qtbot, monkeypatch):
+    """macOS's folder panel says "Open" unless told otherwise, which read as the
+    wrong action on an export (Andreas, 2026-10-10). Read back off the dialog."""
+    rec = _patch(monkeypatch, _Recorder(files=["/tmp/out"]))
+    parent = QWidget(); qtbot.addWidget(parent)
+    file_dialogs.choose_folder(parent, "Folder")
+    file_dialogs.choose_folder(parent, "Export to", accept="Export")
+    labels = [m["dlg"].labelText(QFileDialog.DialogLabel.Accept) for m in rec.made]
+    assert labels == ["Choose", "Export"]

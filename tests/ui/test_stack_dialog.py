@@ -1597,7 +1597,7 @@ def test_browse_picks_a_folder_and_the_automatic_name_survives(qtbot, tmp_path, 
     dlg, stats = _graded_ngc(qtbot, tmp_path)
     name_before = dlg.name_edit.text()
     monkeypatch.setattr(file_dialogs, "choose_folder",
-                        lambda parent, caption, directory="": str(elsewhere))
+                        lambda parent, caption, directory="", accept="Choose": str(elsewhere))
     monkeypatch.setattr(file_dialogs, "save_file",
                         lambda *a, **k: pytest.fail("Browse must pick a folder, not a file"))
     dlg._browse_save_to()
