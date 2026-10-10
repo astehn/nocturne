@@ -34,14 +34,14 @@ def test_dialog_builds_with_preview(qtbot):
 
 def test_selecting_aspect_locks_ratio(qtbot):
     d = _dlg(qtbot)
-    d._select_aspect(1.0, "1:1")
+    d._select_shape("1:1")
     out = d._compose_current()
     assert abs(out.width() - out.height()) <= 2      # square
 
 def test_original_after_ratio_restores_full_frame(qtbot):
     d = _dlg(qtbot)
-    d._select_aspect(1.0, "1:1")               # lock to a square box
-    d._select_aspect(None, "Original")         # go back to Original
+    d._select_shape("1:1")               # lock to a square box
+    d._select_shape("Picture")         # go back to Original
     assert d._current_crop() == (0, 400, 0, 300)   # full frame (h=400,w=300), not the 1:1 box
 
 
@@ -81,21 +81,23 @@ def test_the_selected_aspect_is_visible(qtbot):
     """Six plain push-buttons showed no state at all: after clicking around, the
     only way to know what you would get was to read the preview's shape."""
     dlg = _dlg(qtbot)
-    checked = [lbl for lbl, b in dlg._aspect_buttons.items() if b.isChecked()]
+    checked = [b.text() for b in dlg.shape_picker.buttons() if b.isChecked()]
     assert checked == ["Original"], "the starting aspect must be shown as active"
 
-    dlg._aspect_buttons["4:5"].click()
-    checked = [lbl for lbl, b in dlg._aspect_buttons.items() if b.isChecked()]
+    dlg.shape_picker.button("5:4").click()
+    dlg.shape_picker.orientation.buttons()[1].click()       # Portrait
+    checked = [b.text() for b in dlg.shape_picker.buttons() if b.isChecked()]
     assert checked == ["4:5"], "exactly one aspect is active at a time"
     assert dlg._aspect_label == "4:5"
+    assert dlg._aspect == pytest.approx(4 / 5)
 
 
 def test_selecting_an_aspect_in_code_updates_the_buttons(qtbot):
     """The row must not go stale when the aspect is set other than by a click."""
     dlg = _dlg(qtbot)
-    dlg._select_aspect(1.0, "1:1")
-    assert dlg._aspect_buttons["1:1"].isChecked()
-    assert not dlg._aspect_buttons["Original"].isChecked()
+    dlg._select_shape("1:1")
+    assert dlg.shape_picker.button("1:1").isChecked()
+    assert not dlg.shape_picker.button("Picture").isChecked()
 
 
 def test_size_choice_changes_the_composed_output(qtbot):
@@ -632,9 +634,9 @@ def test_the_reframing_pane_only_appears_when_it_can_do_something(qtbot):
     d = _dlg(qtbot)
     d.show(); qtbot.waitExposed(d)
     assert d._image_view.isVisible() is False, "the crop pane shows with nothing to crop"
-    d._select_aspect(1.0, "1:1")
+    d._select_shape("1:1")
     assert d._image_view.isVisible() is True, "no way to set the framing"
-    d._select_aspect(None, "Original")
+    d._select_shape("Picture")
     assert d._image_view.isVisible() is False
 
 
@@ -652,7 +654,7 @@ def test_the_pane_is_visible_exactly_when_the_crop_is_live(qtbot):
     assert d._image_view.crop_box_visible() is False
     assert d._current_crop() == (0, h, 0, w)          # the whole picture
 
-    d._select_aspect(1.0, "1:1")
+    d._select_shape("1:1")
     assert d._image_view.isVisible() is True
     assert d._image_view.crop_box_visible() is True
     assert d._current_crop() != (0, h, 0, w), "a live crop with no pane to set it"
@@ -698,10 +700,10 @@ def test_the_reframe_hint_appears_only_with_the_box_and_says_it_is_safe(qtbot):
     d = _dlg(qtbot)
     d.show(); qtbot.waitExposed(d)
     assert d._reframe_hint.isVisible() is False, "explains a box that is not there"
-    d._select_aspect(1.0, "1:1")
+    d._select_shape("1:1")
     assert d._reframe_hint.isVisible() is True
     assert "not changed" in d._reframe_hint.text()
-    d._select_aspect(None, "Original")
+    d._select_shape("Picture")
     assert d._reframe_hint.isVisible() is False
 
 
@@ -711,8 +713,8 @@ def test_the_hint_is_not_a_lie(qtbot):
     import numpy as np
     d = _dlg(qtbot)
     before = d._source().copy()
-    d._select_aspect(1.0, "1:1")
-    d._select_aspect(9 / 16, "9:16")
+    d._select_shape("1:1")
+    d._select_shape("9:16")
     d._compose_current()
     np.testing.assert_array_equal(d._source(), before)
 

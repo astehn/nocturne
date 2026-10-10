@@ -26,14 +26,19 @@ import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
+    QDialog, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget,
 )
 
-from ..core.crop import ASPECT_RATIOS, ASPECTS, GUIDE_KINDS, GUIDES
+from ..core.crop import GUIDE_KINDS, GUIDES
 
 from .image_view import ImageView
 from .preview import to_qimage
 from .help_link import HelpLink
+from .shape_picker import SegmentRow, ShapePicker, section_label
+
+# The side column holding the shape grid: four buttons across at the mock-up's
+# size, and no wider — the picture is what a trim is judged on.
+SIDE_W = 280
 
 
 class TrimDialog(QDialog):
@@ -72,22 +77,24 @@ class TrimDialog(QDialog):
         # kind of difficult to do a meaningful trim". ImageView already has all
         # of it — eight handles, apply_aspect, set_guides — Trim simply never
         # wired a control to any of it.
-        self.aspect_box = QComboBox()
-        self.aspect_box.addItems(ASPECTS)
-        self.aspect_box.currentTextChanged.connect(
-            lambda t: self.view.apply_aspect(ASPECT_RATIOS[t]))
-        self.guides_box = QComboBox()
-        self.guides_box.addItems(GUIDES)
+        self.shape_picker = ShapePicker(offer_free=True)
+        self.shape_picker.set_picture_ratio(w / h)
+        self.shape_picker.shapeChanged.connect(
+            lambda name: self.view.apply_aspect(self.shape_picker.ratio()))
+        self.guides_box = SegmentRow(GUIDES)
         self.guides_box.currentTextChanged.connect(
             lambda t: self.view.set_guides(GUIDE_KINDS[t]))
 
-        controls = QHBoxLayout()
-        controls.addWidget(QLabel("Aspect ratio"))
-        controls.addWidget(self.aspect_box)
-        controls.addSpacing(16)
-        controls.addWidget(QLabel("Guides"))
-        controls.addWidget(self.guides_box)
-        controls.addStretch(1)
+        side_col = QVBoxLayout()
+        side_col.setContentsMargins(0, 0, 0, 0)
+        side_col.addWidget(self.shape_picker)
+        side_col.addSpacing(6)
+        side_col.addWidget(section_label("Guides"))
+        side_col.addWidget(self.guides_box)
+        side_col.addStretch(1)
+        side = QWidget()
+        side.setLayout(side_col)
+        side.setFixedWidth(SIDE_W)
 
         self.apply_btn = QPushButton("Apply Trim")
         self.apply_btn.setObjectName("primary")
@@ -101,10 +108,13 @@ class TrimDialog(QDialog):
         buttons.addWidget(cancel)
         buttons.addWidget(self.apply_btn)
 
+        body = QHBoxLayout()
+        body.addWidget(self.view, 1)
+        body.addWidget(side)
+
         root = QVBoxLayout(self)
         root.addWidget(self.hint)
-        root.addLayout(controls)
-        root.addWidget(self.view, 1)
+        root.addLayout(body, 1)
         self.help_link = HelpLink("trim", self)
         root.addWidget(self.help_link, 0, Qt.AlignmentFlag.AlignRight)
         root.addLayout(buttons)
@@ -136,3 +146,7 @@ class TrimDialog(QDialog):
 
     def bounds(self) -> tuple[int, int, int, int] | None:
         return self._bounds
+
+    def shape(self) -> str:
+        """The stored name of the shape the trim was made with."""
+        return self.shape_picker.shape()

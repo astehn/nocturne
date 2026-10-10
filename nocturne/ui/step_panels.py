@@ -9,11 +9,12 @@ from PySide6.QtWidgets import (
 )
 
 from .option_buttons import OptionButtons
+from .shape_picker import SegmentRow, ShapePicker, section_label
 from ..core.autostretch import _TARGET_BG
 from ..steps.stretch_step import _DEFAULT as _STEP_DEFAULT
 from ..core.color import ColorSettings
 from ..core.stretch import _TARGET_MAX as _STRETCH_MAX, _TARGET_MIN as _STRETCH_MIN
-from ..core.crop import ASPECTS, GUIDE_KINDS, GUIDES
+from ..core.crop import GUIDE_KINDS, GUIDES
 from ..core import nr_models
 from .apply_button import ApplyButton
 from .curve_editor import CurveEditor
@@ -403,42 +404,42 @@ def build_panel(
         notes.addWidget(note)
 
     elif stage.kind == "crop":
-        aspect = QComboBox()
-        aspect.addItems(ASPECTS)
+        # Shape buttons, not a dropdown: each draws the frame it makes, and
+        # Orientation turns it (shape_picker.py; Andreas's variant B, 2026-10-10).
+        shapes = ShapePicker(offer_free=True)
         if on_crop_change is not None:
-            aspect.currentTextChanged.connect(lambda t: on_crop_change(t))
-        rotate_btn = QPushButton("Rotate 90° ↻")
+            shapes.shapeChanged.connect(lambda name: on_crop_change(name))
+        turns = SegmentRow(["\u21bb 90\u00b0", "\u21cb Flip H", "\u21f5 Flip V"],
+                           checkable=False)
+        rotate_btn, flip_h, flip_v = turns.buttons()
+        rotate_btn.setToolTip("Rotate a quarter turn clockwise")
+        flip_h.setToolTip("Mirror left to right")
+        flip_v.setToolTip("Mirror top to bottom")
         if on_rotate is not None:
             rotate_btn.clicked.connect(lambda: on_rotate())
-        flip_h = QPushButton("Flip H")
         if on_flip_h is not None:
             flip_h.clicked.connect(lambda: on_flip_h())
-        flip_v = QPushButton("Flip V")
         if on_flip_v is not None:
             flip_v.clicked.connect(lambda: on_flip_v())
         apply_btn = ApplyButton("Apply Crop")
         apply_btn.setEnabled(False)  # off until the crop box is shown (cropBoxShown)
         if on_crop_apply is not None:
             apply_btn.clicked.connect(lambda: on_crop_apply())
-        guides = QComboBox()
-        guides.addItems(GUIDES)
+        guides = SegmentRow(GUIDES)
         if on_guides_change is not None:
             guides.currentTextChanged.connect(
                 lambda t: on_guides_change(GUIDE_KINDS[t]))
-        controls.addWidget(QLabel("Aspect ratio"))
-        controls.addWidget(aspect)
-        controls.addWidget(QLabel("Guides"))
-        controls.addWidget(guides)
-        controls.addWidget(rotate_btn)
-        flips = QHBoxLayout()
-        flips.addWidget(flip_h)
-        flips.addWidget(flip_v)
-        controls.addLayout(flips)
+        controls.addWidget(shapes)
+        controls.addSpacing(6)
+        controls.addWidget(section_label("Rotate / flip"))
+        controls.addWidget(turns)
         controls.addWidget(_desc_label("Rotate / Flip apply instantly"))
+        controls.addWidget(section_label("Guides"))
+        controls.addWidget(guides)
         # The crop's size readout: a status line, so it goes with the notes.
         size = _desc_label("—")
         notes.addWidget(size)
-        w.aspect_box = aspect
+        w.shape_picker = shapes
         w.guides_box = guides
         w.rotate_btn = rotate_btn
         w.flip_h_btn = flip_h

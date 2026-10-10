@@ -177,6 +177,15 @@ QPushButton#level[seg="last"] {{ border-top-right-radius: 8px; border-bottom-rig
 QPushButton#level[seg="only"] {{ border-radius: 8px; border-left-width: 1px; }}
 QPushButton#level:checked {{ background: #565b64; color: #ffffff; font-weight: 600; }}
 QPushButton#level:checked:disabled {{ background: #34373c; color: {TEXT_DIM}; }}
+/* Segment buttons beside the shape grid (shape_picker.py: Orientation, Guides,
+   Rotate / Flip), from the approved crop mock-up: separate rounded keys, the
+   chosen one tinted with the accent rather than filled with it. */
+QPushButton#shapeSeg {{ background: {BG_3}; border: 1px solid #3a3d43; border-radius: 6px;
+    padding: 6px 2px; font-size: 12px; }}
+QPushButton#shapeSeg:hover {{ border-color: {TEXT_FAINT}; }}
+QPushButton#shapeSeg:checked {{ background: rgba(74, 144, 226, 46); border-color: {ACCENT}; }}
+QPushButton#shapeSeg:disabled {{ color: {TEXT_FAINT}; border-color: #34373c; }}
+QPushButton#shapeSeg:checked:disabled {{ background: rgba(74, 144, 226, 18); border-color: #34373c; }}
 /* A one-glyph button in a narrow fixed width (Share's ↺). */
 QPushButton#glyph {{ padding: 8px 0; }}
 QPushButton#linkButton {{ background: transparent; border: none; color: {ACCENT};

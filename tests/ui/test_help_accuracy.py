@@ -49,6 +49,48 @@ def test_trim_help_matches_how_trim_actually_behaves():
     assert "history" in b or "edit survives" in b or "whole edit" in b
 
 
+def test_crop_and_trim_help_name_exactly_the_shape_controls_that_exist(qtbot):
+    """The dropdowns became shape buttons on 2026-10-10. Every control the two
+    topics name is one the panel or dialog has, by its own label, and the old
+    names are gone."""
+    import numpy as np
+    from nocturne.core.crop import GUIDES
+    from nocturne.core.image import AstroImage
+    from nocturne.ui.pipeline import path_stages
+    from nocturne.ui.step_panels import build_panel
+    from nocturne.ui.trim_dialog import TrimDialog
+    crop = build_panel(next(s for s in path_stages() if s.id == "crop"))
+    trim = TrimDialog(AstroImage(np.zeros((20, 30, 3), np.float32), is_linear=False))
+    qtbot.addWidget(crop); qtbot.addWidget(trim)
+    for topic, picker, guides in (("crop", crop.shape_picker, crop.guides_box),
+                                  ("trim", trim.shape_picker, trim.guides_box)):
+        b = _body(topic)
+        for gone in ("Aspect ratio", "Rule of thirds", "Center cross", "Rotate 90"):
+            assert gone not in b, f"{topic} help still names {gone!r}"
+        assert "<b>Shape</b>" in b and "<b>Orientation</b>" in b
+        assert "Free" in b and "Original" in b
+        assert picker.labels()[:2] == ["Free", "Original"]
+        for g in GUIDES[1:]:
+            assert f"<b>{g}</b>" in b, f"{topic} help never names the {g} guide"
+        assert [x.text() for x in guides.buttons()] == GUIDES
+    b = _body("crop")
+    for name in picker.labels()[2:]:
+        assert name in b, f"the crop help never lists {name}"
+    for btn in (crop.rotate_btn, crop.flip_h_btn, crop.flip_v_btn):
+        assert f"<b>{btn.text().replace(chr(176), '&deg;')}</b>" in b, btn.text()
+    assert "turned to portrait is 2:3" in crop.shape_picker.note.text()
+    assert "Portrait</b> makes 3:2 into 2:3" in b
+
+
+def test_share_and_upscale_help_say_there_is_no_free_shape(qtbot):
+    b_share, b_up = _body("share"), _body("upscale")
+    d = _upscale_dialog(qtbot)
+    assert "Free" not in d.shape_picker.labels()
+    assert "no Free button" in b_share and "no Free shape" in b_up
+    assert "<b>Orientation</b>" in b_share and "<b>Orientation</b>" in b_up
+    assert "Original (free)" not in b_up, "Upscale's Original is locked now"
+
+
 def test_stacking_help_names_the_real_controls():
     """The topic explained neither Strictness nor Integration, so a user faced
     with three strictness levels and two integration methods had nothing to

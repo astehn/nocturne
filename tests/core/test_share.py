@@ -38,7 +38,8 @@ def test_share_filename():
 def test_aspects_are_width_over_height():
     d = dict(ASPECTS)
     assert d["Original"] is None and d["1:1"] == 1.0
-    assert abs(d["9:16"] - 9/16) < 1e-9
+    assert abs(d["16:9"] - 16/9) < 1e-9
+    assert "9:16" not in d, "portrait shapes come from turning, not from the list"
 
 
 import numpy as np

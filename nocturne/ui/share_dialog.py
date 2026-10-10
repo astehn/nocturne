@@ -9,15 +9,16 @@ import shiboken6
 from PySide6.QtCore import QThreadPool, QTimer, Qt
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog,
-    QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QSizePolicy, QSlider, QSplitter, QVBoxLayout, QWidget,
+    QCheckBox, QColorDialog, QComboBox, QDialog,
+    QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QPushButton, QScrollArea, QSizePolicy, QSlider, QSplitter, QVBoxLayout, QWidget,
 )
 
+from ..core.crop import PICTURE, shape_ratio
 from ..core.plate import PlateText, plate_text
 from ..core.presets import PRESETS, style_from_dict, style_to_dict
 from ..core.share import (
-    ASPECTS, CAPTION_SIZES, DEFAULT_CAPTION_SIZE, DEFAULT_SIZE, FORMATS, SIZES,
+    CAPTION_SIZES, DEFAULT_CAPTION_SIZE, DEFAULT_SIZE, FORMATS, SIZES,
     centered_crop, share_filename,
 )
 from .share_render import (
@@ -25,6 +26,7 @@ from .share_render import (
 )
 from ..settings import start_dir
 from .fonts import PLATE_FAMILIES, available_families
+from .shape_picker import ShapePicker
 
 # Typing pause before the preview recomposes. 90 ms is what main_window uses for
 # its tint/de-green/levels previews; curves uses 60 for a drag, which is a
@@ -167,23 +169,12 @@ class ShareDialog(QDialog):
         self._reframe_hint.setVisible(False)
 
 
-        # Checkable + one exclusive group, so the active aspect is visible. Six
-        # plain push-buttons showed no state at all: after clicking around, the
-        # only way to know what you would get was to read the preview's shape.
-        aspect_row = QGridLayout()
-        aspect_row.setSpacing(4)
-        self._aspect_group = QButtonGroup(self)
-        self._aspect_group.setExclusive(True)
-        self._aspect_buttons: dict[str, QPushButton] = {}
-        for _i, (label, aspect) in enumerate(ASPECTS):
-            btn = QPushButton(label)
-            btn.setCheckable(True)
-            btn.setObjectName("choice")   # the theme lights the chosen one
-            btn.setChecked(label == self._aspect_label)
-            btn.clicked.connect(lambda _checked=False, a=aspect, lbl=label: self._select_aspect(a, lbl))
-            self._aspect_group.addButton(btn)
-            self._aspect_buttons[label] = btn
-            aspect_row.addWidget(btn, _i // 3, _i % 3)   # 6 aspects, two rows of three
+        # Shape buttons shared with Crop, Trim and Upscale (shape_picker.py).
+        # No Free: this fits the whole picture to a shape, and its Original is
+        # the picture as it is — no frame at all.
+        self.shape_picker = ShapePicker(offer_free=False, title="Post as", make_label=_dim)
+        self.shape_picker.set_picture_ratio(rgb8.shape[1] / rgb8.shape[0])
+        self.shape_picker.shapeChanged.connect(self._select_shape)
         # Output controls. Every one of these used to be a constant in the
         # source: 2048 px, JPEG, quality 92. For a tool that exists to produce a
         # file for somewhere else, not being able to say how big or what format
@@ -225,13 +216,9 @@ class ShareDialog(QDialog):
         # picture, and the picture is not changed. Crop composes the image and
         # Trim finishes it; this fits the result into somebody else's frame,
         # once per destination.
-        post_as = QLabel("Post as")
-        post_as.setStyleSheet("color: #8b8f96;")
-
         frame_col = QVBoxLayout()
         frame_col.setContentsMargins(0, 0, 0, 0)
-        frame_col.addWidget(post_as)
-        frame_col.addLayout(aspect_row)
+        frame_col.addWidget(self.shape_picker)
         frame_col.addSpacing(8)
         frame_col.addLayout(out_form)
         frame_col.addWidget(self._annot_check)
@@ -461,6 +448,16 @@ class ShareDialog(QDialog):
         self._side = QWidget()
         self._side.setLayout(side)
         self._side.setFixedWidth(_SIDE_W)
+        # Scrolls: the shape buttons (2026-10-10) are taller than the text row
+        # they replaced, and at the dialog's opening 640 px the plate rows were
+        # being squeezed into each other rather than pushed down.
+        side_scroll = QScrollArea()
+        side_scroll.setWidget(self._side)
+        side_scroll.setWidgetResizable(True)
+        side_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        side_scroll.setFixedWidth(_SIDE_W + side_scroll.verticalScrollBar().sizeHint().width())
+        self._side_scroll = side_scroll
 
         picture = QVBoxLayout()
         picture.setContentsMargins(0, 0, 0, 0)
@@ -470,7 +467,7 @@ class ShareDialog(QDialog):
 
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
-        body.addWidget(self._side)
+        body.addWidget(self._side_scroll)
         body.addLayout(picture, 1)
 
         root = QVBoxLayout(self)
@@ -601,12 +598,14 @@ class ShareDialog(QDialog):
             self._image_view.show_crop_box()
         self._refresh_preview()
 
-    def _select_aspect(self, aspect, label: str) -> None:
+    def _select_shape(self, name: str) -> None:
+        """`name` is a stored shape name ("Picture", "1:1", "9:16"); the
+        picker is set to it first, so calling this in code keeps it honest."""
+        if name != self.shape_picker.shape():
+            self.shape_picker.set_shape(name)
+        aspect = None if name == PICTURE else shape_ratio(name)
         self._aspect = aspect
-        self._aspect_label = label
-        btn = self._aspect_buttons.get(label)
-        if btn is not None and not btn.isChecked():
-            btn.setChecked(True)      # keeps the row honest when called in code
+        self._aspect_label = self.shape_picker.label()
         self._image_view.set_aspect(aspect)
         if aspect is None:
             # Original = full frame, no crop. Drop any prior aspect box so the

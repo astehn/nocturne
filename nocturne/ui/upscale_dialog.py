@@ -8,12 +8,11 @@ import shiboken6
 from PySide6.QtCore import QPoint, Qt, QThreadPool, QTimer
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
-    QButtonGroup, QDialog, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSlider,
+    QButtonGroup, QDialog, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSlider,
     QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from ..core.export import save_jpeg, save_png, save_tiff
-from ..core.share import ASPECTS
 from ..core.tasks import CancelToken, Cancelled
 from ..core.upscale import (
     TIGHTEN_DEFAULT, LanczosEngine, memory_gb, upscale_limit_mp, finish_upscale, megapixels,
@@ -24,6 +23,7 @@ from .image_view import ImageView
 from .linked_views import link_views
 from .progress_ring import ProgressRing
 from .upscale_navigator import UpscaleNavigator
+from .shape_picker import ShapePicker
 from .busy_gate import BusyGate, keep_live
 from .worker import run_async
 from . import file_dialogs, theme
@@ -98,6 +98,7 @@ ORIGINAL_TIP = ("Your crop as it is, drawn at the upscale's size — at 100% eac
 # Wide enough for the navigator to be a map rather than a stamp (his note,
 # 2026-09-29: "very very small even though there is plenty of room").
 COMPARE_PANEL_W = 300
+PICK_PANEL_W = 280      # four shape buttons across (shape_picker.py)
 
 class UpscaleDialog(QDialog):
     def __init__(self, img, metadata: dict, settings, rc=None, on_open_copy=None, parent=None,
@@ -140,19 +141,17 @@ class UpscaleDialog(QDialog):
         self.picker.cropBoxChanged.connect(lambda *_: self._sync_size())
         self.picker.cropBoxShown.connect(self._sync_size)
 
-        # Three rows of two: six in one row of the 240 px panel squeezed every
-        # label, and three across still cut "Original" (70 px for an 80 px hint).
-        self.shape_buttons, group = {}, QButtonGroup(self)
-        shapes = QGridLayout()
-        for i, (label, ratio) in enumerate(ASPECTS):
-            b = QPushButton(label)
-            b.setCheckable(True)
-            b.clicked.connect(lambda _c=False, r=ratio: self._set_shape(r))
-            group.addButton(b)
-            shapes.addWidget(b, i // 2, i % 2)
-            self.shape_buttons[label] = b
-        self.shape_buttons["Original"].setChecked(True)
-
+        # Shape buttons shared with Crop, Trim and Share (shape_picker.py). No
+        # Free, as in Share: Original locks the box to the picture's own
+        # proportions. The 240 px panel became 280 to fit four across.
+        h0, w0 = self._img.data.shape[:2]
+        self.shape_picker = ShapePicker(offer_free=False, title=None)
+        self.shape_picker.set_picture_ratio(w0 / h0)
+        self.shape_picker.shapeChanged.connect(lambda _name: self._set_shape(
+            self.shape_picker.ratio()))
+        # By the landscape label ("Original", "16:9"), fixed at opening.
+        self.shape_buttons = {b.text(): b for b in self.shape_picker.buttons()}
+        self.picker.set_aspect(self.shape_picker.ratio())   # Original is locked too
         self.size_label = QLabel("")
         # The limit follows this computer's memory (core/upscale.py), so the
         # panel says what it is and why, beside the button it disables — in
@@ -179,22 +178,36 @@ class UpscaleDialog(QDialog):
 
         panel = QVBoxLayout()
         panel.addWidget(QLabel("<b>Shape</b>"))
-        panel.addLayout(shapes)
+        panel.addWidget(self.shape_picker)
         panel.addWidget(QLabel("<b>Size</b>"))
         panel.addWidget(self.size_label)
         panel.addWidget(self.limit_label)
         panel.addWidget(self.limit_note)
         panel.addWidget(self.noise_note)
         panel.addStretch(1)
-        panel.addWidget(self.upscale_btn)
         side = QWidget()
         side.setLayout(panel)
-        side.setFixedWidth(240)
-        self._pick_side = side
+        side.setFixedWidth(PICK_PANEL_W)
+        # Scrolls, so that at the dialog's 500 px minimum the shape grid is
+        # pushed down rather than its two rows drawn over each other; the
+        # Upscale button stays pinned below it, always in reach.
+        side_scroll = QScrollArea()
+        side_scroll.setWidget(side)
+        side_scroll.setWidgetResizable(True)
+        side_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        pick_col = QVBoxLayout()
+        pick_col.setContentsMargins(0, 0, 0, 0)
+        pick_col.addWidget(side_scroll, 1)
+        pick_col.addWidget(self.upscale_btn)
+        pick_side = QWidget()
+        pick_side.setLayout(pick_col)
+        pick_side.setFixedWidth(PICK_PANEL_W + side_scroll.verticalScrollBar().sizeHint().width())
+        self._pick_side = pick_side
 
         pick = QHBoxLayout()
         pick.addWidget(self.picker, 1)
-        pick.addWidget(side)
+        pick.addWidget(pick_side)
         pick_page = QWidget()
         pick_page.setLayout(pick)
         self.pages = QStackedWidget()

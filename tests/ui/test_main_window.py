@@ -4145,6 +4145,7 @@ class _FakeTrim:
     def __init__(self, bounds): self._b = bounds
     def exec(self): return 1
     def bounds(self): return self._b
+    def shape(self): return "Free"
 
 
 def test_a_cancelled_trim_changes_nothing(qtbot, tmp_path, monkeypatch):

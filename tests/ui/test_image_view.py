@@ -872,16 +872,17 @@ def test_a_ratio_taller_than_the_frame_still_reshapes_the_box(qtbot):
 
 
 def test_every_offered_ratio_is_actually_honoured(qtbot):
-    """The whole dropdown, not one value — the bug hit exactly the two ratios
-    nobody had tried on a landscape frame."""
-    from nocturne.core.crop import ASPECT_RATIOS
+    """Every shape button in both orientations, not one value — the bug hit
+    exactly the two ratios nobody had tried on a landscape frame."""
+    from nocturne.core.crop import RATIO_SHAPES, shape_name, shape_ratio
     v = _boxed(qtbot)
-    for name, ratio in ASPECT_RATIOS.items():
-        if ratio is None:
-            continue
-        v.apply_aspect(ratio)
-        t, b, l, r = v.crop_bounds()
-        assert abs((r - l) / max(1, b - t) - ratio) < 0.02, f"{name} not honoured"
+    for base, _r in RATIO_SHAPES:
+        for portrait in (False, True):
+            name = shape_name(base, portrait)
+            ratio = shape_ratio(name)
+            v.apply_aspect(ratio)
+            t, b, l, r = v.crop_bounds()
+            assert abs((r - l) / max(1, b - t) - ratio) < 0.02, f"{name} not honoured"
 
 
 def test_the_box_never_leaves_the_image(qtbot):
