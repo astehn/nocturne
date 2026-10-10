@@ -927,12 +927,18 @@ def test_text_opacity_starts_at_full_and_has_a_readable_floor(qtbot):
     assert dlg._opacity_slider.minimum() == 30 and dlg._opacity_slider.maximum() == 100
 
 
-def test_text_opacity_reaches_the_render_and_is_persisted(qtbot):
-    saved = {}
+def test_text_opacity_reaches_the_render_but_is_never_saved(qtbot):
+    """Was ..._and_is_persisted. Andreas, 2026-10-10: opacity "should always
+    start with the full opacity ... every time the user enters the Share tool".
+    The slider still drives the render; it is just never written to settings,
+    so moving it — and then touching a control that does save — leaves the
+    saved look at full opacity."""
     from nocturne.settings import Settings
     from nocturne.ui.share_dialog import ShareDialog
-    dlg = ShareDialog(_rgb(), {"target": "NGC 281"}, Settings(handle="me"),
-                      settings_saver=lambda s: saved.update(style=dict(s.plate_style)))
+    st = Settings(handle="me")
+    saves = []
+    dlg = ShareDialog(_rgb(), {"target": "NGC 281"}, st,
+                      settings_saver=lambda s: saves.append(dict(s.plate_style)))
     qtbot.addWidget(dlg)
     def pixels(q):
         from PySide6.QtGui import QImage
@@ -942,22 +948,55 @@ def test_text_opacity_reaches_the_render_and_is_persisted(qtbot):
     dlg._opacity_slider.setValue(60)
     assert dlg._opacity_val.text() == "60%"
     assert dlg._style().text_opacity == pytest.approx(0.60)
-    assert saved["style"]["text_opacity"] == pytest.approx(0.60)
     after = pixels(dlg._compose_current())
     assert len(before) > 1000 and before != after, "the export must change with the slider"
+    dlg._cap_size_box.setCurrentIndex((dlg._cap_size_box.currentIndex() + 1)
+                                      % dlg._cap_size_box.count())   # a control that saves
+    assert saves, "fixture: nothing was saved, so nothing was tested"
+    for saved in saves:
+        assert saved.get("text_opacity", 1.0) == 1.0
+    assert st.plate_style.get("text_opacity", 1.0) == 1.0
 
 
-def test_a_saved_opacity_is_restored_and_a_preset_resets_it(qtbot):
+def test_an_opacity_saved_by_v0_50_is_ignored_on_open(qtbot):
+    """v0.50.0 saved the slider. A 0.6 already on disk must not come back."""
     from dataclasses import replace
     from nocturne.core.presets import preset_by_name, style_to_dict
     from nocturne.settings import Settings
     from nocturne.ui.share_dialog import ShareDialog
-    saved = style_to_dict(replace(preset_by_name("Plate"), text_opacity=0.7))
+    saved = style_to_dict(replace(preset_by_name("Plate"), text_opacity=0.6))
     dlg = ShareDialog(_rgb(), {"target": "X"}, Settings(plate_preset="Plate", plate_style=saved))
     qtbot.addWidget(dlg)
-    assert dlg._opacity_slider.value() == 70
-    dlg._preset_box.setCurrentIndex(0)               # a preset is a whole look
+    assert dlg._preset_box.currentData() == "Plate", "fixture: the saved look was not used"
     assert dlg._opacity_slider.value() == 100 and dlg._opacity_val.text() == "100%"
+    assert dlg._style().text_opacity == 1.0
+
+
+def test_a_second_share_opens_at_full_opacity(qtbot):
+    """Same settings object, same image: the next open still starts at 100%."""
+    from nocturne.settings import Settings
+    from nocturne.ui.share_dialog import ShareDialog
+    st = Settings(handle="me")
+    first = ShareDialog(_rgb(), {"target": "X"}, st, settings_saver=lambda s: None)
+    qtbot.addWidget(first)
+    first._opacity_slider.setValue(60)
+    first._family_box.setCurrentIndex(first._family_box.count() - 1)   # saves the look
+    first.close()
+    second = ShareDialog(_rgb(), {"target": "X"}, st, settings_saver=lambda s: None)
+    qtbot.addWidget(second)
+    assert second._opacity_slider.value() == 100
+
+
+def test_a_preset_switch_keeps_the_opacity(qtbot):
+    """Was ..._a_preset_resets_it. Opacity is not part of a look, so choosing
+    another look within one open dialog keeps the slider where the user put it."""
+    dlg = _dlg(qtbot)
+    dlg._opacity_slider.setValue(60)
+    i = dlg._preset_box.currentIndex()
+    dlg._preset_box.setCurrentIndex((i + 1) % dlg._preset_box.count())
+    assert dlg._preset_box.currentIndex() != i, "fixture: the preset did not change"
+    assert dlg._opacity_slider.value() == 60 and dlg._opacity_val.text() == "60%"
+    assert dlg._style().text_opacity == pytest.approx(0.60)
 
 
 def test_a_look_saved_before_opacity_existed_still_opens_at_full(qtbot):
@@ -979,4 +1018,4 @@ def test_a_damaged_saved_opacity_still_opens(qtbot, bad):
     saved = style_to_dict(preset_by_name("Plate")); saved["text_opacity"] = bad
     dlg = ShareDialog(_rgb(), {"target": "X"}, Settings(plate_preset="Plate", plate_style=saved))
     qtbot.addWidget(dlg)
-    assert 30 <= dlg._opacity_slider.value() <= 100
+    assert dlg._opacity_slider.value() == 100

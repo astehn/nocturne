@@ -72,15 +72,6 @@ def _dim(text: str) -> QLabel:
     return lb
 
 
-def _opacity_percent(value) -> int:
-    """A saved opacity as slider percent; a hand-edited or damaged settings
-    value must not stop Share from opening, so anything unreadable is 100%."""
-    try:
-        return max(30, min(100, round(float(value) * 100)))
-    except (TypeError, ValueError):
-        return 100
-
-
 class ShareDialog(QDialog):
     def __init__(self, rgb8: np.ndarray, metadata: dict, settings, parent=None,
                  annotated_rgb8: np.ndarray | None = None,
@@ -326,11 +317,14 @@ class ShareDialog(QDialog):
 
         # 30% floor: the thin subtitle and credit weights disappear into a busy
         # star field below it, and a plate nobody can read is not a choice.
+        # Always opens at 100% and is never saved (Andreas, 2026-10-10): a
+        # faded plate is a choice for one picture, and inheriting it unseen on
+        # the next share is a surprise, not a house style.
         self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self._opacity_slider.setRange(30, 100)
         self._opacity_slider.setSingleStep(5)
         self._opacity_slider.setPageStep(10)
-        self._opacity_slider.setValue(_opacity_percent(start.text_opacity))
+        self._opacity_slider.setValue(100)
         self._opacity_slider.setToolTip(
             "How strongly the text shows. Lower lets the picture through the "
             "letters, so the plate sits in the image rather than on top of it")
@@ -558,20 +552,16 @@ class ShareDialog(QDialog):
 
     def _sync_style_boxes(self, style) -> None:
         """Point every control at `style` without any of them reporting a user
-        choice — a preset is one decision, not five."""
+        choice — a preset is one decision, not five. Opacity is left where
+        the user put it: it is not part of a look."""
         _set_box(self._family_box, style.family)
         _set_box(self._treatment_box, style.treatment)
         _set_box(self._anchor_box, style.anchor)
         self._cap_colour = style.colour
         self._paint_colour_btn()
-        self._opacity_slider.blockSignals(True)
-        self._opacity_slider.setValue(_opacity_percent(style.text_opacity))
-        self._opacity_slider.blockSignals(False)
-        self._opacity_val.setText(f"{self._opacity_slider.value()}%")
 
     def _set_opacity(self, value: int) -> None:
-        self._opacity_val.setText(f"{value}%")
-        self._persist_plate_style()
+        self._opacity_val.setText(f"{value}%")      # nothing to save: see __init__
         self._refresh_preview()
 
     def _set_preset(self, _i: int) -> None:
@@ -709,8 +699,9 @@ class ShareDialog(QDialog):
     def _persist_plate_style(self) -> None:
         """Style is a personal house style, not a per-image choice — re-picking
         it on every share would be absurd. The TEXT is deliberately not saved:
-        it belongs to this image."""
-        style = self._style()
+        it belongs to this image; nor is the opacity, which starts at full on
+        every open."""
+        style = replace(self._style(), text_opacity=1.0)
         if not self._placement_touched and self._annotations_on:
             # The matte came from this image carrying annotations, not from the
             # user. Saving it would make one annotated share change every share
