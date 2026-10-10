@@ -583,7 +583,10 @@ def test_narrowband_help_quotes_the_defaults_the_dialog_opens_with(qtbot):
     d.blue_slider.setValue(d.blue_slider.maximum())
     assert (d.gold_val.text(), d.blue_val.text()) == ("0%", "200%")
     assert "0% leaves that colour grey, and 200% doubles it" in b
-    assert "100% is already close to it" in b and "keep their colour rather than turning orange" in b
+    # Measured on his frames (review 2026-10-10): Gold 200% gives x1.1-1.7 of
+    # the 100% chroma; the fixture below reads inside that band.
+    assert "between about 1.1 and 1.7 times as strong" in b
+    assert "keeps its colour rather than turning orange" in b
     assert d.lightness_check.isChecked() is False
     assert "Preserve lightness — off by default" in b
 
@@ -675,7 +678,7 @@ def test_narrowband_help_is_right_about_gold_and_blue_and_lightness(qtbot):
                 # bright gold is near sRGB's edge already at 100% (x1.25 since
                 # 2026-10-10) and is fitted back without a hue change: it grows
                 # a little, far less than 2x, and stays the same gold
-                assert 1.03 < ratio < 1.5, (g, bl, ratio)
+                assert 1.03 < ratio < 1.75, (g, bl, ratio)
                 hue = np.degrees(np.arctan2(lab[:, cols, 2], lab[:, cols, 1]))
                 hue0 = np.degrees(np.arctan2(base[:, cols, 2], base[:, cols, 1]))
                 assert abs(float(np.median(hue - hue0))) < 1.0, "gold turned another colour"
