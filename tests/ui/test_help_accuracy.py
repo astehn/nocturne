@@ -1980,3 +1980,22 @@ def test_share_help_gives_the_opacity_range_the_slider_has(qtbot):
     assert f"from {s.minimum()}% to {s.maximum()}%" in b
     assert f"stops at {s.minimum()}%" in b
     assert "a shadow fades with the text" in b
+
+
+def test_help_names_the_levels_auto_button_as_the_button_shows_it():
+    """The Levels button became "Auto black point" (2026-10-08). Every help
+    passage that tells the user to press it must use the label they will see;
+    a bare <b>Auto</b> sends them looking for a button that is not there."""
+    from nocturne.ui.pipeline import path_stages
+    from nocturne.ui.step_panels import build_panel
+    stage = next(s for s in path_stages() if s.id == "levels")
+    w = build_panel(stage, on_levels_auto=lambda: None)
+    try:
+        label = w.auto_btn.text()
+    finally:
+        w.deleteLater()
+    assert label == "Auto black point"
+    for tid in ("levels", "starless_levels", "recipes"):
+        b = _body(tid)
+        assert "<b>Auto</b>" not in b, f"{tid!r} still names the old 'Auto' button"
+        assert f"<b>{label}</b>" in b, f"{tid!r} does not name the {label!r} button"

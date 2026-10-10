@@ -814,7 +814,7 @@ def build_panel(
         w.apply_btn = w.primary_action = apply_btn
 
     elif stage.kind == "levels":
-        auto_btn = QPushButton("Auto")
+        auto_btn = QPushButton("Auto black point")
         # Checkable purely as an INDICATOR: it stays down while the values on the
         # sliders are still the ones Auto derived, and pops up the moment one is
         # nudged. That is the only sign of whether the recipe will store "derive

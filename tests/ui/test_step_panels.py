@@ -885,3 +885,11 @@ def test_controls_and_notes_follow_the_description(qtbot, stage):
     assert w.header.isAncestorOf(w.desc_box) and w.header.isAncestorOf(w.help_link)
     assert not w.isAncestorOf(w.header), "the header is handed out, not in the card"
     assert (lay.indexOf(body), lay.indexOf(notes)) == (0, 1)
+
+
+def test_levels_auto_button_says_what_it_does(qtbot):
+    """Andreas, 2026-10-08: the button should say what it does. It moves the
+    black point only; gamma and white stay put."""
+    w = build_panel(_stage("levels"), on_levels_auto=lambda: None)
+    qtbot.addWidget(w)
+    assert w.auto_btn.text() == "Auto black point"

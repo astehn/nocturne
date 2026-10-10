@@ -175,3 +175,29 @@ def test_auto_measures_the_same_image_the_commit_will(qtbot, tmp_path):
     assert shown[0] == pytest.approx(expected[0], abs=2e-3), (
         f"Auto suggested {shown[0]:.4f} from the wrong image; the commit will "
         f"use {expected[0]:.4f}")
+
+
+def test_the_longer_auto_label_fits_the_right_column_at_1280x800(qtbot, tmp_path):
+    """"Auto" became "Auto black point" (2026-10-08). The right column is
+    narrow; the longer label must neither widen it nor be cut off, at the
+    smallest window the app supports, under the real stylesheet."""
+    from PySide6.QtWidgets import QApplication
+    from nocturne.ui.theme import build_stylesheet
+    app = QApplication.instance()
+    before = app.styleSheet()
+    app.setStyleSheet(build_stylesheet())
+    try:
+        win = _window(qtbot, tmp_path)
+        win.open_fits(_fits_with_a_noise_floor(tmp_path))
+        win.resize(1280, 800); win.show(); qtbot.waitExposed(win)
+        win._go_to_id("stretch", user_initiated=False); qtbot.wait(30)
+        side_w = win._side.width()
+        win.apply_current(0.5)
+        win._go_to_id("levels", user_initiated=False); qtbot.wait(50)
+        btn = win._panel.auto_btn
+        assert btn.text() == "Auto black point"
+        assert win._side.width() == side_w, "the label widened the right column"
+        assert btn.width() >= btn.sizeHint().width(), "the label is cut off"
+        assert btn.mapTo(win._side, btn.rect().topRight()).x() <= win._side.width()
+    finally:
+        app.setStyleSheet(before)
