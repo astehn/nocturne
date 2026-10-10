@@ -138,6 +138,7 @@ def serialize_option(stage_id, option):
             "brightness": p.brightness, "highlight_recover": p.highlight_recover,
             "saturation": p.saturation, "lightness_preserve": p.lightness_preserve,
             "protect_background": p.protect_background, "scnr": p.scnr,
+            "gold_strength": p.gold_strength, "blue_strength": p.blue_strength,
         }
     return option  # background / noise_sharpen: str
 

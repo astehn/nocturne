@@ -802,3 +802,102 @@ def test_double_click_resets_a_slider_to_the_current_palettes_default(qtbot):
         _double_click(d.oxygen_slider)
         _double_click(d.protect_slider)
         assert (d.oxygen_slider.value(), d.protect_slider.value()) == (oxygen, protect), palette
+
+
+# --- separate Gold and Blue strength (2026-10-09) ----------------------------
+
+def _shown(qtbot):
+    d = _dialog(qtbot, starless=_img(), stars=None)
+    d.show()
+    qtbot.waitExposed(d)
+    return d
+
+
+def test_gold_and_blue_replace_saturation_in_sho_style_only(qtbot):
+    """Swapped, not greyed: two dead rows on two of three palettes is clutter
+    on a 1280x800 screen. Read back from the shown widgets, per palette."""
+    d = _shown(qtbot)
+    rows = {"gold": d.gold_slider, "blue": d.blue_slider, "sat": d.sat_slider}
+    for palette in (GOLD_BLUE, "HOO", "Pseudo-SHO", GOLD_BLUE):
+        d.palette_box.setCurrentText(palette)
+        gb = palette == GOLD_BLUE
+        seen = {k: s.isVisible() for k, s in rows.items()}
+        assert seen == {"gold": gb, "blue": gb, "sat": not gb}, palette
+        assert d.gold_val.isVisible() is gb and d.sat_val.isVisible() is not gb, palette
+
+
+def test_gold_and_blue_open_at_100_percent(qtbot):
+    d = _shown(qtbot)
+    assert (d.gold_slider.value(), d.blue_slider.value()) == (100, 100)
+    assert (d.gold_val.text(), d.blue_val.text()) == ("100%", "100%")
+    assert (d.gold_slider.maximum(), d.blue_slider.maximum()) == (200, 200)
+    p = d._params()
+    assert (p.gold_strength, p.blue_strength) == (1.0, 1.0)
+    d.gold_slider.setValue(135)
+    d.blue_slider.setValue(0)
+    assert (d.gold_val.text(), d.blue_val.text()) == ("135%", "0%")
+    p = d._params()
+    assert (p.gold_strength, p.blue_strength) == (1.35, 0.0)
+
+
+def test_each_palette_reads_only_its_own_strength_sliders(qtbot):
+    """SHO-style takes Gold and Blue and the DEFAULT saturation; the others
+    take Saturation and leave Gold and Blue at 100%. Both kept their values
+    while hidden, for when you switch back."""
+    d = _shown(qtbot)
+    d.gold_slider.setValue(150)
+    d.blue_slider.setValue(40)
+    d.sat_slider.setValue(30)
+    p = d._params()
+    assert (p.gold_strength, p.blue_strength) == (1.5, 0.4)
+    assert p.saturation == palette_defaults(GOLD_BLUE).saturation == 0.85
+    d.palette_box.setCurrentText("HOO")
+    p = d._params()
+    assert p.saturation == 0.30 and (p.gold_strength, p.blue_strength) == (1.0, 1.0)
+    assert (d.gold_slider.value(), d.blue_slider.value()) == (150, 40)
+    d.palette_box.setCurrentText(GOLD_BLUE)
+    assert (d._params().gold_strength, d._params().blue_strength) == (1.5, 0.4)
+    assert d.sat_slider.value() == 30
+
+
+def test_gold_and_blue_reset_by_double_click_and_by_reset(qtbot):
+    d = _shown(qtbot)
+    d.gold_slider.setValue(170)
+    d.blue_slider.setValue(20)
+    _double_click(d.gold_slider)
+    _double_click(d.blue_slider)
+    assert (d.gold_slider.value(), d.blue_slider.value()) == (100, 100)
+    d.gold_slider.setValue(170)
+    d.blue_slider.setValue(20)
+    d.palette_box.setCurrentText("HOO")
+    d.reset()
+    assert (d.gold_slider.value(), d.blue_slider.value()) == (100, 100)
+    assert d._params() == palette_defaults(DEFAULT_PALETTE)
+
+
+def test_gold_and_blue_preview_apply_and_replay_agree(qtbot):
+    """What you tune is what Apply commits and what a recipe replays."""
+    from nocturne.recipe import deserialize_option, serialize_option
+    from nocturne.steps.narrowband_step import NarrowbandStep
+    base, starless, stars = _gb_layers(h=300, w=500)
+    got = []
+    d = NarrowbandDialog(Settings(), base, starless=starless, stars=stars,
+                         on_apply=lambda r, p: got.append((r, p)))
+    qtbot.addWidget(d)
+    d._on_starless((starless, stars))
+    before = d._last.data.copy()
+    d.gold_slider.setValue(160)
+    d.blue_slider.setValue(30)
+    d._do_render()
+    assert not np.array_equal(d._last.data, before), "the sliders must reach the preview"
+    d.apply()
+    qtbot.waitUntil(lambda: bool(got), timeout=15000)
+    result, params = got[0]
+    assert (params.gold_strength, params.blue_strength) == (1.6, 0.3)
+
+    class SameSplit:
+        def remove_stars(self, image, runner=None):
+            return starless, stars
+    option = deserialize_option("narrowband", serialize_option("narrowband", params))
+    replay = NarrowbandStep(SameSplit()).apply(base, option)
+    assert np.array_equal(replay.data, result.data)
