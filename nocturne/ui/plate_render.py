@@ -371,13 +371,15 @@ def _scrim(p: QPainter, w: int, h: int, block_h: float, anchor: str,
 
 
 def _shadow(p: QPainter, w: int, h: int, lay: dict, left: float, top: float,
-            anchor: str) -> None:
+            anchor: str, opacity: float = 1.0) -> None:
+    """Fades with the text: a half-transparent word over a full-strength
+    shadow reads as a dark smudge with faint letters in it."""
     layer = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
     layer.fill(0)
     lp = QPainter(layer)
     lp.setRenderHint(QPainter.RenderHint.Antialiasing)
     lp.setRenderHint(QPainter.RenderHint.TextAntialiasing)
-    _draw_items(lp, lay, left, top, anchor, QColor(0, 0, 0, _SHADOW_ALPHA))
+    _draw_items(lp, lay, left, top, anchor, QColor(0, 0, 0, round(_SHADOW_ALPHA * opacity)))
     lp.end()
     soft = blur(layer, max(1, round(lay["px_max"] * _SHADOW_BLUR)))
     for _ in range(_SHADOW_PASSES):
@@ -396,6 +398,9 @@ def draw_plate(image: QImage, text, style) -> QImage:
     lay = _measure(text, style, w, h)
     treatment = str(getattr(style, "treatment", "scrim") or "scrim")
     colour = QColor(str(getattr(style, "colour", "#F0E9E2")))
+    opacity = min(1.0, max(0.0, float(getattr(style, "text_opacity", 1.0))))
+    if opacity < 1.0:
+        colour.setAlphaF(opacity)
     mx, block_w, block_h = lay["margin"], lay["block_w"], lay["block_h"]
     pad = h * _PAD
 
@@ -439,7 +444,7 @@ def draw_plate(image: QImage, text, style) -> QImage:
         p.fillRect(0, round(y0), w, max(1, round(band_h)),
                    QColor(0, 0, 0, round(255 * _BAND_ALPHA)))
     elif treatment == "shadow":
-        _shadow(p, out.width(), out.height(), lay, left, top, style.anchor)
+        _shadow(p, out.width(), out.height(), lay, left, top, style.anchor, opacity)
 
     _draw_items(p, lay, left, top, style.anchor, colour)
 

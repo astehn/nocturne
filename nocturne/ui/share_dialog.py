@@ -11,7 +11,7 @@ from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDialog,
     QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QSizePolicy, QSplitter, QVBoxLayout, QWidget,
+    QPushButton, QSizePolicy, QSlider, QSplitter, QVBoxLayout, QWidget,
 )
 
 from ..core.plate import PlateText, plate_text
@@ -70,6 +70,15 @@ def _dim(text: str) -> QLabel:
     lb = QLabel(text)
     lb.setStyleSheet("color: #8b8f96;")
     return lb
+
+
+def _opacity_percent(value) -> int:
+    """A saved opacity as slider percent; a hand-edited or damaged settings
+    value must not stop Share from opening, so anything unreadable is 100%."""
+    try:
+        return max(30, min(100, round(float(value) * 100)))
+    except (TypeError, ValueError):
+        return 100
 
 
 class ShareDialog(QDialog):
@@ -315,6 +324,20 @@ class ShareDialog(QDialog):
         self._colour_btn.clicked.connect(self._pick_colour)
         self._paint_colour_btn()
 
+        # 30% floor: the thin subtitle and credit weights disappear into a busy
+        # star field below it, and a plate nobody can read is not a choice.
+        self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._opacity_slider.setRange(30, 100)
+        self._opacity_slider.setSingleStep(5)
+        self._opacity_slider.setPageStep(10)
+        self._opacity_slider.setValue(_opacity_percent(start.text_opacity))
+        self._opacity_slider.setToolTip(
+            "How strongly the text shows. Lower lets the picture through the "
+            "letters, so the plate sits in the image rather than on top of it")
+        self._opacity_val = QLabel(f"{self._opacity_slider.value()}%")
+        self._opacity_val.setMinimumWidth(36)
+        self._opacity_slider.valueChanged.connect(self._set_opacity)
+
         self._treatment_box = QComboBox()
         for label, key in TREATMENTS:
             self._treatment_box.addItem(label, key)
@@ -360,6 +383,11 @@ class ShareDialog(QDialog):
         style_form.addRow(_dim("Typeface"), self._family_box)
         style_form.addRow(_dim("Type size"), self._cap_size_box)
         style_form.addRow(_dim("Colour"), self._colour_btn)
+        opacity_row = QHBoxLayout()
+        opacity_row.setContentsMargins(0, 0, 0, 0)
+        opacity_row.addWidget(self._opacity_slider, 1)
+        opacity_row.addWidget(self._opacity_val)
+        style_form.addRow(_dim("Opacity"), opacity_row)
         style_form.addRow(_dim("Background"), self._treatment_box)
         style_form.addRow(_dim("Position"), self._anchor_box)
 
@@ -516,6 +544,7 @@ class ShareDialog(QDialog):
                        treatment=self._treatment_box.currentData() or base.treatment,
                        anchor=self._anchor_box.currentData() or base.anchor,
                        colour=self._cap_colour,
+                       text_opacity=self._opacity_slider.value() / 100.0,
                        size_title=base.size_title * scale,
                        size_sub=base.size_sub * scale,
                        size_credit=base.size_credit * scale)
@@ -535,6 +564,15 @@ class ShareDialog(QDialog):
         _set_box(self._anchor_box, style.anchor)
         self._cap_colour = style.colour
         self._paint_colour_btn()
+        self._opacity_slider.blockSignals(True)
+        self._opacity_slider.setValue(_opacity_percent(style.text_opacity))
+        self._opacity_slider.blockSignals(False)
+        self._opacity_val.setText(f"{self._opacity_slider.value()}%")
+
+    def _set_opacity(self, value: int) -> None:
+        self._opacity_val.setText(f"{value}%")
+        self._persist_plate_style()
+        self._refresh_preview()
 
     def _set_preset(self, _i: int) -> None:
         self._placement_touched = True     # a preset IS a chosen look
