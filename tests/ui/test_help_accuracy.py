@@ -583,7 +583,7 @@ def test_narrowband_help_quotes_the_defaults_the_dialog_opens_with(qtbot):
     d.blue_slider.setValue(d.blue_slider.maximum())
     assert (d.gold_val.text(), d.blue_val.text()) == ("0%", "200%")
     assert "0% leaves that colour grey, and 200% doubles it" in b
-    assert "stops growing at around 150% and keeps its colour rather than turning orange" in b
+    assert "100% is already close to it" in b and "keep their colour rather than turning orange" in b
     assert d.lightness_check.isChecked() is False
     assert "Preserve lightness — off by default" in b
 
@@ -672,9 +672,10 @@ def test_narrowband_help_is_right_about_gold_and_blue_and_lightness(qtbot):
         for cols, k, want_sign in ((gold_side, g, 1), (blue_side, bl, -1)):
             ratio = chroma(lab, cols) / chroma(base, cols)
             if cols is gold_side and k == 2.0:
-                # bright gold hits sRGB's edge and is fitted back without a hue
-                # change: it grows less than 2x, but stays the same gold
-                assert 1.2 < ratio < 1.95, (g, bl, ratio)
+                # bright gold is near sRGB's edge already at 100% (x1.25 since
+                # 2026-10-10) and is fitted back without a hue change: it grows
+                # a little, far less than 2x, and stays the same gold
+                assert 1.03 < ratio < 1.5, (g, bl, ratio)
                 hue = np.degrees(np.arctan2(lab[:, cols, 2], lab[:, cols, 1]))
                 hue0 = np.degrees(np.arctan2(base[:, cols, 2], base[:, cols, 1]))
                 assert abs(float(np.median(hue - hue0))) < 1.0, "gold turned another colour"

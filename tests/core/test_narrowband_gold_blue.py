@@ -372,21 +372,25 @@ def test_less_oxygen_moves_the_balance_point_toward_oxygen():
 
 def test_star_taper_drains_the_brightest_only_in_a_layer_that_still_has_stars():
     data, core = _with_oxygen_core(_pure_ha(360, 640), amp=0.3)
-    data[175:185, 495:505] = (0.92, 1.0, 1.0)                         # a bright, oxygen-side "star"
+    # A bright oxygen-side "star", at L ~0.91: brighter still and sRGB itself
+    # can hold almost no colour (fitted into gamut, L 0.98 keeps 0.0076), so the
+    # taper would have nothing left to drain.
+    data[175:185, 495:505] = (0.80, 0.88, 0.88)
     img = AstroImage(data, is_linear=False)
     p = palette_defaults(GOLD_BLUE)
     p.protect_background = 0.0
-    bright = nb._srgb_to_oklab(data)[..., 0] > 0.95
+    bright = nb._srgb_to_oklab(data)[..., 0] > 0.89
     assert bright.sum() >= 50
 
     def chroma(has_stars):
         lab = nb._srgb_to_oklab(render(img, p, has_stars=has_stars).data)
         return np.hypot(lab[..., 1], lab[..., 2])[bright]
-    # The taper is linear to zero at L = 1 over 0.15 of L, so at L ~0.98 it
-    # keeps ~13% of the colour; without stars nothing holds it back.
+    # The taper is linear to zero at L = 1 over 0.15 of L, so at L ~0.91 it
+    # keeps ~60% of the colour (0.78 measured, gamut trims both); without stars
+    # nothing holds it back.
     with_stars, without = chroma(True), chroma(False)
     assert np.median(without) > 0.01
-    assert (with_stars <= 0.25 * without).all()
+    assert (with_stars <= 0.85 * without).all(), (np.median(with_stars), np.median(without))
 
 
 # Exact-t probe: a zero pedestal makes t = O/(Ha+O) scale-invariant, and centre 0.5,
@@ -411,14 +415,14 @@ def test_colour_ramp_shape_is_gamma_0_6():
 
 
 def test_gold_and_blue_at_100_percent_keep_the_approved_balance():
-    # Gold 0.70 of the chroma, blue 0.60 (GB_BLUE_REF, the Oxygen 60% he
-    # approved) — so at d = -1 and d = +1 gold is 0.70/0.60 of the blue,
-    # whatever Oxygen strength says. Before the Gold/Blue split the blue was
-    # x oxygen and this probe (oxygen 1.0) read 0.70.
+    # Gold 0.70 x 1.25 of the chroma, blue 0.60 x 0.80 — his starting point of
+    # 2026-10-10 (Gold 125% / Blue 80% of the look approved on 2026-10-08) — so
+    # at d = -1 and d = +1 gold is 0.875/0.48 of the blue, whatever Oxygen
+    # strength says.
     c, L = _probe_chroma([(0.9, 0.3, 0.3), (0.3, 0.9, 0.9)])          # d = -1 and d = +1
     assert (L >= nb._GB_DARK_L).all()
-    assert nb.GB_BLUE_REF == 0.60
-    assert c[0] / c[1] == pytest.approx(0.70 / 0.60, rel=0.03)
+    assert nb._GB_GOLD_SCALE == pytest.approx(0.875) and nb.GB_BLUE_REF == pytest.approx(0.48)
+    assert c[0] / c[1] == pytest.approx(0.875 / 0.48, rel=0.03)
 
 
 def test_dark_parts_get_colour_in_proportion_to_their_lightness():
@@ -449,8 +453,12 @@ def _cool(out):
 
 def _still_blue(data, crop):
     """Of the crop region's blue in the full-frame render, the share still
-    blue when the crop is rendered on its own (defaults)."""
+    blue when the crop is rendered on its own. Blue at 125% = the strength these
+    retention numbers were measured at (before the 80% starting point), so the
+    "clearly blue" threshold sees the same pixels; retention is about WHERE the
+    blue goes, which Blue's strength never changes."""
     p = palette_defaults(GOLD_BLUE)
+    p.blue_strength = 1.25
     full = render(AstroImage(data, is_linear=False), p, has_stars=False).data
     alone_img = AstroImage(np.ascontiguousarray(data[crop]), is_linear=False)
     alone = render(alone_img, p, has_stars=False).data
@@ -688,13 +696,15 @@ def test_a_small_bright_hydrogen_nebula_is_not_oxygen_at_its_brightest():
 
 # sha256 of _engine(...) at the palette's defaults. First captured at ada3254
 # BEFORE Gold/Blue existed (blue was then x Oxygen 0.60), so 100% on both = that
-# look; those pins passed unchanged on 5804170. Re-pinned once, for the gold hue
-# 34 -> 39 deg (his "rust", 2026-10-09) and nothing else.
+# look; those pins passed unchanged on 5804170. Re-pinned since for deliberate
+# look changes only: gold hue 34 -> 39 deg (2026-10-09), the gold edge
+# (2026-10-09), and his starting point Gold 125% / Blue 80% with the always-on
+# gamut fit and the smoothed edge gold (2026-10-10).
 _DEFAULT_LOOK = {
-    "open": "47ef2783c783c4336008e27a5e4399846052ccdcb7e4e25dc09eb1c89f86dc8b",
-    "pure": "48ab9429afe5e56defa08052a38b9b63122f52226b5cec92ab386fd0ae85ebe8",
-    "mid": "b36009e981d15739679497b1b94b7b5f15ea9c8d55926eb19af1c3d2775f8c8c",
-    "default_protect": "e660a81524fdecc05d87ba8d911dfff94a8c783cf93feb0db8877ab084459bde",   # gold edge, 2026-10-09
+    "open": "bdb1daba058326c1714e9dd8a3163ecc17d4b3be6992fef816fd932d0a5a97e5",
+    "pure": "c6837b5fd8552e83017e58642fb24af2d4b569ab53c0e27b052b1ca8b3275404",
+    "mid": "b45c601f4f92099f53d39fa689152f13878448161815a9b691f1d4fa5bb35a3e",
+    "default_protect": "67158d361358a2050beec86b1c08fdb0da57ce371f7e5a648768db0e5ceef168",
 }
 
 
@@ -841,10 +851,55 @@ def test_faint_hydrogen_at_protects_edge_is_gold_not_the_originals_red():
     # blend left it; the outermost edge still fades in, so not all the way
     new_off, old_off = np.abs(hue(lab) - hue(lab_pal)), np.abs(hue(lab_old) - hue(lab_pal))
     assert (new_off <= old_off + 0.5).mean() > 0.99
-    assert np.median(new_off) < 0.8 * np.median(old_off), (np.median(new_off), np.median(old_off))
-    blue = edge & (lab_pal[..., 2] < -0.01)
-    if blue.any():   # blue side: the plain blend, up to blending in OKLab vs RGB
+    # This fixture's faint edge is weakly gold (smoothed b below _GB_EDGE_GOLD_B),
+    # so the gain is modest here (53.6 -> 46.8 deg off); on his real frames it is
+    # large, pinned in test_his_faint_edges_turn_gold.
+    assert np.median(new_off) < 0.9 * np.median(old_off), (np.median(new_off), np.median(old_off))
+    # blue NEIGHBOURHOODS: the plain blend, up to blending in OKLab vs RGB. A lone
+    # noisy blue pixel inside gold now turns gold; that is the grain fix.
+    b_smooth = nb._blur_scaled(lab_pal[..., 2], nb._GB_EDGE_SMOOTH)
+    blue = edge & (lab_pal[..., 2] < -0.01) & (b_smooth < 0)
+    if blue.any():
         de = np.linalg.norm(lab[blue] - lab_old[blue], axis=-1)
         assert np.percentile(de, 99) < 0.01, np.percentile(de, 99)
     sky = m < 1e-4
     assert np.abs(out[sky] - data[sky]).max() < 2e-3, "the empty sky must stay as it was"
+
+
+@pytest.mark.parametrize("name", ["IC1805", "M16", "NGC7000"])
+def test_his_faint_edges_turn_gold(name):
+    """On his own frames the faint gold edge was red-orange (OKLab hue 31-39)
+    under the plain blend and is 62-73 deg now, without the per-pixel grain."""
+    a = _bench_layer(name)
+    img = AstroImage(a, is_linear=False)
+    p = palette_defaults(GOLD_BLUE)
+    out = nb._srgb_to_oklab(render(img, p, has_stars=False).data)
+    m = nb.nebula_mask(a, p.protect_background, nb._GB_MASK_CAPS, nb._has_data(a))
+    edge = (m > 0.02) & (m < nb._GB_EDGE_GOLD)
+    warm = edge & (out[..., 2] > 0.005) & (np.hypot(out[..., 1], out[..., 2]) > 0.01)
+    hue = float(np.median(np.degrees(np.arctan2(out[..., 2], out[..., 1]))[warm]))
+    assert hue > 55, hue
+
+
+def _edge_grain(out, m):
+    """Local colour noise in Protect's soft edge: |ab - ab blurred over 2 px|."""
+    from scipy.ndimage import gaussian_filter
+    lab = nb._srgb_to_oklab(out)
+    edge = (m > 0.02) & (m < nb._GB_EDGE_GOLD)
+    return float(np.hypot(lab[..., 1] - gaussian_filter(lab[..., 1], 2),
+                          lab[..., 2] - gaussian_filter(lab[..., 2], 2))[edge].mean())
+
+
+@pytest.mark.parametrize("name", ["IC1805", "NGC7000"])
+def test_the_gold_edge_is_not_grainier_than_the_plain_blend(name):
+    """Review 2026-10-09: taking each faint pixel's own palette colour made the
+    edge grainy where faint gold met faint blue (0.0047 -> 0.0081 on IC 1805).
+    The smoothed gold keeps the grain at the plain blend's level."""
+    a = _bench_layer(name)
+    img = AstroImage(a, is_linear=False)
+    p = palette_defaults(GOLD_BLUE)
+    out = render(img, p, has_stars=False).data
+    m = nb.nebula_mask(a, p.protect_background, nb._GB_MASK_CAPS, nb._has_data(a))
+    pal = render(img, dataclasses.replace(p, protect_background=0.0), has_stars=False).data
+    plain = m[..., None] * pal + (1.0 - m[..., None]) * a
+    assert _edge_grain(out, m) < 1.10 * _edge_grain(plain, m), (_edge_grain(out, m), _edge_grain(plain, m))

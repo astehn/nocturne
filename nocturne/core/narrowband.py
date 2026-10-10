@@ -563,11 +563,15 @@ _GB_DATA_EPS = 1e-4
 # 0.51 / 0.54 / 0.51 / 0.65 / 0.44 for IC 1396A / IC 1805 / M 16 / NGC 6992 /
 # NGC 7000). With Task 3's mask caps x0.75 gave 0.51 / 0.50 / 0.58 / 0.62 /
 # 0.52 (M 16 over his 0.55), x0.70 gives 0.48 / 0.48 / 0.55 / 0.59 / 0.49.
-_GB_GOLD_SCALE = 0.70
+# x1.25 on 2026-10-10: after the gold moved to 39 deg he set Gold to 127/139%
+# on IC 1396A and Pacman (all unboosted exports) and agreed "Gold 125% / Blue
+# 80%" as the starting point, built in so both sliders still start at 100%.
+_GB_GOLD_SCALE = 0.70 * 1.25
 # The blue's chroma at Blue 100%. It was x Oxygen strength until Gold and Blue
 # got sliders of their own (2026-10-09); 0.60 is that palette's default Oxygen,
 # so 100% is the blue he approved at Oxygen 60% (GOLD_BLUE_OXYGEN_DEFAULT).
-GB_BLUE_REF = 0.60
+# x0.80 on 2026-10-10, his agreed starting point (he set Blue 69/79/100%).
+GB_BLUE_REF = 0.60 * 0.80
 
 
 @dataclass(frozen=True)
@@ -764,11 +768,10 @@ def _render_gold_blue(img: AstroImage, params: NarrowbandParams, has_stars: bool
     if gold != 1.0 or blue_s != 1.0:
         vec = vec * np.where(vec[..., 1:2] > 0, np.float32(gold), np.float32(blue_s))
     lab[..., 1:] = vec * shade[..., None]
-    if gold != 1.0 or blue_s != 1.0:
-        # Only off the default, so 100%/100% stays the look he approved, byte
-        # for byte. Past the screen's limit a stronger colour stops growing
-        # instead of changing hue.
-        lab = _fit_to_gamut(lab)
+    # Past the screen's limit a stronger colour stops growing instead of
+    # changing hue. Always, now that the default gold (x1.25) reaches the edge
+    # of sRGB on bright parts by itself.
+    lab = _fit_to_gamut(lab)
     rgb = _oklab_to_srgb(lab).astype(np.float32)
     rgb = highlight_reduction(rgb, params.highlight_reduction)
     rgb = highlight_recover(rgb, params.highlight_recover)
@@ -810,7 +813,7 @@ def render(img: AstroImage, params: NarrowbandParams, *,
         if params.palette == GOLD_BLUE:
             m = nebula_mask(original, params.protect_background, _GB_MASK_CAPS,
                             _has_data(original))
-            blended = _gb_protect_blend(out.data, original, m)
+            blended = _gb_protect_blend(out.data, original, m, _has_data(original))
         else:
             m = nebula_mask(original, params.protect_background)[..., None]
             blended = m * out.data + (1.0 - m) * original
@@ -829,7 +832,7 @@ _GB_EDGE_GOLD = 0.3
 
 
 def _gb_protect_blend(rendered: np.ndarray, original: np.ndarray,
-                      m: np.ndarray) -> np.ndarray:
+                      m: np.ndarray, data: np.ndarray) -> np.ndarray:
     """Protect background for the gold-and-blue palette. Lightness blends as
     before. On the gold side the colour comes from the palette from early in
     the soft edge, so faint hydrogen is faint gold, not the original's red. The
@@ -838,8 +841,47 @@ def _gb_protect_blend(rendered: np.ndarray, original: np.ndarray,
     either (Andreas, 2026-10-09: "they do actually" bother me)."""
     lo = _srgb_to_oklab(original)
     lp = _srgb_to_oklab(rendered)
-    wc = np.where(lp[..., 2] > 0, np.clip(m / _GB_EDGE_GOLD, 0.0, 1.0), m)
     lab = lo.copy()
     lab[..., 0] = m * lp[..., 0] + (1.0 - m) * lo[..., 0]
-    lab[..., 1:] = wc[..., None] * lp[..., 1:] + (1.0 - wc[..., None]) * lo[..., 1:]
-    return _oklab_to_srgb(_fit_to_gamut(lab.astype(np.float32)))
+    # The extra gold comes from the palette's colour SMOOTHED over the
+    # neighbourhood, and only as far as that neighbourhood is gold. Taken per
+    # pixel, noise decided each faint pixel's side and the edge went grainy
+    # where faint gold met faint blue (review, 2026-10-09: edge colour noise
+    # 0.0047 -> 0.0081 on IC 1805). Smoothed, the noise is back to the plain
+    # blend's (IC 1805 0.0024 -> 0.0023, NGC 7000 0.0024 -> 0.0023, p99
+    # neighbour jump 0.011 both) and the edge stays as gold as the per-pixel
+    # version (OKLab hue 62-73 deg vs 31-47 plain).
+    # Over data pixels only: a black stacking border would pull the
+    # smoothed colour toward grey along the frame edge.
+    w = data.astype(np.float32)
+    norm = np.maximum(_blur_scaled(w, _GB_EDGE_SMOOTH), 1e-6)
+    ab_s = np.stack([_blur_scaled(lp[..., i] * w, _GB_EDGE_SMOOTH) / norm for i in (1, 2)],
+                    axis=-1)
+    goldness = np.clip(ab_s[..., 1] / _GB_EDGE_GOLD_B, 0.0, 1.0)
+    extra = np.clip(np.clip(m / _GB_EDGE_GOLD, 0.0, 1.0) - m, 0.0, None) * goldness
+    extra = np.where(data, extra, 0.0)    # the border stays exactly as it was
+    lab[..., 1:] = (m[..., None] * lp[..., 1:] + extra[..., None] * ab_s
+                    + (1.0 - m - extra)[..., None] * lo[..., 1:])
+    out = _oklab_to_srgb(_fit_to_gamut(lab.astype(np.float32)))
+    return np.where(data[..., None], out, original)
+
+
+# The smoothing for the edge's extra gold, as a fraction of the short edge, so
+# the preview and the full-size Apply smooth over the same part of the sky
+# (2.6 px on the 640 px preview, 12.6 px on a 3157 px frame).
+_GB_EDGE_SMOOTH = 0.004
+# OKLab b at which a neighbourhood counts as fully gold; the palette's faint
+# edge gold sits at b 0.01-0.04 on his targets.
+_GB_EDGE_GOLD_B = 0.02
+
+
+def _blur_scaled(ch: np.ndarray, frac: float) -> np.ndarray:
+    """Gaussian blur with sigma = frac x the short edge; as nebula_mask, wide
+    blurs run at quarter resolution, far below anything a blur that wide keeps."""
+    from scipy.ndimage import gaussian_filter
+    sigma = max(1.0, frac * min(ch.shape))
+    if sigma < 8.0:
+        return gaussian_filter(ch, sigma=sigma)
+    from skimage.transform import resize
+    small = gaussian_filter(ch[::4, ::4], sigma=sigma / 4.0)
+    return resize(small, ch.shape, order=1, mode="edge", anti_aliasing=False).astype(ch.dtype)
