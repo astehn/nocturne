@@ -23,10 +23,21 @@ _GAIN_LO, _GAIN_HI = 0.2, 5.0
 class SpccResult:
     gains: tuple[float, float, float]
     n_matched: int
+    # d log10(R/G) and d log10(B/G) per unit BP-RP. Near zero means every star
+    # read white -- the symptom of summing sky with the starlight.
+    slopes: tuple[float, float] = (0.0, 0.0)
 
 
 def _measure(data):
-    """Detect stars on luminance; return (x, y, peakmax, flux[N,3]) or None."""
+    """Detect stars on luminance; return (x, y, peakmax, flux[N,3]) or None.
+
+    Each star's flux has its LOCAL sky taken off, per channel, from an annulus
+    around it. Summed raw, the sky plus bias (~0.02, grey) was 93-99% of the
+    light in each aperture on his masters, so every star read as white and the
+    gains came out ~1.00 on every image (measured 2026-10-10: M 45 recovered
+    4-6% of an injected stars-only cast, 100% with the sky off). An annulus
+    rather than the whole-frame background: within 0.003 of it on broadband
+    masters, and it follows the nebula under a star."""
     lum = np.ascontiguousarray(data.mean(axis=2), dtype=np.float32)
     try:
         bkg = sep.Background(lum)
@@ -40,7 +51,8 @@ def _measure(data):
     flux = np.zeros((len(obj), 3), np.float32)
     for c in range(3):
         chan = np.ascontiguousarray(data[..., c], dtype=np.float32)
-        f, _, _ = sep.sum_circle(chan, x, y, r, err=bkg.globalrms)
+        f, _, _ = sep.sum_circle(chan, x, y, r, bkgann=(r + 3.0, r + 8.0),
+                                 err=bkg.globalrms)
         flux[:, c] = f
     xi = np.clip(np.round(y).astype(int), 0, data.shape[0] - 1)
     yi = np.clip(np.round(x).astype(int), 0, data.shape[1] - 1)
@@ -109,7 +121,8 @@ def photometric_gains(img: AstroImage, wcs, gaia, *, min_stars=_MIN_STARS):
     gains = gains / np.exp(np.mean(np.log(gains)))       # geom-mean 1 -> preserve brightness
     if not np.all((gains >= _GAIN_LO) & (gains <= _GAIN_HI)):
         return None
-    return SpccResult((float(gains[0]), float(gains[1]), float(gains[2])), len(cols))
+    return SpccResult((float(gains[0]), float(gains[1]), float(gains[2])), len(cols),
+                      (float(bR), float(bB)))
 
 
 def apply_gains(img: AstroImage, gains) -> AstroImage:

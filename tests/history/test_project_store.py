@@ -389,3 +389,31 @@ def test_save_recipe_after_reopening_keeps_every_steps_settings(tmp_path):
     after = recipe_from_entries(loaded.project.entries()).steps
     assert after == before
     assert after[2]["option"]["palette"] == GOLD_BLUE          # not the HOO default
+
+
+def test_photometric_colour_is_cached_so_reopening_never_reruns_it(tmp_path):
+    """SPCC's flux measurement changed on 2026-10-10 (sky now subtracted), and
+    a solve plus a Gaia query is not pixel-reproducible anyway. A saved project
+    must reopen with the colour it was saved with -- for a calibration that
+    landed and for one that stepped aside (dual-band, or a fallback) alike."""
+    from nocturne.core.color import ColorSettings
+    from nocturne.recipe import serialize_option
+    for fell_back in (False, True):
+        opt = ColorSettings(method="photometric", fell_back=fell_back)
+        assert is_reproducible("color", opt) is False
+        assert is_reproducible("color", serialize_option("color", opt)) is False
+        rng = np.random.default_rng(3)
+        base = AstroImage(rng.random((6, 6, 3), dtype=np.float32) * 0.3, is_linear=True)
+        # Pixels nothing in the code would produce from `base`: if reopening
+        # re-ran the step, they could not come back.
+        saved = AstroImage((base.data * np.array([0.7, 1.0, 1.3], np.float32)),
+                           is_linear=True)
+        d = tmp_path / str(fell_back)
+        p = Project(base, str(d / "cache"))
+        p.record_precomputed("Color", serialize_option("color", opt), saved)
+        save_project(p, str(d / "p.nocturne"))
+        with zipfile.ZipFile(str(d / "p.nocturne")) as zf:
+            step = json.loads(zf.read("manifest.json"))["steps"][0]
+        assert step["stage"] == "color" and step["cached"] is True
+        loaded = load_project(str(d / "p.nocturne"), str(d / "reopen"))
+        np.testing.assert_array_equal(loaded.project.state_at(1).data, saved.data)
