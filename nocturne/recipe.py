@@ -59,7 +59,17 @@ class Recipe:
     steps: list = field(default_factory=list)
 
 
+# Stages whose live option is a settings object. A reopened project restores
+# cached steps with the option as SAVED (a dict), and the branches below read a
+# dict as "not my type" and wrote the defaults: Save Recipe after reopening turned
+# Narrowband into default HOO, a rotated 16:9 crop into Original, photometric
+# colour into sky (since July; found 2026-10-09). Read the dict back first.
+_OBJECT_OPTIONS = ("crop", "color", "narrowband")
+
+
 def serialize_option(stage_id, option):
+    if stage_id in _OBJECT_OPTIONS and isinstance(option, dict):
+        option = _from_saved_dict(stage_id, option)
     if stage_id == "crop":
         c = option if isinstance(option, CropParams) else CropParams()
         return {"aspect": c.aspect, "rotate": c.rotate, "flip_h": c.flip_h, "flip_v": c.flip_v}
@@ -141,6 +151,16 @@ def serialize_option(stage_id, option):
             "gold_strength": p.gold_strength, "blue_strength": p.blue_strength,
         }
     return option  # background / noise_sharpen: str
+
+
+def _from_saved_dict(stage_id, value: dict):
+    """The settings object for an option stored as a dict, tolerating missing
+    keys (a bundle saved before a field existed)."""
+    if stage_id == "crop":
+        return CropParams(bounds=None, aspect=value.get("aspect", "Original"),
+                          rotate=value.get("rotate", 0), flip_h=value.get("flip_h", False),
+                          flip_v=value.get("flip_v", False))
+    return deserialize_option(stage_id, value)
 
 
 def deserialize_option(stage_id, value):

@@ -362,3 +362,30 @@ def test_an_unrenamed_step_name_passes_through_untouched():
     assert _migrate_step_name("Stretch") == "Stretch"
     assert _migrate_step_name("Linear Denoise") == "Linear Denoise"
     assert _migrate_step_name("") == ""
+
+
+def test_save_recipe_after_reopening_keeps_every_steps_settings(tmp_path):
+    """A reopened project restores cached steps with their SAVED (JSON) option,
+    and Save Recipe then read Crop, Color and Narrowband as "not my type" and
+    wrote their defaults: a Narrowband step came back as default HOO, a 16:9
+    rotated crop as Original, photometric colour as sky (there since July,
+    found by the gold-and-blue re-review 2026-10-09)."""
+    from nocturne.core.color import ColorSettings
+    from nocturne.core.crop import CropParams
+    from nocturne.core.narrowband import GOLD_BLUE, NarrowbandParams
+    from nocturne.recipe import recipe_from_entries
+    base = AstroImage(np.ones((4, 4, 3), np.float32) * 0.3, is_linear=False)
+    img = AstroImage(np.ones((4, 4, 3), np.float32) * 0.4, is_linear=False)
+    p = Project(base, str(tmp_path / "cache"))
+    p.record_precomputed("Crop", CropParams(bounds=(0, 4, 0, 4), aspect="16:9", rotate=90,
+                                            flip_h=True), img)
+    p.record_precomputed("Color", ColorSettings(method="photometric", remove_green=True), img)
+    p.record_precomputed("Narrowband", NarrowbandParams(palette=GOLD_BLUE, oxygen_strength=0.83,
+                                                        gold_strength=1.39, blue_strength=0.7,
+                                                        protect_background=0.2), img)
+    before = recipe_from_entries(p.entries()).steps
+    save_project(p, str(tmp_path / "p.nocturne"))
+    loaded = load_project(str(tmp_path / "p.nocturne"), str(tmp_path / "reopen"))
+    after = recipe_from_entries(loaded.project.entries()).steps
+    assert after == before
+    assert after[2]["option"]["palette"] == GOLD_BLUE          # not the HOO default
