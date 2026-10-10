@@ -6563,3 +6563,24 @@ def test_an_unremembered_numeric_option_is_kept_in_the_fallback(qtbot, tmp_path)
     win._step_lines.clear()            # as for a state from a reopened project
     win._undo()
     assert _step_lines(win)[-1] == "↶ Undo: Stretch (0.6)"
+
+
+@pytest.mark.parametrize("turn", ["_rotate", "_flip_h", "_flip_v"])
+def test_apply_crop_comes_back_after_a_rotate_or_flip(qtbot, tmp_path, turn):
+    """Andreas, 2026-10-10: after Rotate, Apply Crop stayed grey whatever he
+    chose, with a box on screen and "changes not applied" under it. The
+    geometry step re-armed crop mode (Apply off "until the box is shown") but
+    left the old box up, so cropBoxShown never fired again. Present in v0.50.0.
+    The stale box (drawn on the picture before it turned) is now removed, and
+    the next click shows a new one with Apply live."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("crop")
+    win.image_view.show_crop_box()
+    assert win.image_view.crop_box_visible()
+    getattr(win, turn)()
+    assert not win.image_view.crop_box_visible(), "a box from before the turn must not stay up"
+    assert not win._panel.apply_btn.isEnabled()
+    win.image_view.show_crop_box()
+    win._panel.shape_picker.button("3:2").click()
+    assert win._panel.apply_btn.isEnabled(), "Apply Crop must be live once a new box is shown"

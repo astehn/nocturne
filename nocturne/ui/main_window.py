@@ -5255,6 +5255,12 @@ class MainWindow(QMainWindow):
             if picker is not None:
                 picker.set_picture_ratio(self._picture_ratio())
             # Crop mode on, box hidden until the first image click shows it.
+            # HIDDEN, not just assumed hidden: after a Rotate/Flip the old box
+            # stayed up (drawn on the picture before it turned) while Apply was
+            # switched off "until the box is shown" — and a box already showing
+            # never announces itself again, so Apply stayed grey for good
+            # (Andreas, 2026-10-10; present in v0.50.0).
+            self.image_view.hide_crop_box()
             self.image_view.set_crop_overlay(
                 True, content_bounds=bounds, aspect_ratio=self._crop_ratio(self._crop_shape())
             )
