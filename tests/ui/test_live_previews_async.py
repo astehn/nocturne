@@ -302,6 +302,7 @@ def test_a_trim_mid_prepare_drops_it_and_the_next_tick_uses_the_new_base(
         def __init__(self, *a, **k): pass
         def exec(self): return True
         def bounds(self): return (2, 30, 3, 40)
+        def shape(self): return "Free"
     monkeypatch.setattr(mw, "TrimDialog", Trim)
     win._trim()
     win._go_to_id("recover_core")

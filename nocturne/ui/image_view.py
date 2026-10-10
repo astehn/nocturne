@@ -823,8 +823,12 @@ class ImageView(QGraphicsView):
     def set_aspect(self, aspect_ratio) -> None:
         self._aspect = aspect_ratio
 
-    def apply_aspect(self, aspect_ratio) -> None:
+    def apply_aspect(self, aspect_ratio, *, untouched: bool = False) -> None:
         """Lock to a ratio and immediately reshape the current box to it (centered).
+
+        `untouched` leaves the box counted as not adjusted by the user — for a
+        caller giving a just-shown box the shape already chosen, which is no
+        work to lose if it is dismissed.
 
         Reshaped at CONSTANT AREA, then clamped to the image, so changing your
         mind about the ratio does not change how much you had selected.
@@ -863,7 +867,10 @@ class ImageView(QGraphicsView):
         self._body.setPos(0, 0)
         self._body.setRect(QRectF(cx - w / 2, cy - h / 2, w, h))
         self._position_handles()
+        modified = self._box_modified
         self._emit_bounds()
+        if untouched:
+            self._box_modified = modified
 
     def _teardown_overlay(self) -> None:
         if self._body is not None:

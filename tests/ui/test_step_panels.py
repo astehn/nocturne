@@ -440,14 +440,27 @@ def test_import_panel_meta_label_is_rich_text(qtbot):
     assert w.meta_label.textFormat() == Qt.TextFormat.RichText
 
 
-def test_crop_panel_has_guides_combo(qapp):
+def test_crop_panel_has_guides_buttons(qapp):
     seen = []
     w = build_panel(_stage("crop"), on_guides_change=lambda k: seen.append(k))
-    assert hasattr(w, "guides_box")
-    items = [w.guides_box.itemText(i) for i in range(w.guides_box.count())]
-    assert items == ["None", "Rule of thirds", "Center cross"]
-    w.guides_box.setCurrentText("Rule of thirds")
-    assert seen and seen[-1] == "thirds"
+    assert [b.text() for b in w.guides_box.buttons()] == ["None", "Thirds", "Centre"]
+    assert w.guides_box.currentText() == "None"
+    w.guides_box.buttons()[1].click()
+    assert seen[-1] == "thirds"
+    w.guides_box.buttons()[2].click()
+    assert seen[-1] == "center"
+
+
+def test_crop_panel_shape_buttons_report_the_turned_name(qapp):
+    seen = []
+    w = build_panel(_stage("crop"), on_crop_change=seen.append)
+    p = w.shape_picker
+    assert p.labels() == ["Free", "Original", "1:1", "5:4", "4:3", "3:2", "16:9"]
+    p.button("3:2").click()
+    p.orientation.click()
+    assert seen == ["3:2", "2:3"]
+    assert [b.text() for b in (w.rotate_btn, w.flip_h_btn, w.flip_v_btn)] == \
+        ["\u21bb 90\u00b0", "\u21cb Flip H", "\u21f5 Flip V"]
 
 
 def test_import_panel_has_linear_preview_note(qapp):

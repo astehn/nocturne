@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import hashlib
 import os
@@ -23,7 +24,9 @@ from ..core.auto_enhance import build_auto_plan, run_auto_plan
 from ..core import telemetry as telemetry_mod
 from ..core.provenance import build_report
 from ..core import nr_models
-from ..core.crop import CropParams, detect_content_bounds, ASPECT_RATIOS
+from ..core.crop import (
+    FREE, CropParams, detect_content_bounds, shape_label, shape_ratio,
+)
 from ..core.enhance import (ENHANCE_OPS, sharpen_nebulosity_layers,
                             star_colour_layers)
 from ..core.export import camera_cards, jpeg_bytes, save_fits, save_png, save_tiff, _to_uint
@@ -120,7 +123,6 @@ from .toolbar_overflow import ToolbarOverflow
 from .worker import run_async
 from . import file_dialogs, file_drop
 
-_ASPECT_RATIO = ASPECT_RATIOS    # one definition, in core.crop
 BUSY_DELAY_MS = 400   # ms before busy visuals appear; sub-threshold ops show nothing
 
 # Amber trip points, calibrated 2026-07-30 on the NGC 7000 master (161x20s, 5.1 MP).
@@ -5249,12 +5251,18 @@ class MainWindow(QMainWindow):
     def _setup_crop_overlay(self) -> None:
         if self.project is not None and self.current_stage_id() == "crop":
             bounds = detect_content_bounds(self.project.current())
-            aspect_text = "Original"
-            if hasattr(self._panel, "aspect_box"):
-                aspect_text = self._panel.aspect_box.currentText()
+            picker = getattr(self._panel, "shape_picker", None)
+            if picker is not None:
+                picker.set_picture_ratio(self._picture_ratio())
             # Crop mode on, box hidden until the first image click shows it.
+            # HIDDEN, not just assumed hidden: after a Rotate/Flip the old box
+            # stayed up (drawn on the picture before it turned) while Apply was
+            # switched off "until the box is shown" — and a box already showing
+            # never announces itself again, so Apply stayed grey for good
+            # (Andreas, 2026-10-10; present in v0.50.0).
+            self.image_view.hide_crop_box()
             self.image_view.set_crop_overlay(
-                True, content_bounds=bounds, aspect_ratio=_ASPECT_RATIO.get(aspect_text)
+                True, content_bounds=bounds, aspect_ratio=self._crop_ratio(self._crop_shape())
             )
             if getattr(self._panel, "apply_btn", None) is not None:
                 self._panel.apply_btn.setEnabled(False)
@@ -5267,6 +5275,13 @@ class MainWindow(QMainWindow):
         """Crop box became visible (first click) — enable Apply Crop."""
         if self.current_stage_id() == "crop" and getattr(self._panel, "apply_btn", None) is not None:
             self._panel.apply_btn.setEnabled(True)
+        if self.current_stage_id() == "crop":
+            # A shape picked before the first click was only stored: the box
+            # appeared at the content edges in whatever shape they made, and
+            # took the chosen one on the first drag. Upscale had the same gap.
+            ratio = self._crop_ratio(self._crop_shape())
+            if ratio is not None:
+                self.image_view.apply_aspect(ratio, untouched=True)
         if self.current_stage_id() == "crop" and hasattr(self._panel, "crop_size_label"):
             self._update_crop_readout(*self.image_view.crop_bounds())
         self._sync_step_controls()
@@ -5302,9 +5317,23 @@ class MainWindow(QMainWindow):
             self._panel.crop_size_label.setText("—")
         self._sync_step_controls()
 
-    def _on_crop_change(self, aspect_text: str) -> None:
+    def _on_crop_change(self, shape: str) -> None:
         # Snap the visible box to the chosen ratio (and lock future resizes).
-        self.image_view.apply_aspect(_ASPECT_RATIO.get(aspect_text))
+        self.image_view.apply_aspect(self._crop_ratio(shape))
+
+    def _crop_shape(self) -> str:
+        """The STORED name of the Crop panel's shape ("Free", "Picture", "2:3")."""
+        picker = getattr(self._panel, "shape_picker", None)
+        return picker.shape() if picker is not None else FREE
+
+    def _picture_ratio(self) -> float | None:
+        if self.project is None:
+            return None
+        h, w = self.project.current().data.shape[:2]
+        return w / h
+
+    def _crop_ratio(self, shape: str) -> float | None:
+        return shape_ratio(shape, self._picture_ratio())
 
     def _on_guides_change(self, kind: str) -> None:
         self.image_view.set_guides(kind)
@@ -5353,7 +5382,11 @@ class MainWindow(QMainWindow):
 
         self._run_busy(work, on_result, f"{op}…", f"{op} failed")
 
-    def _apply_geometry(self, name: str, params) -> None:
+    def _apply_geometry(self, name: str, params, shape: str | None = None) -> None:
+        """`shape` is the Crop panel's stored shape name. It is RECORDED, not
+        applied: the box already has that shape, and centre-cutting its
+        whole-pixel bounds to the exact ratio again could shave a row the
+        preview showed."""
         if self.project is None or self._busy:
             return
         target = self._leading_kept(self.project.entries(), set(GEOMETRY_NAMES))
@@ -5361,9 +5394,11 @@ class MainWindow(QMainWindow):
             return
         self.project.jump_back(target)
         result = self._step_for("crop").apply(self.project.current(), params)
-        self.project.run_step(_PrecomputedStep(name, result), "")
+        option = "" if shape is None else dataclasses.replace(params, aspect=shape)
+        self.project.run_step(_PrecomputedStep(name, result), option)
         self._mark_dirty()
-        self.log_panel.append_entry(format_log_entry(name, "", None))
+        self.log_panel.append_entry(format_log_entry(
+            name, "" if shape is None else shape_label(shape), None))
         self._clear_warning()
         self._refresh()
         self._setup_crop_overlay()
@@ -5477,7 +5512,8 @@ class MainWindow(QMainWindow):
         h, w = self.project.current().data.shape[:2]
         if (top, bottom, left, right) == (0, h, 0, w):
             return  # box is the full frame -> no real crop
-        self._apply_geometry("Crop", CropParams(bounds=(top, bottom, left, right)))
+        self._apply_geometry("Crop", CropParams(bounds=(top, bottom, left, right)),
+                             shape=self._crop_shape())
         # Committed: hide the box; the next click re-shows it at the new edges.
         self.image_view.hide_crop_box()
         if hasattr(self._panel, "crop_size_label"):
@@ -6702,10 +6738,14 @@ class MainWindow(QMainWindow):
             return
         result = self._step_for("crop").apply(self.project.current(),
                                                CropParams(bounds=bounds))
-        self.project.run_step(_PrecomputedStep("Trim", result), "")
+        # The shape, as a dict: Trim cannot be replayed (a recipe skips it), but
+        # the log and the provenance report should still say what it was.
+        shape = dlg.shape()
+        self.project.run_step(_PrecomputedStep("Trim", result), {"aspect": shape})
         self._mark_dirty()
         h, w = result.data.shape[:2]
-        self.log_panel.append_entry(format_log_entry("Trim", "", None, dims=(w, h)))
+        self.log_panel.append_entry(format_log_entry("Trim", shape_label(shape), None,
+                                                     dims=(w, h)))
         self._refresh()
 
     def _share(self) -> None:

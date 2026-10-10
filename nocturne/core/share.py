@@ -4,10 +4,12 @@ import os
 
 from .fits_io import format_capture_span, format_integration, resolve_integration
 
-ASPECTS: list[tuple[str, float | None]] = [
-    ("Original", None), ("1:1", 1.0), ("4:5", 4 / 5),
-    ("9:16", 9 / 16), ("3:2", 3 / 2), ("16:9", 16 / 9),
-]
+from .crop import RATIO_SHAPES
+
+# Derived from crop's list, not written out again: Share frames the whole
+# picture, so its first choice is the picture as it is (None = no reframe) and
+# there is no Free. Portrait shapes (4:5, 9:16) come from turning one of these.
+ASPECTS: list[tuple[str, float | None]] = [("Original", None), *RATIO_SHAPES]
 
 # Longest-edge presets. 2048 was the hardcoded value and stays the default; the
 # rest exist because a tool whose whole purpose is producing a file for

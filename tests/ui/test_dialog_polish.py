@@ -37,12 +37,16 @@ def _share(qtbot):
 
 def test_the_chosen_post_as_shape_is_lit(qtbot):
     d = _share(qtbot)
-    buttons = list(d._aspect_buttons.values())
+    buttons = d.shape_picker.buttons()
     chosen = [b for b in buttons if b.isChecked()]
     assert len(chosen) == 1
     other = next(b for b in buttons if not b.isChecked())
-    # The chosen one is visibly different, not just flagged in the model.
-    assert np.abs(_mean(chosen[0]) - _mean(other)).sum() > 60
+    # The chosen one is visibly different, not just flagged in the model. Since
+    # the shape buttons (2026-10-10) it is the approved mock-up's accent TINT
+    # and outline, not a solid accent fill, so the test reads blueness: a mean
+    # +28 in blue over a button the size of the tile, measured on build.
+    lit, plain = _mean(chosen[0]), _mean(other)
+    assert lit[2] - plain[2] > 15 and np.abs(lit - plain).sum() > 30
 
 
 def test_the_restore_glyph_is_drawn(qtbot):

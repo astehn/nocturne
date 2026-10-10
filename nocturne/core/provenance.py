@@ -8,6 +8,7 @@ import datetime
 import re
 
 from ..recipe import _NAME_TO_STAGE, serialize_option
+from .crop import shape_label
 from .fits_io import format_integration, resolve_integration
 from .instrument import DEFAULT_INSTRUMENT, identify
 
@@ -17,7 +18,13 @@ _HEADLINE_FIELD = {
     "Background": "engine",
     "Noise Reduction": "engine",
     "Narrowband": "palette",
+    "Crop": "aspect",
+    "Trim": "aspect",
 }
+
+# Steps whose recorded "aspect" is a stored shape name. The report says the
+# word on the button ("Original", "2:3"), never the internal "Picture".
+_SHAPE_STEPS = ("Crop", "Trim")
 
 _FAILED = object()   # sentinel: this step's option could not be serialized
 
@@ -148,7 +155,10 @@ def build_report(entries, metadata, *, app_version: str, date: datetime.date,
     ser_entries = []
     for name, option in entries:
         try:
-            ser_entries.append((name, _serialize(name, option)))
+            ser = _serialize(name, option)
+            if name in _SHAPE_STEPS and isinstance(ser, dict) and "aspect" in ser:
+                ser = {**ser, "aspect": shape_label(str(ser["aspect"]))}
+            ser_entries.append((name, ser))
         except Exception:
             ser_entries.append((name, _FAILED))
 

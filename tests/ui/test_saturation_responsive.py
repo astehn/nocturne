@@ -133,6 +133,7 @@ def test_a_trim_under_the_step_prepares_again_and_apply_matches_export(qtbot, tm
         def __init__(self, *a, **k): pass
         def exec(self): return True
         def bounds(self): return (2, 20, 2, 20)
+        def shape(self): return "Free"
     monkeypatch.setattr(mw, "TrimDialog", Trim)
     win._trim()
     base = win._preview_base("saturation")

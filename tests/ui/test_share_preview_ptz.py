@@ -71,13 +71,12 @@ def test_changing_the_aspect_refits(qtbot):
     """The exception, and it is ImageView's own rule: new DIMENSIONS mean the
     old viewport is meaningless, so it fits again. Switching 1:1 to 16:9 must
     show the whole new frame, not a corner of it."""
-    from nocturne.core.share import ASPECTS
     d = _dlg(qtbot)
     d.show(); qtbot.waitExposed(d)
-    d._aspect_buttons["1:1"].click()
+    d.shape_picker.button("1:1").click()
     qtbot.wait(10)
     d._preview_view.zoom_in()
-    d._aspect_buttons["16:9"].click()
+    d.shape_picker.button("16:9").click()
     qtbot.wait(10)
     w = d._preview_view._item.boundingRect().width() * d._preview_view.zoom()
     assert w <= d._preview_view.viewport().width() + 2, (
