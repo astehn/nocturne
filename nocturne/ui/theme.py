@@ -235,6 +235,12 @@ QLabel#welcomeSteps, QLabel#welcomeSample {{ font-size: 13px; color: {TEXT_DIM};
 QLabel#welcomeDropMain {{ font-size: 14px; color: {ACCENT}; }}
 QLabel#welcomeDropSub {{ font-size: 12px; color: {TEXT_DIM}; }}
 QWidget#solveWindow {{ background: {BG_2}; }}
+/* The start page's Cancel, a link under the busy text as in mock-up B. */
+QPushButton#welcomeCancel {{ background: transparent; border: none; color: {ACCENT};
+    padding: 0 8px; }}
+QPushButton#welcomeCancel:hover {{ color: {ACCENT_HI}; background: transparent; }}
+QPushButton#welcomeCancel:pressed {{ background: transparent; }}
+QPushButton#welcomeCancel:disabled {{ color: {TEXT_FAINT}; background: transparent; }}
 QLabel#welcomeUpdate {{ font-size: 13px; color: {WARNING}; }}
 QLabel#welcomeWarning {{ font-size: 13px; color: {DANGER}; }}
 QLabel#dropOverlay {{ background: rgba(20, 22, 26, 215); border: 2px dashed {ACCENT};

@@ -69,12 +69,15 @@ def test_at_most_six_are_shown_and_the_list_follows_the_settings(qtbot, tmp_path
 
 
 def test_the_buttons_stay_put_whatever_the_list_holds(qtbot, tmp_path):
+    """From one project to four. Not from none: the empty page is centred on
+    its own height (review I-3, 2026-10-10) — a list cannot fill while it is
+    on screen, since saving a project needs an image open."""
     files = []
     for i in range(4):
         p = tmp_path / f"p{i}.nocturne"
         p.write_text("x")
         files.append(str(p))
-    source = {"list": []}
+    source = {"list": files[:1]}
     w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: source["list"])
     qtbot.addWidget(w)
     w.resize(1200, 760)

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QApplication
 
 from nocturne.ui import theme
 from nocturne.ui.welcome import (
-    _PAD, CARD_H, CARD_W, LOCKED_OPACITY, SAMPLE_URL, WelcomeScreen, card_info, when_text,
+    _CARD_BG, _PAD, _card_pixmap, CARD_H, CARD_W, LOCKED_OPACITY, SAMPLE_URL, WelcomeScreen, card_info, when_text,
 )
 from tests.ui.test_main_window import _window
 
@@ -110,16 +110,19 @@ def test_the_cards_are_a_three_column_grid_of_filled_pictures(qtbot, tmp_path):
 
 
 def test_the_buttons_stay_put_in_both_modes(qtbot, tmp_path):
+    """While there are cards, however many: a card can vanish (its file moved)
+    or appear under the cursor. The empty state is centred on its own height
+    instead (review I-3) — see the test below."""
     files = _files(tmp_path, 6)
     for size in ((1200, 700), (1400, 860)):
-        source = {"list": []}
+        source = {"list": files[:1]}
         w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: source["list"])
         qtbot.addWidget(w)
         w.resize(*size)
         w.show()
         qtbot.waitExposed(w)
         empty = w.stack_btn.mapTo(w, QPoint(0, 0))
-        for n in (1, 4, 6, 0):
+        for n in (4, 6, 2, 1):
             source["list"] = files[:n]
             w.refresh_recent()
             qtbot.wait(10)
@@ -336,3 +339,173 @@ def test_card_integration_is_whole_minutes_and_hours():
     assert _card_integration(3260) == "54m"          # 54m 20s
     assert _card_integration(3570) == "1h 00m"       # 59m 30s rounds up into the hour
     assert _card_integration(12300) == "3h 25m"
+
+
+# --- fix round 1 (review 2026-10-10) ----------------------------------------------
+def test_the_empty_page_is_centred_not_held_low(qtbot):
+    """Review I-3: the first page a new user sees sat ~250 px low, holding room
+    for two rows of cards it did not have."""
+    w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: [])
+    qtbot.addWidget(w)
+    w.resize(1400, 1000)
+    w.show()
+    qtbot.waitExposed(w)
+    assert w.rows() == 2, "precondition: a page tall enough for two rows"
+    above = _top(w.title, w)
+    below = w.height() - (_top(w.update_note, w) + w.update_note.height())
+    assert abs(above - below) <= 4, (above, below)
+
+
+def _busy_page(qtbot):
+    w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: [])
+    qtbot.addWidget(w)
+    w.resize(1400, 860)
+    w.show()
+    qtbot.waitExposed(w)
+    return w
+
+
+def _at(widget, page):
+    return widget.mapTo(page, QPoint(0, 0))
+
+
+def test_cancel_has_its_own_line_and_never_moves(qtbot):
+    """His request, 2026-10-10: the label's ticking dots changed its width and
+    walked the Cancel button sideways. Buttons must never move."""
+    w = _busy_page(qtbot)
+    before = _at(w.stack_btn, w)
+    w.show_busy("Opening project…")
+    qtbot.wait(10)
+    assert _at(w.stack_btn, w) == before, "the row's room was already there"
+    cancel, label, ring = _at(w.busy_cancel, w), _at(w.busy_label, w), _at(w.busy_ring, w)
+    assert cancel.y() >= label.y() + w.busy_label.height(), "Cancel under the text"
+    assert abs(ring.y() + w.busy_ring.height() / 2 - (label.y() + w.busy_label.height() / 2)) <= 2, \
+        "ring and text share the first line"
+    centre = w.width() / 2
+    assert abs(cancel.x() + w.busy_cancel.width() / 2 - centre) <= 1, "Cancel centred"
+    for dots in range(4):
+        w.set_busy_text("Opening project…" + "." * dots)
+        qtbot.wait(5)
+        assert (_at(w.busy_cancel, w), _at(w.busy_label, w), _at(w.busy_ring, w)) == \
+            (cancel, label, ring), dots
+    w.busy_cancel.setText("Finishing…")           # what the window says when nothing can stop
+    qtbot.wait(5)
+    assert _at(w.busy_cancel, w) == cancel
+    w.hide_busy()
+    qtbot.wait(5)
+    assert _at(w.stack_btn, w) == before
+
+
+def test_the_label_is_wide_enough_for_three_dots(qtbot):
+    w = _busy_page(qtbot)
+    w.show_busy("Opening project…")
+    fm = w.busy_label.fontMetrics()
+    assert w.busy_label.width() >= fm.horizontalAdvance("Opening project…...")
+
+
+def test_a_cancel_from_the_window_keeps_its_place(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.resize(1400, 900)
+    win.show()
+    qtbot.waitExposed(win)
+    page = win._welcome
+    win._set_busy(True, "Opening project…")
+    win._show_busy_visuals()
+    qtbot.wait(5)
+    assert page.busy_label.isVisible(), "precondition: the page's row is the one ticking"
+    where = [_at(x, page) for x in (page.busy_cancel, page.busy_label, page.busy_ring)]
+    texts = set()
+    for _ in range(4):
+        win._tick_ellipsis()
+        qtbot.wait(5)
+        texts.add(page.busy_label.text())
+        assert [_at(x, page) for x in (page.busy_cancel, page.busy_label, page.busy_ring)] == where
+    assert len(texts) == 4, "precondition: the dots really ticked"
+    win._set_busy(False)
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+def test_a_garbage_exposure_never_breaks_the_page(qtbot, tmp_path, value):
+    """Review I-1: a NaN EXPTIME saved into a bundle raised out of the card
+    and stopped the app launching."""
+    path = _bundle(tmp_path / "bad.nocturne", {"target": "M 8", "exposure": value, "frames": 10})
+    w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: [path])
+    qtbot.addWidget(w)
+    assert [b.info for b in w.recent_buttons] == ["M 8 · today"]
+
+
+def test_non_positive_totals_are_left_out():
+    now = time.time()
+    assert card_info({"exposure": 30.0, "frames": -3}, now, now) == "today"
+    assert card_info({"exposure": 0.0, "frames": 3}, now, now) == "today"
+
+
+def test_a_card_that_cannot_be_built_falls_back_to_its_name(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.welcome as wm
+    path = _bundle(tmp_path / "Odd.nocturne", NGC7000, _jpeg())
+    corrupt = tmp_path / "corrupt.nocturne"
+    with zipfile.ZipFile(corrupt, "w") as zf:
+        zf.writestr("manifest.json", "{not json")
+    monkeypatch.setattr(wm, "card_info", lambda *a, **k: 1 / 0)
+    w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: [path, str(corrupt)])
+    qtbot.addWidget(w)
+    assert [b.text() for b in w.recent_buttons] == ["Odd", "corrupt"]
+    assert [b.info for b in w.recent_buttons] == ["", ""]
+
+
+def test_the_app_launches_with_a_garbage_bundle_in_the_list(qtbot, tmp_path):
+    from nocturne.settings import Settings, save_settings
+    bad = _bundle(tmp_path / "bad.nocturne", {"exposure": float("nan"), "frames": 10})
+    s = Settings()
+    s.recent_projects = [bad]
+    save_settings(s, str(tmp_path / "settings.json"))
+    win = _window(qtbot, tmp_path)
+    assert [b.text() for b in win._welcome.recent_buttons] == ["bad"]
+
+
+def test_hiding_the_page_clears_the_opening_mark(qtbot, tmp_path):
+    """Review M-2: a successful open hides the page before the window goes
+    idle, so the rebuild that clears the mark never ran."""
+    state = {"busy": False}
+    files = _files(tmp_path, 2)
+    w = WelcomeScreen(lambda: None, lambda: None, on_recent=lambda p: state.update(busy=True),
+                      recent=lambda: files, locked=lambda: state["busy"])
+    qtbot.addWidget(w)
+    w.show()
+    qtbot.waitExposed(w)
+    w.recent_buttons[0].click()
+    assert w.recent_buttons[0].is_opening()
+    w.hide()
+    assert not any(b.is_opening() or b.ring.isVisibleTo(w) for b in w.recent_buttons)
+    w.show()                                          # shown again while still busy
+    assert not any(b.is_opening() for b in w.recent_buttons)
+
+
+def test_an_open_that_raises_leaves_no_mark(qtbot, tmp_path):
+    """Review M-3."""
+    def boom(p):
+        raise OSError("disk full")
+    files = _files(tmp_path, 2)
+    w = WelcomeScreen(lambda: None, lambda: None, on_recent=boom, recent=lambda: files)
+    qtbot.addWidget(w)
+    with pytest.raises(OSError):
+        w._card_clicked(w.recent_buttons[0])
+    assert not any(b.is_opening() or b.ring.isVisibleTo(w) for b in w.recent_buttons)
+
+
+def test_the_placeholder_is_the_bare_crescent(qtbot):
+    """Review M-6: the app icon's dark rounded square showed round the moon."""
+    img = _card_pixmap(None, 1.0).toImage()
+    ground = _CARD_BG.rgb()
+    dark_not_ground, cream = 0, 0
+    for y in range(CARD_H):
+        for x in range(CARD_W):
+            c = img.pixelColor(x, y)
+            if c.rgb() == ground:
+                continue
+            if max(c.red(), c.green(), c.blue()) > 200:
+                cream += 1
+            elif max(c.red(), c.green(), c.blue()) < 45:
+                dark_not_ground += 1
+    assert cream > 300, "the crescent is drawn"
+    assert dark_not_ground < 40, dark_not_ground

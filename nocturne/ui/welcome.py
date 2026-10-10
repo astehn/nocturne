@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import time
 from datetime import date
@@ -34,6 +35,8 @@ _RADIUS = 10.0
 _PAD = 8                           # room round each card for the hover lift and shadow
 _LIFT = 3
 _TITLE_GAP = 22
+_BUSY_GAP = 2
+_CANCEL_TEXTS = ("Cancel", "Finishing…")     # what MainWindow._sync_cancel shows
 _GAP = 24                          # between the cards themselves, as in the mock-up
 _META_TOP, _META_GAP, _META_BOTTOM = 9, 3, 10
 # Locked while the window works: the card dims, keeping its colours. A disabled
@@ -79,8 +82,11 @@ def card_info(meta: dict, mtime: float | None, now: float | None = None) -> str:
     if target:
         parts.append(target)
     integ = resolve_integration(meta)
-    if integ is not None and integ.total_s:
-        parts.append(_card_integration(integ.total_s))
+    # A header's EXPTIME of "NaN" reaches here as nan, and int(round(nan))
+    # raised out of the start page and stopped the app launching (review I-1).
+    total = integ.total_s if integ is not None else None
+    if isinstance(total, (int, float)) and math.isfinite(total) and total > 0:
+        parts.append(_card_integration(total))
     if mtime is not None:
         parts.append(when_text(mtime, now))
     return " · ".join(parts)
@@ -102,8 +108,14 @@ def _card_pixmap(jpeg: bytes | None, dpr: float) -> QPixmap:
                             Qt.TransformationMode.SmoothTransformation)
         p.drawImage((w - scaled.width()) // 2, (h - scaled.height()) // 2, scaled)
     else:
-        side = h * 0.3
-        QSvgRenderer(str(_ICON)).render(p, QRectF((w - side) / 2, (h - side) / 2, side, side))
+        # The crescent alone, as in the mock-up: the whole icon brought its
+        # dark rounded square with it (review M-6).
+        svg = QSvgRenderer(str(_ICON))
+        bounds = svg.boundsOnElement("crescent")
+        side = h * 0.28
+        scale = side / max(bounds.width(), bounds.height())
+        cw, ch = bounds.width() * scale, bounds.height() * scale
+        svg.render(p, "crescent", QRectF((w - cw) / 2, (h - ch) / 2, cw, ch))
     p.end()
     pm = QPixmap.fromImage(out)
     pm.setDevicePixelRatio(dpr)
@@ -361,15 +373,23 @@ class WelcomeScreen(QWidget):
         self.busy_label = QLabel("")
         self.busy_label.setObjectName("welcomeBusy")
         self.busy_cancel = QPushButton("Cancel")
+        self.busy_cancel.setObjectName("welcomeCancel")     # a link, as in mock-up B
         self.busy_cancel.clicked.connect(lambda: on_cancel and on_cancel())
-        busy = QHBoxLayout(self.busy_row)
+        # Cancel on a line of its own (Andreas, 2026-10-10): beside the label,
+        # the ticking dots changed the label's width and walked the button
+        # sideways. The label is held at its widest too, so the ring and the
+        # text stay still as well.
+        self._busy_line = QHBoxLayout()
+        self._busy_line.setSpacing(8)
+        self._busy_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._busy_line.addWidget(self.busy_ring, 0, Qt.AlignmentFlag.AlignVCenter)
+        self._busy_line.addWidget(self.busy_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        busy = QVBoxLayout(self.busy_row)
         busy.setContentsMargins(0, 0, 0, 0)
-        busy.setSpacing(8)
-        busy.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        busy.addWidget(self.busy_ring, 0, Qt.AlignmentFlag.AlignVCenter)
-        busy.addWidget(self.busy_label)
-        busy.addWidget(self.busy_cancel)
-        self.busy_row.setFixedHeight(self.busy_cancel.sizeHint().height())
+        busy.setSpacing(_BUSY_GAP)
+        busy.addLayout(self._busy_line)
+        busy.addWidget(self.busy_cancel, 0, Qt.AlignmentFlag.AlignHCenter)
+        self._size_busy_row()
         for w in (self.busy_ring, self.busy_label, self.busy_cancel):
             w.hide()
         # The warnings the right column shows, here while it is hidden: a failed
@@ -393,7 +413,8 @@ class WelcomeScreen(QWidget):
 
         root = QVBoxLayout(self)
         # Spacing is tight on purpose: two rows of cards and every reserved
-        # row fit a 1440 x 900 window (788 px of page offscreen, 785 needed).
+        # row fit a 1440 x 900 window (788 px of page offscreen; measure it
+        # again after changing any height here).
         root.setContentsMargins(16, 0, 16, 0)
         root.setSpacing(0)
         root.addStretch(1)
@@ -402,7 +423,7 @@ class WelcomeScreen(QWidget):
         root.addLayout(buttons)
         root.addSpacing(10)
         root.addWidget(self.drop_hint)
-        root.addSpacing(6)
+        root.addSpacing(4)                  # 4, not 6: pays for Cancel's own line
         root.addWidget(self.busy_row)
         root.addWidget(self.warning_label)
         self._warning_room = QWidget()      # holds the room while no warning shows
@@ -450,12 +471,40 @@ class WelcomeScreen(QWidget):
         return panel
 
     # --- status rows -------------------------------------------------------
+    def _size_busy_row(self) -> None:
+        """Fixed sizes for the busy row: its room is reserved, and nothing in
+        it may change width while it shows."""
+        self.busy_label.ensurePolished()
+        self.busy_cancel.ensurePolished()
+        text = self.busy_cancel.text()
+        widths = []
+        for t in _CANCEL_TEXTS:
+            self.busy_cancel.setText(t)
+            widths.append(self.busy_cancel.sizeHint().width())
+        self.busy_cancel.setText(text)
+        self.busy_cancel.setFixedWidth(max(widths))
+        line = max(self.busy_ring.height(), self.busy_label.fontMetrics().height())
+        self.busy_label.setFixedHeight(line)
+        self.busy_row.setFixedHeight(line + _BUSY_GAP + self.busy_cancel.sizeHint().height())
+
+    def _fit_busy_label(self, text: str, grow_only: bool) -> None:
+        """As wide as the text plus the three dots the window ticks onto it."""
+        need = self.busy_label.fontMetrics().horizontalAdvance(text + "...") + 2
+        if grow_only:
+            need = max(need, self.busy_label.width())
+        if need != self.busy_label.width():
+            self.busy_label.setFixedWidth(need)
+
     def show_busy(self, text: str) -> None:
+        self.busy_label.ensurePolished()
+        self._fit_busy_label(text, grow_only=False)
         self.busy_label.setText(text)
         for w in (self.busy_ring, self.busy_label, self.busy_cancel):
             w.show()
 
     def set_busy_text(self, text: str) -> None:
+        # Never narrower mid-run: the dots come and go on the same base text.
+        self._fit_busy_label(text.rstrip("."), grow_only=True)
         self.busy_label.setText(text)
 
     def hide_busy(self) -> None:
@@ -501,13 +550,18 @@ class WelcomeScreen(QWidget):
         dpr = self.devicePixelRatioF() or 1.0
         for path in paths:
             name = os.path.splitext(os.path.basename(path))[0]
-            jpeg, meta = read_card(path)
+            # One odd bundle must never take the page, or the app's launch,
+            # down with it (review I-1): the card falls back to its name.
             try:
-                mtime = os.path.getmtime(path)
-            except OSError:
-                mtime = None
-            b = _Card(name, path, card_info(meta, mtime, self._now),
-                      _card_pixmap(jpeg, dpr), self._grid_box)
+                jpeg, meta = read_card(path)
+                info = card_info(meta, os.path.getmtime(path), self._now)
+            except Exception:
+                jpeg, info = None, ""
+            try:
+                picture = _card_pixmap(jpeg, dpr)
+            except Exception:
+                picture = _card_pixmap(None, dpr)
+            b = _Card(name, path, info, picture, self._grid_box)
             b.setEnabled(not self._locked())
             b.set_opening(path == self._opening_path)
             b.clicked.connect(lambda _=False, c=b: self._card_clicked(c))
@@ -517,14 +571,19 @@ class WelcomeScreen(QWidget):
     def _card_clicked(self, card: _Card) -> None:
         self._opening_path = card.path
         card.set_opening(True)
-        if self._on_recent:
-            self._on_recent(card.path)
-        # Nothing started (a question answered No, an open refused at once):
-        # nothing is opening, so nothing stays marked.
-        if not self._locked() and self._opening_path == card.path:
-            self._opening_path = None
-            for b in self.recent_buttons:
-                b.set_opening(False)
+        try:
+            if self._on_recent:
+                self._on_recent(card.path)
+        finally:
+            # Nothing started (a question answered No, an open refused or
+            # raising at once): nothing is opening, so nothing stays marked.
+            if not self._locked() and self._opening_path == card.path:
+                self._clear_opening()
+
+    def _clear_opening(self) -> None:
+        self._opening_path = None
+        for b in self.recent_buttons:
+            b.set_opening(False)
 
     def _place_cards(self) -> None:
         shown = self.visible_cards()
@@ -554,22 +613,28 @@ class WelcomeScreen(QWidget):
     def _grid_height(self, rows: int) -> int:
         return rows * self._card_size().height() + (rows - 1) * self._grid.spacing()
 
-    def _head_height(self, rows: int) -> int:
+    def _head_height(self, rows: int, empty: bool = False) -> int:
         """The block's height in a mode, whatever the list holds: the page is
-        centred, so a list that grew or emptied would move the buttons."""
+        centred, so a list that grew or shrank would move the buttons. Not
+        with no projects: that list cannot fill while the page is on screen
+        (saving one needs an image open), so the first page every new user
+        sees is centred on its own height, not held low (review I-3)."""
         self.ensurePolished()
         for w in (self.title, self.tagline, self.recent_title):
             w.ensurePolished()
         title = max(self.title.sizeHint().height(), self.tagline.sizeHint().height())
-        content = max(self._grid_height(rows), self.empty_panel.sizeHint().height())
+        panel = self.empty_panel.sizeHint().height()
+        content = panel if empty else max(self._grid_height(rows), panel)
         return title + _TITLE_GAP + self.recent_title.sizeHint().height() + (12 - _PAD) + content
 
     def _reserve(self) -> None:
         self._align_tagline()
         card = self._card_size()
         width = COLUMNS * card.width() + (COLUMNS - 1) * self._grid.spacing()
-        self._head.hint = QSize(width, self._head_height(self._rows))
-        self._head.floor = self._head_height(1)
+        empty = not self.recent_buttons
+        self._head.hint = QSize(width, self._head_height(self._rows, empty))
+        self._head.floor = self._head_height(1, empty)
+        self._size_busy_row()
         self._head.updateGeometry()
         self.layout().invalidate()
 
@@ -600,6 +665,13 @@ class WelcomeScreen(QWidget):
         super().changeEvent(event)
         if event.type() in (event.Type.StyleChange, event.Type.FontChange) and hasattr(self, "_head"):
             self._reserve()
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        # A successful open hides the page before the window goes idle, so the
+        # idle rebuild that would clear the mark never runs (review M-2).
+        if not event.spontaneous():         # not a minimise mid-open
+            self._clear_opening()
+        super().hideEvent(event)
 
     def showEvent(self, event) -> None:  # noqa: N802
         self.refresh_recent()

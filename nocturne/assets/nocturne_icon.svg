@@ -21,6 +21,6 @@
   <rect x="100" y="100" width="824" height="824" rx="186" ry="186" fill="url(#g)"/>
   <rect x="100" y="100" width="824" height="824" rx="186" ry="186" fill="none"
         stroke="url(#edge)" stroke-width="3"/>
-  <path transform="translate(179.130 83.478) scale(24.348)"
+  <path id="crescent" transform="translate(179.130 83.478) scale(24.348)"
         d="M13.27 6.14A10.5 10.5 0 1 0 25.14 19.21A9 9 0 0 1 13.27 6.14Z" fill="#EDE9E2"/>
 </svg>
