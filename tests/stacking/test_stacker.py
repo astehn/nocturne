@@ -434,3 +434,23 @@ def test_capture_span_survives_a_broken_sub(tmp_path):
     assert capture_span([str(good), str(bad), str(tmp_path / "missing.fit")]) == \
         ("2026-08-26T20:06:02", "2026-08-26T20:06:02")
     assert capture_span([]) == ("", "")
+
+
+def test_an_lp_stack_opened_from_the_dialog_carries_its_filter(tmp_path):
+    """The Stack dialog opens the in-memory master; photometric colour reads
+    its filter to step aside on dual-band data (2026-10-10)."""
+    from nocturne.core.color import ColorSettings
+    from nocturne.steps.color import DUALBAND_MESSAGE, ColorStep
+    base = make_star_field(n_stars=40, seed=7)
+    paths = []
+    for i in range(4):
+        t = SimilarityTransform(translation=(i * 0.5, -i * 0.5))
+        f = warp(base, t.inverse, order=1, preserve_range=True).astype(np.float32)
+        p = tmp_path / f"lp_{i}.fit"
+        write_color_fits(p, f, exptime=10.0, header={"FILTER": "LP"})
+        paths.append(str(p))
+    result = run_stack(StackOptions("average", 2.5, paths, str(tmp_path / "m.fits")))
+    assert result.image.metadata.get("filter") == "LP"
+    step = ColorStep(astap=None, gaia_query=None)
+    step.apply(result.image, ColorSettings(method="photometric"))
+    assert step.last_message == DUALBAND_MESSAGE
