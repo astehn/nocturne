@@ -969,3 +969,14 @@ def test_a_look_saved_before_opacity_existed_still_opens_at_full(qtbot):
     dlg = ShareDialog(_rgb(), {"target": "X"}, Settings(plate_preset="Plate", plate_style=old))
     qtbot.addWidget(dlg)
     assert dlg._opacity_slider.value() == 100
+
+
+@pytest.mark.parametrize("bad", [None, "abc", 5.0, -1])
+def test_a_damaged_saved_opacity_still_opens(qtbot, bad):
+    from nocturne.core.presets import preset_by_name, style_to_dict
+    from nocturne.settings import Settings
+    from nocturne.ui.share_dialog import ShareDialog
+    saved = style_to_dict(preset_by_name("Plate")); saved["text_opacity"] = bad
+    dlg = ShareDialog(_rgb(), {"target": "X"}, Settings(plate_preset="Plate", plate_style=saved))
+    qtbot.addWidget(dlg)
+    assert 30 <= dlg._opacity_slider.value() <= 100

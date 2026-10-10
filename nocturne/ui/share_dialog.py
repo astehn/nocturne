@@ -72,6 +72,15 @@ def _dim(text: str) -> QLabel:
     return lb
 
 
+def _opacity_percent(value) -> int:
+    """A saved opacity as slider percent; a hand-edited or damaged settings
+    value must not stop Share from opening, so anything unreadable is 100%."""
+    try:
+        return max(30, min(100, round(float(value) * 100)))
+    except (TypeError, ValueError):
+        return 100
+
+
 class ShareDialog(QDialog):
     def __init__(self, rgb8: np.ndarray, metadata: dict, settings, parent=None,
                  annotated_rgb8: np.ndarray | None = None,
@@ -321,7 +330,7 @@ class ShareDialog(QDialog):
         self._opacity_slider.setRange(30, 100)
         self._opacity_slider.setSingleStep(5)
         self._opacity_slider.setPageStep(10)
-        self._opacity_slider.setValue(round(start.text_opacity * 100))
+        self._opacity_slider.setValue(_opacity_percent(start.text_opacity))
         self._opacity_slider.setToolTip(
             "How strongly the text shows. Lower lets the picture through the "
             "letters, so the plate sits in the image rather than on top of it")
@@ -556,7 +565,7 @@ class ShareDialog(QDialog):
         self._cap_colour = style.colour
         self._paint_colour_btn()
         self._opacity_slider.blockSignals(True)
-        self._opacity_slider.setValue(round(style.text_opacity * 100))
+        self._opacity_slider.setValue(_opacity_percent(style.text_opacity))
         self._opacity_slider.blockSignals(False)
         self._opacity_val.setText(f"{self._opacity_slider.value()}%")
 
