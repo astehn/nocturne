@@ -613,7 +613,7 @@ class StackDialog(QDialog):
     # --- "Add folder…" (spec 2026-09-28 §9.7) ---
     def _browse_add_folder(self) -> None:
         start = self._graded_folder or start_dir(self._settings.base_dir)
-        path = file_dialogs.choose_folder(self, "Add the subs of another folder", start)
+        path = file_dialogs.choose_folder(self, "Add the subs of another folder", start, accept="Add")
         if path:
             self.add_folder(path)
 
@@ -808,7 +808,7 @@ class StackDialog(QDialog):
         automatic — which is the bug this replaced: Browse… used to hand back a
         whole path and the automatic name was gone (Andreas, 2026-09-27)."""
         start = self.save_to_edit.text().strip() or start_dir(self._settings.base_dir)
-        path = file_dialogs.choose_folder(self, "Save the master to", start)
+        path = file_dialogs.choose_folder(self, "Save the master to", start, accept="Save")
         if path:
             self.save_to_edit.setText(path)
             self._save_to_is_manual = True
