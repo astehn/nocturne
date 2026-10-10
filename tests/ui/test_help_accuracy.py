@@ -82,13 +82,14 @@ def test_crop_and_trim_help_name_exactly_the_shape_controls_that_exist(qtbot):
     assert "Portrait</b> makes 3:2 into 2:3" in b
 
 
-def test_share_and_upscale_help_say_there_is_no_free_shape(qtbot):
+def test_share_has_no_free_shape_and_upscale_has_one(qtbot):
+    """Share frames the whole picture to a shape (no Free); Upscale Crop's box
+    was always free to drag, so it keeps Free and opens on it."""
     b_share, b_up = _body("share"), _body("upscale")
     d = _upscale_dialog(qtbot)
-    assert "Free" not in d.shape_picker.labels()
-    assert "no Free button" in b_share and "no Free shape" in b_up
+    assert d.shape_picker.labels()[0] == "Free" and d.shape_picker.ratio() is None
+    assert "no Free button" in b_share and "<b>Free</b> (any shape you drag, where it opens)" in b_up
     assert "<b>Orientation</b>" in b_share and "<b>Orientation</b>" in b_up
-    assert "Original (free)" not in b_up, "Upscale's Original is locked now"
 
 
 def test_stacking_help_names_the_real_controls():

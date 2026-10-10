@@ -141,17 +141,18 @@ class UpscaleDialog(QDialog):
         self.picker.cropBoxChanged.connect(lambda *_: self._sync_size())
         self.picker.cropBoxShown.connect(self._sync_size)
 
-        # Shape buttons shared with Crop, Trim and Share (shape_picker.py). No
-        # Free, as in Share: Original locks the box to the picture's own
-        # proportions. The 240 px panel became 280 to fit four across.
+        # Shape buttons shared with Crop, Trim and Share (shape_picker.py).
+        # WITH Free, unlike Share: Upscale's box was always free to drag (its old
+        # "Original"), and it opens that way; Original now locks the box to the
+        # picture's own proportions. The 240 px panel became 280 to fit four across.
         h0, w0 = self._img.data.shape[:2]
-        self.shape_picker = ShapePicker(offer_free=False, title=None)
+        self.shape_picker = ShapePicker(offer_free=True, title=None)
         self.shape_picker.set_picture_ratio(w0 / h0)
         self.shape_picker.shapeChanged.connect(lambda _name: self._set_shape(
             self.shape_picker.ratio()))
         # By the landscape label ("Original", "16:9"), fixed at opening.
         self.shape_buttons = {b.text(): b for b in self.shape_picker.buttons()}
-        self.picker.set_aspect(self.shape_picker.ratio())   # Original is locked too
+        self.picker.set_aspect(self.shape_picker.ratio())   # Free (None) at opening, as before
         self.size_label = QLabel("")
         # The limit follows this computer's memory (core/upscale.py), so the
         # panel says what it is and why, beside the button it disables — in

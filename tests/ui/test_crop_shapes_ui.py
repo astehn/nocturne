@@ -135,9 +135,14 @@ def _upscale(qtbot, h=60, w=90):
     return d
 
 
-def test_upscale_has_no_free_and_its_original_is_locked(qtbot):
+def test_upscale_opens_free_as_before_and_its_original_is_locked(qtbot):
+    """Upscale's box was always free to drag (its old "Original"); it keeps Free
+    and opens on it. The new Original locks to the picture's proportions."""
     d = _upscale(qtbot)
-    assert d.shape_picker.labels() == ["Original", "1:1", "5:4", "4:3", "3:2", "16:9"]
+    assert d.shape_picker.labels() == ["Free", "Original", "1:1", "5:4", "4:3", "3:2", "16:9"]
+    assert d.shape_picker.ratio() is None
+    from nocturne.ui.shape_picker import PICTURE
+    d.shape_picker.button(PICTURE).click()
     d.picker.show_crop_box()
     assert d.picker._aspect == pytest.approx(90 / 60)
     d.picker._resize_to("br", QPointF(50, 50))
