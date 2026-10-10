@@ -154,12 +154,7 @@ def serialize_option(stage_id, option):
 
 
 def _from_saved_dict(stage_id, value: dict):
-    """The settings object for an option stored as a dict, tolerating missing
-    keys (a bundle saved before a field existed)."""
-    if stage_id == "crop":
-        return CropParams(bounds=None, aspect=value.get("aspect", "Original"),
-                          rotate=value.get("rotate", 0), flip_h=value.get("flip_h", False),
-                          flip_v=value.get("flip_v", False))
+    """The settings object for an option stored as a dict."""
     return deserialize_option(stage_id, value)
 
 
@@ -167,8 +162,11 @@ def deserialize_option(stage_id, value):
     if stage_id == "enhance":
         return value
     if stage_id == "crop":
-        return CropParams(bounds=None, aspect=value["aspect"], rotate=value["rotate"],
-                          flip_h=value["flip_h"], flip_v=value["flip_v"])
+        # Lenient: a recipe or bundle written before a field existed reads it
+        # as the default rather than failing.
+        return CropParams(bounds=None, aspect=value.get("aspect", "Original"),
+                          rotate=value.get("rotate", 0), flip_h=value.get("flip_h", False),
+                          flip_v=value.get("flip_v", False))
     if stage_id == "color":
         import dataclasses
         fields = {f.name for f in dataclasses.fields(ColorSettings)}
