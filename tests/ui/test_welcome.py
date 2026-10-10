@@ -44,13 +44,15 @@ def test_recent_projects_are_listed_and_open(qtbot, tmp_path):
     assert opened == [paths[1]]
 
 
-def test_no_recent_projects_shows_no_heading(qtbot):
+def test_no_projects_shows_the_get_started_panel(qtbot):
     w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: [])
     qtbot.addWidget(w)
-    assert w.recent_buttons == [] and not w.recent_title.isVisibleTo(w)
+    assert w.recent_buttons == []
+    assert w.recent_title.text() == "GET STARTED"
+    assert w.empty_panel.isVisibleTo(w) and not w._grid_box.isVisibleTo(w)
 
 
-def test_at_most_five_are_shown_and_the_list_follows_the_settings(qtbot, tmp_path):
+def test_at_most_six_are_shown_and_the_list_follows_the_settings(qtbot, tmp_path):
     from nocturne.ui.welcome import RECENT_SHOWN
     files = []
     for i in range(8):
@@ -63,16 +65,19 @@ def test_at_most_five_are_shown_and_the_list_follows_the_settings(qtbot, tmp_pat
     assert len(w.recent_buttons) == 2
     source["list"] = files
     w.refresh_recent()
-    assert len(w.recent_buttons) == RECENT_SHOWN == 4
+    assert len(w.recent_buttons) == RECENT_SHOWN == 6
 
 
 def test_the_buttons_stay_put_whatever_the_list_holds(qtbot, tmp_path):
+    """From one project to four. Not from none: the empty page is centred on
+    its own height (review I-3, 2026-10-10) — a list cannot fill while it is
+    on screen, since saving a project needs an image open."""
     files = []
     for i in range(4):
         p = tmp_path / f"p{i}.nocturne"
         p.write_text("x")
         files.append(str(p))
-    source = {"list": []}
+    source = {"list": files[:1]}
     w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: source["list"])
     qtbot.addWidget(w)
     w.resize(1200, 760)

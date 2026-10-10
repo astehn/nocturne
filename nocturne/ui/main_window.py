@@ -5141,7 +5141,7 @@ class MainWindow(QMainWindow):
         # The start page's recent list is rebuilt whenever it is shown; a list
         # built during the run started locked and is not in the record above.
         # Only while it is on screen: hidden behind an image, every finished
-        # step rebuilt four cards for nothing (its showEvent refreshes anyway).
+        # step rebuilt six cards for nothing (its showEvent refreshes anyway).
         if self._welcome.isVisible():
             self._welcome.refresh_recent()
 
