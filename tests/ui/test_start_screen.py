@@ -65,7 +65,7 @@ def test_the_page_reads_top_to_bottom(qtbot, tmp_path):
         "the tagline is on the title's line"
     assert tag.mapTo(w, QPoint(0, 0)).x() > title.mapTo(w, QPoint(0, 0)).x() + title.width() - 1
     order = [title, w.recent_title, w.recent_buttons[0], w.recent_buttons[3], w.stack_btn,
-             w.drop_hint, w.busy_row, w._warning_room, w.update_note]
+             w.drop_hint, w.status_slot, w.update_note]
     tops = [_top(x, w) for x in order]
     assert tops == sorted(tops) and len(set(tops)) == len(tops)
     assert w.recent_title.text() == "RECENT PROJECTS"
@@ -509,3 +509,102 @@ def test_the_placeholder_is_the_bare_crescent(qtbot):
                 dark_not_ground += 1
     assert cream > 300, "the crescent is drawn"
     assert dark_not_ground < 40, dark_not_ground
+
+
+# --- two rows on a real 1440x900 MacBook (Andreas, 2026-10-10: "two rows") --------
+@pytest.fixture
+def _styled():
+    app = QApplication.instance()
+    before = app.styleSheet()
+    app.setStyleSheet(theme.build_stylesheet())
+    yield
+    app.setStyleSheet(before)
+
+
+def test_two_rows_fit_a_750_px_page(qtbot, tmp_path, _styled):
+    """A real 1440x900 Mac leaves the page about 752-757 px once the menu bar
+    and title bar are paid for; two rows needed 785. 750 holds a few px of
+    margin under that."""
+    w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: _files(tmp_path, 6))
+    qtbot.addWidget(w)
+    w.resize(1400, 750)
+    w.show()
+    qtbot.waitExposed(w)
+    assert w.height() == 750, "fixture: the page is the height under test"
+    assert w.page_height(2) <= 745, f"two rows need {w.page_height(2)} px"
+    assert w.rows() == 2 and len(_shown(w)) == 6
+    ys = sorted({b.y() for b in _shown(w)})
+    assert len(ys) == 2, "six cards in two rows"
+    bottom = w.update_note.mapTo(w, QPoint(0, w.update_note.height())).y()
+    assert bottom <= w.height(), "everything under the buttons still fits"
+
+
+@pytest.fixture
+def _dark_theme():
+    """The app's own theme, as launched: apply_dark_theme sets Fusion as well
+    as the stylesheet, and Fusion's toolbar is what fixes the page's height."""
+    from nocturne.ui.theme import apply_dark_theme
+    app = QApplication.instance()
+    style, sheet = app.style().name(), app.styleSheet()
+    apply_dark_theme(app)
+    yield
+    app.setStyle(style)
+    app.setStyleSheet(sheet)
+
+
+def test_two_rows_on_a_real_1440x900_mac(qtbot, tmp_path, _dark_theme):
+    """The window a real 1440x900 Mac gives a maximised Nocturne: 900 less the
+    30 px menu bar and the 28 px title bar. On macOS the menu bar is the
+    system's, outside the window, so it is hidden here to match."""
+    win = _window(qtbot, tmp_path)
+    win.settings.recent_projects = _files(tmp_path, 8)
+    win.menuBar().hide()
+    win.resize(1440, 900 - 30 - 28)
+    win.show()
+    qtbot.waitExposed(win)
+    page = win._welcome
+    # 764 px here; the estimate for a real Mac was ~757. Either way under the
+    # 785 two rows needed before 2026-10-10, so this test can fail.
+    assert page.height() <= 770, f"fixture: page {page.height()} is taller than a real Mac's"
+    qtbot.waitUntil(lambda: len(_shown(page)) == 6, timeout=2000)
+    assert page.rows() == 2
+
+
+def test_busy_and_warning_share_one_slot_and_the_buttons_never_move(qtbot, _styled):
+    """The two rows used to hold a slot each (39 + 34 px); a warning comes
+    after the work ends, so one slot holds whichever is up. Nothing above
+    or below it may move as they come and go."""
+    w = _busy_page(qtbot)
+    btn, note = _at(w.stack_btn, w), _at(w.update_note, w)
+    def still():
+        qtbot.wait(5)
+        assert (_at(w.stack_btn, w), _at(w.update_note, w)) == (btn, note)
+    w.show_busy("Opening project…"); still()
+    slot_top = _top(w.status_slot, w)
+    assert _top(w.busy_label, w) >= slot_top
+    cancel = _at(w.busy_cancel, w)
+    w.hide_busy(); still()
+    w.show_warning("Could not open file: /a/very/long/path/" + "x" * 300 + ".fits"); still()
+    assert w.warning_label.isVisible()
+    assert _top(w.warning_label, w) >= slot_top
+    assert _top(w.warning_label, w) + w.warning_label.height() <= slot_top + w.status_slot.height()
+    assert w.warning_label.height() >= 2 * w.warning_label.fontMetrics().lineSpacing(), \
+        "alone, the warning keeps its two lines"
+    w.clear_warning(); still()
+    assert not w.warning_label.isVisible()
+    # The busy refusal ("Finish or cancel ...") arrives while the work runs:
+    # it takes the text's line, and Cancel, the thing it asks for, stays put.
+    w.show_busy("Opening project…"); still()
+    w.show_warning("Finish or cancel what Nocturne is doing, then open bad.fits."); still()
+    assert w.warning_label.isVisible() and w.busy_cancel.isVisible()
+    assert not w.busy_label.isVisible() and not w.busy_ring.isVisible(), \
+        "one occupant for the line, not the warning drawn over the label"
+    assert _at(w.busy_cancel, w) == cancel
+    assert _top(w.warning_label, w) + w.warning_label.height() <= _top(w.busy_cancel, w), \
+        "the warning does not run under Cancel"
+    w.clear_warning(); still()
+    assert w.busy_label.isVisible(), "the label comes back when the warning goes"
+    w.show_warning("Finish or cancel what Nocturne is doing, then open bad.fits."); still()
+    w.hide_busy(); still()
+    assert w.warning_label.isVisible(), "the warning outlives the work"
+    w.clear_warning(); still()

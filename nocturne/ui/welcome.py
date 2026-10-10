@@ -34,7 +34,7 @@ _CARD_EDGE = QColor("#2a2c31")
 _RADIUS = 10.0
 _PAD = 8                           # room round each card for the hover lift and shadow
 _LIFT = 3
-_TITLE_GAP = 22
+_TITLE_GAP = 16
 _BUSY_GAP = 2
 _CANCEL_TEXTS = ("Cancel", "Finishing…")     # what MainWindow._sync_cancel shows
 _GAP = 24                          # between the cards themselves, as in the mock-up
@@ -368,7 +368,13 @@ class WelcomeScreen(QWidget):
         # from here showed nothing for seconds (review 2026-10-06). Its room
         # is reserved like the update note's: a row appearing would move the
         # centred buttons under the cursor.
-        self.busy_row = QWidget()
+        #
+        # It shares ONE reserved slot with the warning (2026-10-10, two rows on
+        # a real 1440 x 900 Mac): a failure is reported after the work ends, so
+        # the two are up together only for the busy refusal ("Finish or
+        # cancel..."), which then takes the text's line and leaves Cancel, the
+        # thing it asks for, where it was. A slot each cost 34 px.
+        self.status_slot = QWidget()
         self.busy_ring = ProgressRing(size="small")
         self.busy_label = QLabel("")
         self.busy_label.setObjectName("welcomeBusy")
@@ -379,27 +385,34 @@ class WelcomeScreen(QWidget):
         # the ticking dots changed the label's width and walked the button
         # sideways. The label is held at its widest too, so the ring and the
         # text stay still as well.
-        self._busy_line = QHBoxLayout()
+        self._busy_line_box = QWidget()
+        self._busy_line = QHBoxLayout(self._busy_line_box)
+        self._busy_line.setContentsMargins(0, 0, 0, 0)
         self._busy_line.setSpacing(8)
         self._busy_line.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._busy_line.addWidget(self.busy_ring, 0, Qt.AlignmentFlag.AlignVCenter)
         self._busy_line.addWidget(self.busy_label, 0, Qt.AlignmentFlag.AlignVCenter)
-        busy = QVBoxLayout(self.busy_row)
-        busy.setContentsMargins(0, 0, 0, 0)
-        busy.setSpacing(_BUSY_GAP)
-        busy.addLayout(self._busy_line)
-        busy.addWidget(self.busy_cancel, 0, Qt.AlignmentFlag.AlignHCenter)
+        # The warnings the right column shows, here while it is hidden: a failed
+        # open from the start page reported into a hidden label, which is the
+        # silent drop ruled out on 2026-10-05. Elided, never widening the page.
+        self.warning_label = _ElidingLabel("welcomeWarning")
+        self.warning_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.warning_label.hide()
+        # The text's line holds the ring and label, or the warning, in one
+        # cell; with Cancel hidden (not working) it grows to the whole slot,
+        # which gives a warning on its own its two lines.
+        top = QGridLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        top.addWidget(self._busy_line_box, 0, 0)
+        top.addWidget(self.warning_label, 0, 0)
+        slot = QVBoxLayout(self.status_slot)
+        slot.setContentsMargins(0, 0, 0, 0)
+        slot.setSpacing(_BUSY_GAP)
+        slot.addLayout(top, 1)
+        slot.addWidget(self.busy_cancel, 0, Qt.AlignmentFlag.AlignHCenter)
         self._size_busy_row()
         for w in (self.busy_ring, self.busy_label, self.busy_cancel):
             w.hide()
-        # The warnings the right column shows, here while it is hidden: a failed
-        # open from the start page reported into a hidden label, which is the
-        # silent drop ruled out on 2026-10-05. Reserved room, like the rows
-        # above; elided, never widening the page.
-        self.warning_label = _ElidingLabel("welcomeWarning")
-        self.warning_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.warning_label.setFixedHeight(self.warning_label.fontMetrics().lineSpacing() * 2 + 4)
-        self.warning_label.hide()
 
         # A new release, announced once (Andreas, 2026-09-26: no pop-up). Its
         # room is reserved from the start: the check lands seconds after launch,
@@ -413,22 +426,19 @@ class WelcomeScreen(QWidget):
 
         root = QVBoxLayout(self)
         # Spacing is tight on purpose: two rows of cards and every reserved
-        # row fit a 1440 x 900 window (788 px of page offscreen; measure it
-        # again after changing any height here).
+        # row fit the ~752 px of page a real 1440 x 900 Mac leaves (741 px
+        # needed, dark theme, offscreen, 2026-10-10; measure it again after
+        # changing any height here — test_two_rows_fit_a_750_px_page).
         root.setContentsMargins(16, 0, 16, 0)
         root.setSpacing(0)
         root.addStretch(1)
         root.addWidget(self._head, 0, Qt.AlignmentFlag.AlignHCenter)
-        root.addSpacing(24 - _PAD)          # 24 from the card edge, past its shadow room
+        root.addSpacing(20 - _PAD)          # 20 from the card edge, past its shadow room
         root.addLayout(buttons)
         root.addSpacing(10)
         root.addWidget(self.drop_hint)
         root.addSpacing(4)                  # 4, not 6: pays for Cancel's own line
-        root.addWidget(self.busy_row)
-        root.addWidget(self.warning_label)
-        self._warning_room = QWidget()      # holds the room while no warning shows
-        self._warning_room.setFixedHeight(self.warning_label.height())
-        root.addWidget(self._warning_room)
+        root.addWidget(self.status_slot)
         root.addWidget(self.update_note)
         root.addStretch(1)
         self.refresh_recent()
@@ -485,7 +495,10 @@ class WelcomeScreen(QWidget):
         self.busy_cancel.setFixedWidth(max(widths))
         line = max(self.busy_ring.height(), self.busy_label.fontMetrics().height())
         self.busy_label.setFixedHeight(line)
-        self.busy_row.setFixedHeight(line + _BUSY_GAP + self.busy_cancel.sizeHint().height())
+        busy = line + _BUSY_GAP + self.busy_cancel.sizeHint().height()
+        self.warning_label.ensurePolished()
+        warning = self.warning_label.fontMetrics().lineSpacing() * 2 + 4
+        self.status_slot.setFixedHeight(max(busy, warning))
 
     def _fit_busy_label(self, text: str, grow_only: bool) -> None:
         """As wide as the text plus the three dots the window ticks onto it."""
@@ -501,6 +514,7 @@ class WelcomeScreen(QWidget):
         self.busy_label.setText(text)
         for w in (self.busy_ring, self.busy_label, self.busy_cancel):
             w.show()
+        self._sync_slot()
 
     def set_busy_text(self, text: str) -> None:
         # Never narrower mid-run: the dots come and go on the same base text.
@@ -512,16 +526,21 @@ class WelcomeScreen(QWidget):
             w.hide()
         self.busy_label.setText("")
         self.busy_ring.set_indeterminate()
+        self._sync_slot()
 
     def show_warning(self, text: str) -> None:
         self.warning_label.setText(text)
-        self._warning_room.hide()
         self.warning_label.show()
+        self._sync_slot()
 
     def clear_warning(self) -> None:
         self.warning_label.setText("")
         self.warning_label.hide()
-        self._warning_room.show()
+        self._sync_slot()
+
+    def _sync_slot(self) -> None:
+        """One occupant for the text's line: a warning, else the ring and label."""
+        self._busy_line_box.setVisible(self.warning_label.isHidden())
 
     def set_update_note(self, html: str) -> None:
         self.update_note.setText(html)
