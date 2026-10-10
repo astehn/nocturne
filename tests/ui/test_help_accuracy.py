@@ -2062,3 +2062,32 @@ def test_help_names_the_levels_auto_button_as_the_button_shows_it():
         b = _body(tid)
         assert "<b>Auto</b>" not in b, f"{tid!r} still names the old 'Auto' button"
         assert f"<b>{label}</b>" in b, f"{tid!r} does not name the {label!r} button"
+
+
+def test_color_help_matches_what_photometric_colour_does():
+    """Written with the 2026-10-10 fix: photometric colour now measures star
+    colour with the sky taken off, and steps aside on dual-band data. The topic
+    must say what it corrects, when it steps aside and why, and what an
+    unlinked stretch does to it."""
+    from nocturne.core.color import ColorSettings
+    from nocturne.core.image import AstroImage
+    from nocturne.steps.color import DUALBAND_MESSAGE, ColorStep
+    b = _body("color")
+    assert "<b>Gaia</b>" in b and "colour of the <i>stars</i>" in b
+    assert "bkgann" in _src("nocturne/core/spcc.py"), "the sky is no longer taken off"
+    assert "taken off before each star is measured" in b
+    # steps aside on LP, through the sky balance, and the log says so
+    assert "<b>LP</b>" in b and "steps aside" in b and "two narrow slices" in b
+    step = ColorStep(astap=None, gaia_query=None)
+    img = AstroImage(np.full((16, 16, 3), 0.3, np.float32), is_linear=True,
+                     metadata={"filter": "LP"})
+    step.apply(img, ColorSettings(method="photometric"))
+    assert step.last_message == DUALBAND_MESSAGE and step.fell_back is True
+    # a recipe keeps the choice
+    assert step.recorded_option(ColorSettings(method="photometric")).method == "photometric"
+    assert "recipe keeps your choice" in b
+    # unlinked stretch: the same claim the Stretch topic makes
+    assert "<i>unlinked</i> stretch normalises each channel" in b
+    assert "undoes a" in _body("stretch") and "photometric colour calibration completely" in _body("stretch")
+    # Auto Enhance's topic mentions the step-aside
+    assert "On dual-band (<b>LP</b>) data" in _body("auto-enhance")

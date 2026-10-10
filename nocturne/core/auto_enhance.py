@@ -6,16 +6,8 @@ from ..steps.factory import make_step
 from ..tools.base import run_cli
 from .color import ColorSettings
 from .crop import CropParams, detect_content_bounds
+from .filter_type import detect_data_type  # noqa: F401  (re-exported)
 from .image import AstroImage
-
-
-def detect_data_type(metadata: dict) -> str:
-    """'dualband' if the Seestar LP (Ha/OIII) filter, 'broadband' if a known
-    other filter, 'unknown' if absent (caller should ask)."""
-    filt = str(metadata.get("filter") or "").strip().upper()
-    if not filt:
-        return "unknown"
-    return "dualband" if "LP" in filt else "broadband"
 
 
 # ---- One-tap auto-enhance plan ---------------------------------------------
@@ -82,7 +74,8 @@ def build_auto_plan(img, settings: Settings, include_crop: bool = True) -> list[
     Settings() (nothing installed) -- background is simply omitted and
     denoise/color degrade to built-in engines. Always uses photometric colour
     (falling back to sky-neutralize when ASTAP isn't configured) for all
-    data -- there is no separate dual-band/narrowband branch; narrowband
+    data -- the Color step itself steps aside to sky balance on dual-band
+    (LP) data -- there is no separate dual-band/narrowband branch; narrowband
     (HOO) remains available only as a manual toolbar tool. Deliberately
     excludes the more aggressive stages (deconvolution, star_reduction,
     recover_core, curves) for a balanced, natural default; local_contrast

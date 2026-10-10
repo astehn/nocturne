@@ -4,6 +4,11 @@ from ..core.color import ColorSettings, apply_color
 from ..core.image import AstroImage
 from ..history.step import Step
 
+# Approved word for word (2026-10-10). Through two narrow passbands a star's
+# colour no longer tracks its Gaia BP-RP, so there is nothing to calibrate to.
+DUALBAND_MESSAGE = ("Photometric colour isn't meaningful through a dual-band "
+                    "filter; balanced on the sky instead.")
+
 
 class ColorStep(Step):
     name = "Color"
@@ -25,7 +30,11 @@ class ColorStep(Step):
         self.last_message = ""
         asked = getattr(settings, "method", "sky") == "photometric"
         self.fell_back = asked          # until the calibration actually lands
-        if asked and img.is_color:
+        if asked and img.is_color and _is_dualband(img):
+            # Steps aside before solving: no ASTAP, no network. The recorded
+            # method stays the choice, so a recipe still calibrates broadband.
+            self.last_message = DUALBAND_MESSAGE
+        elif asked and img.is_color:
             result = self._photometric(img)
             if result is not None:
                 self.fell_back = False
@@ -123,3 +132,8 @@ class ColorStep(Step):
         self.last_message = (f"Photometric colour — {spcc.n_matched} stars matched · "
                              f"gains R {gr:.2f} · G {gg:.2f} · B {gb:.2f}")
         return apply_gains(img, spcc.gains)
+
+
+def _is_dualband(img: AstroImage) -> bool:
+    from ..core.filter_type import detect_data_type
+    return detect_data_type(img.metadata or {}) == "dualband"
