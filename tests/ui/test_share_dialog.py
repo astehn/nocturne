@@ -915,3 +915,57 @@ def test_the_share_dialog_composes_ONE_way():
         f"{src.count('compose_share(')} compose paths; there must be one"
     assert "plate = self._plate()" in src, \
         "the single compose must be fed by the on-screen plate"
+
+
+# --- text opacity (2026-10-10) -------------------------------------------------
+
+def test_text_opacity_starts_at_full_and_has_a_readable_floor(qtbot):
+    dlg = _dlg(qtbot)
+    assert dlg._opacity_slider.value() == 100 and dlg._opacity_val.text() == "100%"
+    assert dlg._style().text_opacity == 1.0
+    # below ~30% the thin subtitle and credit weights vanish in a star field
+    assert dlg._opacity_slider.minimum() == 30 and dlg._opacity_slider.maximum() == 100
+
+
+def test_text_opacity_reaches_the_render_and_is_persisted(qtbot):
+    saved = {}
+    from nocturne.settings import Settings
+    from nocturne.ui.share_dialog import ShareDialog
+    dlg = ShareDialog(_rgb(), {"target": "NGC 281"}, Settings(handle="me"),
+                      settings_saver=lambda s: saved.update(style=dict(s.plate_style)))
+    qtbot.addWidget(dlg)
+    def pixels(q):
+        from PySide6.QtGui import QImage
+        q = q.convertToFormat(QImage.Format.Format_RGB888)
+        return bytes(q.constBits())[:q.sizeInBytes()]      # a copy, not a view
+    before = pixels(dlg._compose_current())
+    dlg._opacity_slider.setValue(60)
+    assert dlg._opacity_val.text() == "60%"
+    assert dlg._style().text_opacity == pytest.approx(0.60)
+    assert saved["style"]["text_opacity"] == pytest.approx(0.60)
+    after = pixels(dlg._compose_current())
+    assert len(before) > 1000 and before != after, "the export must change with the slider"
+
+
+def test_a_saved_opacity_is_restored_and_a_preset_resets_it(qtbot):
+    from dataclasses import replace
+    from nocturne.core.presets import preset_by_name, style_to_dict
+    from nocturne.settings import Settings
+    from nocturne.ui.share_dialog import ShareDialog
+    saved = style_to_dict(replace(preset_by_name("Plate"), text_opacity=0.7))
+    dlg = ShareDialog(_rgb(), {"target": "X"}, Settings(plate_preset="Plate", plate_style=saved))
+    qtbot.addWidget(dlg)
+    assert dlg._opacity_slider.value() == 70
+    dlg._preset_box.setCurrentIndex(0)               # a preset is a whole look
+    assert dlg._opacity_slider.value() == 100 and dlg._opacity_val.text() == "100%"
+
+
+def test_a_look_saved_before_opacity_existed_still_opens_at_full(qtbot):
+    from nocturne.core.presets import preset_by_name, style_to_dict
+    from nocturne.settings import Settings
+    from nocturne.ui.share_dialog import ShareDialog
+    old = style_to_dict(preset_by_name("Plate"))
+    old.pop("text_opacity")
+    dlg = ShareDialog(_rgb(), {"target": "X"}, Settings(plate_preset="Plate", plate_style=old))
+    qtbot.addWidget(dlg)
+    assert dlg._opacity_slider.value() == 100

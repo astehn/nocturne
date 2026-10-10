@@ -1968,3 +1968,15 @@ def test_upscale_help_says_the_navigator_maps_the_whole_frame(qtbot):
     d.picker.set_crop_overlay(True, content_bounds=(10, 40, 20, 60)); d.picker.show_crop_box()
     d._run_upscale()
     assert (d.navigator._fw, d.navigator._fh) == (100, 60), "the navigator no longer maps the frame"
+
+
+def test_share_help_gives_the_opacity_range_the_slider_has(qtbot):
+    from nocturne.settings import Settings
+    from nocturne.ui.share_dialog import ShareDialog
+    b = _body("share")
+    dlg = ShareDialog(np.zeros((40, 30, 3), np.uint8), {"target": "X"}, Settings())
+    qtbot.addWidget(dlg)
+    s = dlg._opacity_slider
+    assert f"from {s.minimum()}% to {s.maximum()}%" in b
+    assert f"stops at {s.minimum()}%" in b
+    assert "a shadow fades with the text" in b

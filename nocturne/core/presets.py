@@ -31,6 +31,11 @@ class PlateStyle:
     colour: str
     rule: bool                 # hairline between designation and common name
     keyline: bool              # inset border; independent of treatment
+    # How opaque the plate's ink is: text, rule and keyline, with the shadow
+    # fading alongside. On a dark sky full-strength off-white made the plate the
+    # brightest thing in the frame (Andreas, 2026-10-09, his NGC 281 share).
+    # Defaulted so every saved look and preset reads exactly as before.
+    text_opacity: float = 1.0
 
 
 PRESETS: list[PlateStyle] = [

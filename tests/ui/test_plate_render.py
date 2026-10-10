@@ -271,3 +271,65 @@ def test_an_ordinary_frame_is_not_shrunk_by_the_fit_clamp(qtbot):
         for st in PRESETS:
             avail = float(w - 2 * round(min(w, h) * st.margin))
             assert _fit_scale(text, st, avail, h) == 1.0, f"{st.name} shrunk at {w}x{h}"
+
+
+# --- text opacity (2026-10-10) -----------------------------------------------
+# His NGC 281 share: off-white at full strength was the brightest thing in the
+# frame. One opacity for the plate's ink: text, rule and keyline; the shadow
+# fades with it.
+
+def _ink(out, base=0x10):
+    """Mean brightness of the glyph pixels in the block, over a dark frame."""
+    lay = last_layout()
+    a = _px(out)[int(lay["block_top"]):int(lay["block_top"] + lay["block_height"]), :, 0]
+    return a[a > base + 40]
+
+
+def test_full_opacity_is_byte_identical_to_a_style_without_the_setting(qtbot):
+    text = PlateText("NGC 281", "Pacman Nebula", "3h 25m · Nocturne")
+    for treatment in ("scrim", "shadow", "band", "matte", "none"):
+        old = _Style(); old.treatment = treatment; old.keyline = True
+        new = _Style(); new.treatment = treatment; new.keyline = True; new.text_opacity = 1.0
+        a = _px(draw_plate(_dark(), text, old)).copy()
+        b = _px(draw_plate(_dark(), text, new)).copy()
+        assert np.array_equal(a, b), treatment
+
+
+def test_lower_opacity_dims_the_text_in_proportion(qtbot):
+    text = PlateText("NGC 281", "Pacman Nebula", "")
+    st = _Style(); st.treatment = "none"; st.rule = True
+    full = _px(draw_plate(_dark(), text, st)).copy()   # copies: see the test below
+    core = full[..., 0] > 200                          # glyph cores, not their antialiased edges
+    st.text_opacity = 0.5
+    half = _px(draw_plate(_dark(), text, st)).copy()
+    assert core.sum() > 100
+    f, h = full[..., 0][core].astype(float), half[..., 0][core].astype(float)
+    # over 0x10: half-opaque 0xF0 reads (0xF0 + 0x10) / 2
+    assert np.median(h) == pytest.approx((np.median(f) + 0x10) / 2, abs=3)
+
+
+def test_the_picture_shows_through_the_letters(qtbot):
+    """Opacity, not a darker colour: what is behind the text still shows."""
+    text = PlateText("NGC 281", "", "")
+    red = QImage(800, 1000, QImage.Format.Format_RGB888); red.fill(0x802010)
+    full_st = _Style(); full_st.treatment = "none"; full_st.rule = False
+    half_st = _Style(); half_st.treatment = "none"; half_st.rule = False; half_st.text_opacity = 0.5
+    # .copy(): _px is a view into the QImage's memory, and a temporary image is
+    # freed and reused by the next render — "full" then read half's pixels.
+    full = _px(draw_plate(red, text, full_st)).copy()
+    half = _px(draw_plate(red, text, half_st)).copy()
+    core = full[..., 1] > 200                          # full-strength glyph cores
+    assert core.sum() > 50
+    # full: off-white (240, 233, 226); half over red: measured (184, 133, 121)
+    assert np.median(full[..., 0][core] - full[..., 1][core].astype(int)) < 10
+    assert np.median(half[..., 0][core].astype(int) - half[..., 1][core]) > 30, \
+        "the red behind the letters should tint them"
+
+
+def test_the_shadow_fades_with_the_text(qtbot):
+    grey = QImage(600, 400, QImage.Format.Format_RGB888); grey.fill(0xB0B0B0)
+    st = _Style(); st.treatment = "shadow"; st.rule = False
+    full = _mean(grey) - _mean(draw_plate(grey, PlateText("", "TRUNK", ""), st))
+    st.text_opacity = 0.4
+    faded = _mean(grey) - _mean(draw_plate(grey, PlateText("", "TRUNK", ""), st))
+    assert 0 < faded < 0.7 * full, (faded, full)
