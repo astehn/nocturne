@@ -59,8 +59,20 @@ def when_text(mtime: float, now: float | None = None) -> str:
     return short if saved.year == today.year else f"{short} {saved.year}"
 
 
+def _card_integration(total_s: float) -> str:
+    """Whole minutes on a card: "54m", "3h 25m". Seconds are noise at a glance
+    (the approved mockup read "54 m"); the info strip keeps format_integration."""
+    s = int(round(total_s))
+    if s < 60:
+        return f"{s}s"
+    minutes = int(round(s / 60))
+    if minutes < 60:
+        return f"{minutes}m"
+    return format_integration(minutes * 60)
+
+
 def card_info(meta: dict, mtime: float | None, now: float | None = None) -> str:
-    """"NGC 7000 · 54m 20s · today", read the way the info strip reads it.
+    """"NGC 7000 · 54m · today", read the way the info strip reads it.
     A part that is not known is left out, never shown as an empty slot."""
     parts: list[str] = []
     target = str(meta.get("target") or meta.get("target_solved") or "").strip()
@@ -68,7 +80,7 @@ def card_info(meta: dict, mtime: float | None, now: float | None = None) -> str:
         parts.append(target)
     integ = resolve_integration(meta)
     if integ is not None and integ.total_s:
-        parts.append(format_integration(integ.total_s))
+        parts.append(_card_integration(integ.total_s))
     if mtime is not None:
         parts.append(when_text(mtime, now))
     return " · ".join(parts)

@@ -129,9 +129,9 @@ def test_the_buttons_stay_put_in_both_modes(qtbot, tmp_path):
 # --- the info line -----------------------------------------------------------------
 def test_the_info_line_leaves_out_what_is_missing():
     now = time.time()
-    assert card_info(NGC7000, now, now) == "NGC 7000 · 54m 20s · today"
+    assert card_info(NGC7000, now, now) == "NGC 7000 · 54m · today"
     assert card_info({"target_solved": "M 31"}, now, now) == "M 31 · today"
-    assert card_info({"exposure": 20.0, "frames": 90}, now, now) == "30m 00s · today"
+    assert card_info({"exposure": 20.0, "frames": 90}, now, now) == "30m · today"
     assert card_info({}, now, now) == "today"
     assert card_info({}, None, now) == ""
     assert card_info({"target": "  "}, None, now) == ""
@@ -146,7 +146,7 @@ def test_a_card_reads_its_line_from_the_bundle(qtbot, tmp_path):
     qtbot.addWidget(w)
     card, bad = w.recent_buttons
     assert card.text() == "NGC7000_Narrowband"
-    assert card.info == "NGC 7000 · 54m 20s · today"
+    assert card.info == "NGC 7000 · 54m · today"
     assert bad.info == "today", "an unreadable bundle still gets a card, with what is known"
 
 
@@ -328,3 +328,11 @@ def test_the_page_fits_the_smallest_window(qtbot, tmp_path, n):
     page = win._welcome
     bottom = page.update_note.mapTo(page, QPoint(0, page.update_note.height())).y()
     assert bottom <= page.height()
+
+
+def test_card_integration_is_whole_minutes_and_hours():
+    from nocturne.ui.welcome import _card_integration
+    assert _card_integration(20) == "20s"
+    assert _card_integration(3260) == "54m"          # 54m 20s
+    assert _card_integration(3570) == "1h 00m"       # 59m 30s rounds up into the hour
+    assert _card_integration(12300) == "3h 25m"
