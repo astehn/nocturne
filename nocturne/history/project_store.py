@@ -238,6 +238,25 @@ def read_preview(path: str) -> bytes | None:
         return None
 
 
+def read_card(path: str) -> tuple[bytes | None, dict]:
+    """The start page's card in one opening of the zip: the thumbnail and the
+    base image's capture metadata (target, integration). The manifest is a few
+    KB; the images are never read. A file that is not a readable bundle gives
+    (None, {}), so a card is drawn with what is known and nothing breaks."""
+    jpeg, meta = None, {}
+    try:
+        with zipfile.ZipFile(path) as zf:
+            names = zf.namelist()
+            if PREVIEW_NAME in names:
+                jpeg = zf.read(PREVIEW_NAME)
+            if "manifest.json" in names:
+                base = json.loads(zf.read("manifest.json")).get("base") or {}
+                meta = base.get("metadata") or {}
+    except (OSError, zipfile.BadZipFile, KeyError, ValueError, AttributeError):
+        pass
+    return jpeg, meta if isinstance(meta, dict) else {}
+
+
 def load_project(path: str, cache_dir: str, *, on_progress=None) -> LoadedProject:
     """Read a `.nocturne` bundle and rebuild a live `Project`: the base image
     is loaded straight from its embedded npy, then each recorded step is

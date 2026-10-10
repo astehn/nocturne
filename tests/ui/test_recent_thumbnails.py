@@ -1,4 +1,4 @@
-"""The start page shows the last four projects as thumbnails (Andreas,
+"""The start page shows the last projects as thumbnails (Andreas,
 2026-10-06). The thumbnail is a small JPEG saved inside the project, so the
 page never reads the images; projects saved before have a placeholder."""
 import zipfile
@@ -66,13 +66,15 @@ def test_the_card_shows_the_preview_and_old_projects_the_crescent(qtbot, tmp_pat
     w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: [path])
     qtbot.addWidget(w)
     assert len(w.recent_buttons) == 1 and w.recent_buttons[0].text() == "M 31"
-    assert not w.recent_buttons[0].icon().isNull()
+    card = w.recent_buttons[0].picture.toImage()
+    assert card.pixelColor(CARD_W // 2, CARD_H // 2) == centre, "the card draws the preview"
 
 
-def test_four_cards_fit_the_smallest_window(qtbot, tmp_path):
-    """MIN_WINDOW is 1120 x 650; the start page there is about 1100 x 550."""
+def test_the_cards_fit_the_smallest_window(qtbot, tmp_path):
+    """MIN_WINDOW is 1120 x 650; the start page there is about 1100 x 550 —
+    one row of three."""
     files = []
-    for i in range(4):
+    for i in range(6):
         p = tmp_path / f"a much longer project name than usual {i}.nocturne"
         p.write_text("x")
         files.append(str(p))
@@ -81,25 +83,28 @@ def test_four_cards_fit_the_smallest_window(qtbot, tmp_path):
     w.resize(1100, 550)
     w.show()
     qtbot.waitExposed(w)
-    for b in w.recent_buttons:
-        r = b.geometry()
-        top_left = b.mapTo(w, r.topLeft() - r.topLeft())
+    shown = [b for b in w.recent_buttons if b.isVisible()]
+    assert len(shown) == 3
+    for b in shown:
+        top_left = b.mapTo(w, b.rect().topLeft())
         assert top_left.x() >= 0 and top_left.x() + b.width() <= 1100, "inside the width"
-        assert top_left.y() + b.height() <= 550, "inside the height"
+        assert top_left.y() >= 0 and top_left.y() + b.height() <= 550, "inside the height"
+    bottom = w.update_note.mapTo(w, w.update_note.rect().bottomLeft()).y()
+    assert bottom <= 550, "and the rows under the buttons too"
     assert len({b.height() for b in w.recent_buttons}) == 1, "a long name does not make a taller card"
 
 
 def test_nothing_but_the_cards_is_drawn_in_the_row(qtbot, tmp_path):
     """The card used to measure the row was parented to it and drawn as a
     stray box above the first card."""
-    from PySide6.QtWidgets import QToolButton
+    from PySide6.QtWidgets import QAbstractButton
     p = tmp_path / "a.nocturne"
     p.write_text("x")
     w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: [str(p)])
     qtbot.addWidget(w)
     w.show()
     qtbot.waitExposed(w)
-    shown = [b for b in w._recent_area.findChildren(QToolButton) if b.isVisible()]
+    shown = [b for b in w._head.findChildren(QAbstractButton) if b.isVisible()]
     assert shown == w.recent_buttons
 
 

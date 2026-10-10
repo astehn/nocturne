@@ -2,7 +2,7 @@
 
 Their only sign of life was a line of text ("Separating stars… — 46%"), which
 Andreas found cheap-looking in an otherwise polished app (2026-10-04). One
-painted ring, two sizes, the look approved from a mock-up: a grey track, the
+painted ring, three sizes, the look approved from a mock-up: a grey track, the
 accent arc filling clockwise from 12 o'clock with the percentage in the
 centre, or a rotating quarter arc when no honest percentage exists.
 """
@@ -14,7 +14,7 @@ from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from . import theme
 
-_SIZES = {"large": (68, 6.0), "small": (18, 2.5)}
+_SIZES = {"large": (68, 6.0), "medium": (34, 3.0), "small": (18, 2.5)}
 _SPIN_MS = 16           # ~60 fps while visible, nothing while hidden
 _SPIN_STEP = 6          # degrees per tick: one turn a second
 _SPIN_SPAN = 90         # the indeterminate arc: a quarter

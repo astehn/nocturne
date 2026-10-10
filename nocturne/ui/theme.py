@@ -219,14 +219,21 @@ QLabel#helpHeader {{ font-size: 12px; }}
 QLabel#stepDesc {{ color: {TEXT_DIM}; font-size: 12px; padding-bottom: 6px; }}
 QLabel#importMeta {{ color: {TEXT}; font-size: 13px; padding-bottom: 6px; }}
 QWidget#welcome {{ background: transparent; }}
-QLabel#welcomeTitle {{ font-size: 40px; font-weight: 700; color: #ffffff; }}
-QLabel#welcomeTag {{ font-size: 15px; color: {TEXT_DIM}; }}
-QLabel#welcomeHint {{ font-size: 13px; color: {TEXT_FAINT}; }}
-QLabel#welcomeRecentTitle {{ font-size: 17px; font-weight: 600; color: {TEXT_DIM}; }}
-QToolButton#welcomeRecent {{ background: transparent; border: 1px solid transparent;
-    border-radius: 8px; color: {TEXT_DIM}; font-size: 12px; padding: 6px; }}
-QToolButton#welcomeRecent:hover {{ border-color: {ACCENT}; color: {TEXT}; }}
-QToolButton#welcomeRecent:disabled {{ color: {TEXT_FAINT}; }}
+QLabel#welcomeTitle {{ font-size: 30px; font-weight: 700; color: #ffffff; }}
+QLabel#welcomeTag {{ font-size: 14px; color: {TEXT_DIM}; }}
+QLabel#welcomeHint {{ font-size: 12px; color: {TEXT_FAINT}; }}
+QLabel#welcomeRecentTitle {{ font-size: 13px; letter-spacing: 1px; color: {TEXT_DIM}; }}
+/* The first-launch panel (mock-up C, 2026-10-10). Everything inside lets the
+   panel's faint fill through; the global QWidget rule would box each label. */
+QFrame#welcomeEmpty {{ border: 1px dashed #3a3d43; border-radius: 12px;
+    background: rgba(255, 255, 255, 4); }}
+QFrame#welcomeEmpty QLabel {{ background: transparent; border: none; }}
+QFrame#welcomeEmpty QFrame#welcomeDrop {{ border: 1px dashed {ACCENT}; border-radius: 10px;
+    background: rgba(74, 144, 226, 13); }}
+QLabel#welcomeEmptyTitle {{ font-size: 17px; font-weight: 600; color: #ffffff; }}
+QLabel#welcomeSteps, QLabel#welcomeSample {{ font-size: 13px; color: {TEXT_DIM}; }}
+QLabel#welcomeDropMain {{ font-size: 14px; color: {ACCENT}; }}
+QLabel#welcomeDropSub {{ font-size: 12px; color: {TEXT_DIM}; }}
 QWidget#solveWindow {{ background: {BG_2}; }}
 QLabel#welcomeUpdate {{ font-size: 13px; color: {WARNING}; }}
 QLabel#welcomeWarning {{ font-size: 13px; color: {DANGER}; }}
