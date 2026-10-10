@@ -2,6 +2,24 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.50.0] — 2026-10-10
+
+A new gold-and-blue Narrowband palette, a redesigned start screen, and Undo that says what it undid.
+
+### Added
+- Narrowband: SHO-style (gold and blue), the Hubble look built from your own picture's hydrogen and oxygen; the dialog now opens on it. Separate Gold and Blue sliders, and Oxygen strength now decides where the blue goes.
+- A redesigned start screen: six recent projects as large cards showing target, integration time and when you last saved them; a get-started guide on first launch; drop a FITS or TIFF anywhere.
+- Share: text opacity for the title plate.
+
+### Changed
+- The Pseudo-bicolor palette has been removed. Projects and recipes that used it still open and reproduce exactly.
+- The activity log names the step behind every Undo and Redo ("↶ Undo: De-green Stars…").
+- Folder panels say Export, Save, Add or Choose instead of "Open".
+
+### Fixed
+- Opening a recent project no longer turns every thumbnail grey.
+- Save Recipe after reopening a project kept default Crop, Color and Narrowband settings instead of yours.
+
 ## [0.49.0] — 2026-10-08
 
 Narrowband compares side by side, strengths are chosen with one click instead of a dropdown, and the last freezes when a picture is replaced are gone.
