@@ -1980,6 +1980,17 @@ def test_share_help_gives_the_opacity_range_the_slider_has(qtbot):
     assert f"from {s.minimum()}% to {s.maximum()}%" in b
     assert f"stops at {s.minimum()}%" in b
     assert "a shadow fades with the text" in b
+    # 2026-10-10: opacity starts at full on every open and is not remembered.
+    from dataclasses import replace
+    from nocturne.core.presets import preset_by_name, style_to_dict
+    worn = style_to_dict(replace(preset_by_name("Plate"), text_opacity=0.6))
+    again = ShareDialog(np.zeros((40, 30, 3), np.uint8), {"target": "X"},
+                        Settings(plate_preset="Plate", plate_style=worn))
+    qtbot.addWidget(again)
+    assert f"starts at {again._opacity_slider.value()}% every time you open Share" in b
+    assert "not part of the remembered look" in b
+    assert "The look is remembered between shares;" not in b, \
+        "the old sentence claims everything is remembered"
 
 
 def test_help_names_the_levels_auto_button_as_the_button_shows_it():
