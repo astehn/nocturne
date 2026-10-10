@@ -17,6 +17,9 @@ class ColorSettings:
     # still tries photometric on the next image; this records the outcome for
     # the Stretch warning and the provenance report (2026-09-30).
     fell_back: bool = False
+    # Why, when it did: a deliberate step-aside on dual-band data (2026-10-10)
+    # rather than a failure, so the provenance report need not call it one.
+    stepped_aside: bool = False
 
 
 # Luminance weights (Rec. 709), used to hold brightness constant while colour

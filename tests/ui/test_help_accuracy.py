@@ -2083,6 +2083,9 @@ def test_color_help_matches_what_photometric_colour_does():
                      metadata={"filter": "LP"})
     step.apply(img, ColorSettings(method="photometric"))
     assert step.last_message == DUALBAND_MESSAGE and step.fell_back is True
+    # It reaches the result line (Output), not the step log, so the help names
+    # neither: "tells you so" is true of the manual step and of Auto Enhance.
+    assert "and tells you so" in b and "the log says so" not in b
     # a recipe keeps the choice
     assert step.recorded_option(ColorSettings(method="photometric")).method == "photometric"
     assert "recipe keeps your choice" in b

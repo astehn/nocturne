@@ -102,3 +102,51 @@ def test_auto_enhance_on_lp_data_steps_aside_without_failing(monkeypatch):
     assert len(results) == 1, "the colour stage must still land"
     name, ser, _ = results[0]
     assert ser["method"] == "photometric" and ser.get("fell_back") is True
+
+
+# ---- Fix round 1 (review 2026-10-10): say it was deliberate, everywhere ----
+
+def test_the_step_aside_is_recorded_apart_from_a_failure(monkeypatch):
+    step, _, _ = _spy(monkeypatch)
+    step.apply(_img("LP"), ColorSettings(method="photometric"))
+    rec = step.recorded_option(ColorSettings(method="photometric"))
+    assert rec.fell_back is True and rec.stepped_aside is True
+    from nocturne.recipe import deserialize_option, serialize_option
+    ser = serialize_option("color", rec)
+    assert ser.get("stepped_aside") is True
+    assert deserialize_option("color", ser).stepped_aside is True
+    # a real failure is a fallback but not a step-aside
+    failed = ColorStep(astap=None, gaia_query=None)
+    failed.apply(_img("IRCUT"), ColorSettings(method="photometric"))
+    rec = failed.recorded_option(ColorSettings(method="photometric"))
+    assert rec.fell_back is True and rec.stepped_aside is False
+    assert "stepped_aside" not in serialize_option("color", rec)
+    # reused step: the flag is per apply
+    failed.apply(_img("LP"), ColorSettings(method="photometric"))
+    failed.apply(_img("IRCUT"), ColorSettings(method="photometric"))
+    assert failed.recorded_option(ColorSettings(method="photometric")).stepped_aside is False
+
+
+def _report(option):
+    import datetime
+    from nocturne.core.provenance import build_report
+    from nocturne.settings import Settings
+    return build_report([("Color", option)], {"filter": "LP"}, app_version="t",
+                        date=datetime.date(2026, 10, 10), settings=Settings())
+
+
+def test_provenance_says_stepped_aside_not_could_not_run():
+    r = _report(ColorSettings(method="photometric", fell_back=True, stepped_aside=True))
+    assert "could not run" not in r and "fell back" not in r, r
+    assert "stepped aside" in r and "dual-band" in r, r
+    # a genuine failure keeps its own wording
+    r = _report(ColorSettings(method="photometric", fell_back=True))
+    assert "could not run" in r and "stepped aside" not in r, r
+
+
+def test_steps_aside_predicate():
+    from nocturne.steps.color import steps_aside
+    assert steps_aside(_img("LP"), ColorSettings(method="photometric"))
+    assert not steps_aside(_img("LP"), ColorSettings(method="sky"))
+    assert not steps_aside(_img("IRCUT"), ColorSettings(method="photometric"))
+    assert not steps_aside(_img(None), ColorSettings(method="photometric"))

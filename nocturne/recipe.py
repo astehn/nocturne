@@ -84,6 +84,8 @@ def serialize_option(stage_id, option):
             # Only when true: files without a fallback stay byte-identical,
             # and files written before the field read it as False.
             out["fell_back"] = True
+        if c.stepped_aside:
+            out["stepped_aside"] = True
         return out
     if stage_id == "tint":
         t, w = option if option else (0.0, 0.0)

@@ -393,7 +393,7 @@ _TOPIC_LIST = (
        "off before each star is measured, so a bright sky does not wash the stars out to grey "
        "(best on a plate-solvable field).</p>"
        "<p><b>Dual-band data.</b> Through the Seestar's <b>LP</b> (dual-band) filter, "
-       "photometric colour steps aside and balances on the sky instead, and the log says so. "
+       "photometric colour steps aside and balances on the sky instead, and tells you so. "
        "That filter passes only two narrow slices of the spectrum, so a star's colour there no "
        "longer follows its catalogue colour — there is nothing true to calibrate to. A recipe "
        "keeps your choice, so it still calibrates the next broadband image.</p>"

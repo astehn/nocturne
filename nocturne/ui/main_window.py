@@ -2126,6 +2126,13 @@ class MainWindow(QMainWindow):
                 msg += ". Install GraXpert (free) for better background & noise."
             if preferred_splitter(self.settings) is None:
                 msg += " StarNet2 (free) or StarXTerminator gives cleaner stars."
+            # Auto Enhance asks for photometric colour whenever ASTAP is set up,
+            # so on dual-band data it steps aside on most runs; the Color step's
+            # own message never reaches this summary, so carry that one here.
+            if any(name == STEP_NAME["color"] and isinstance(opt, dict)
+                   and opt.get("stepped_aside") for name, opt, _img in results):
+                from ..steps.color import DUALBAND_MESSAGE
+                msg += " " + DUALBAND_MESSAGE
             self._show_output(msg)
 
         self._run_busy(work, on_result, "Auto-enhancing…", "Auto Enhance failed")
@@ -4220,7 +4227,8 @@ class MainWindow(QMainWindow):
             # matches the dropdown that asked for it, or Apply would read
             # "changes not applied" for ever after one.
             import dataclasses
-            committed = dataclasses.replace(committed, fell_back=False)
+            committed = dataclasses.replace(committed, fell_back=False,
+                                            stepped_aside=False)
         if not _same_option(read(), committed):
             return False
         tints = [opt for n, opt in tail[at + 1:] if n == STEP_NAME["tint"]]
@@ -4767,7 +4775,7 @@ class MainWindow(QMainWindow):
         # is nobody's picture any more (F2).
         self._quiet_previews()
         self._run_busy(self._commit_work(stage_id, step, base, option), on_result,
-                       self._busy_label_for(stage_id, option), "Failed")
+                       self._busy_label_for(stage_id, option, base), "Failed")
 
     # Steps whose live preview prepares what the slider does not change, and
     # the function that finishes the effect from it.
@@ -4799,7 +4807,7 @@ class MainWindow(QMainWindow):
         """
         save_settings(self.settings, self._settings_path)
 
-    def _busy_label_for(self, stage_id: str, option) -> str:
+    def _busy_label_for(self, stage_id: str, option, base=None) -> str:
         """Busy message for an apply. GraXpert AI denoise takes minutes (inherent
         to the model, confirmed vs Siril), so warn when it's the engine running."""
         if stage_id == "noise_sharpen" and isinstance(option, dict):
@@ -4814,6 +4822,9 @@ class MainWindow(QMainWindow):
                     has_graxpert=graxpert_valid(self.settings)) == "graxpert":
                 return "Denoising with GraXpert — this can take a few minutes…"
         if stage_id == "color" and getattr(option, "method", "sky") == "photometric":
+            from ..steps.color import steps_aside
+            if base is not None and steps_aside(base, option):
+                return "Balancing colour on the sky…"     # dual-band: nothing to calibrate
             return "Calibrating colour…"
         return f"Applying {STEP_NAME[stage_id]}…"
 
