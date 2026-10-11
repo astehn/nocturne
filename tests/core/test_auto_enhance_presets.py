@@ -168,21 +168,42 @@ def test_rcastro_picks_noisex_even_when_the_preference_is_graxpert(tmp_path):
     assert _engine(_img(), s) == "rcastro"
 
 
-def test_an_nr_model_comes_before_any_fallback(tmp_path, monkeypatch):
-    _models(monkeypatch, "v20.0")
+def test_a_shipped_nr_model_comes_before_any_fallback(tmp_path, monkeypatch):
+    _models(monkeypatch, "v20.0", shipped=("v20.0",))
     assert _engine(_img(), Settings(graxpert_path=_exe(tmp_path, "gx"))) == "nr:v20.0"
     assert _engine(_img(), Settings()) == "nr:v20.0"
 
 
-def test_the_newest_model_is_picked_and_a_shipped_one_wins(monkeypatch):
-    _models(monkeypatch, "v9", "v18", "v20.0")
-    assert _engine(_img(), Settings()) == "nr:v20.0"
-    _models(monkeypatch, "v9", "v18", "v20.0", shipped=("v9",))
+def test_the_newest_shipped_model_is_picked(monkeypatch):
+    _models(monkeypatch, "v9", "v18", "v20.0", shipped=("v9", "v18"))
+    assert _engine(_img(), Settings()) == "nr:v18"
+
+
+def test_a_testing_tray_model_is_never_picked_on_its_own(tmp_path, monkeypatch):
+    """2026-10-11: on his machine Auto Enhance picked the test delivery
+    "Ullr (v21.5)" by itself. The testing tray is for trying a model on
+    purpose, not for a one-tap tool to reach into."""
+    _models(monkeypatch, "v21.5")                     # testing tray only
+    assert _engine(_img(), Settings()) == "free"
+    assert _engine(_img(), Settings(denoise_engine="graxpert")) == "free"
+    rc = _exe(tmp_path, "rc")
+    assert _engine(_img(), Settings(rcastro_path=rc, denoise_engine="graxpert")) == "rcastro"
+    # Next to a shipped model, the shipped one — even though the test one is newer.
+    _models(monkeypatch, "v9", "v21.5", shipped=("v9",))
     assert _engine(_img(), Settings()) == "nr:v9"
 
 
+def test_a_testing_tray_model_is_used_when_the_preference_names_it(tmp_path, monkeypatch):
+    _models(monkeypatch, "v9", "v21.5", shipped=("v9",))
+    assert _engine(_img(), Settings(denoise_engine="nr:v21.5")) == "nr:v21.5"
+    rc = _exe(tmp_path, "rc")
+    assert _engine(_img(), Settings(rcastro_path=rc, denoise_engine="nr:v21.5")) == "nr:v21.5"
+    _models(monkeypatch, "v21.5")                     # and with no shipped model at all
+    assert _engine(_img(), Settings(denoise_engine="nr:v21.5")) == "nr:v21.5"
+
+
 def test_model_and_rcastro_the_preference_decides(tmp_path, monkeypatch):
-    _models(monkeypatch, "v20.0")
+    _models(monkeypatch, "v20.0", shipped=("v20.0",))
     rc, gx = _exe(tmp_path, "rc"), _exe(tmp_path, "gx")
     assert _engine(_img(), Settings(rcastro_path=rc, denoise_engine="rcastro")) == "rcastro"
     assert _engine(_img(), Settings(rcastro_path=rc, denoise_engine="nr:v20.0")) == "nr:v20.0"
@@ -191,18 +212,32 @@ def test_model_and_rcastro_the_preference_decides(tmp_path, monkeypatch):
                                     denoise_engine="graxpert")) == "nr:v20.0"
 
 
+# The engine for every combination, spelled out: (preference, RC-Astro, model) ->
+# engine. GraXpert installed or not never changes it — that is the point.
+_EXPECTED_ENGINE = {
+    ("rcastro", False, None): "free",       ("rcastro", True, None): "rcastro",
+    ("rcastro", False, "shipped"): "nr:v20.0", ("rcastro", True, "shipped"): "rcastro",
+    ("rcastro", False, "testing"): "free",  ("rcastro", True, "testing"): "rcastro",
+    ("graxpert", False, None): "free",      ("graxpert", True, None): "rcastro",
+    ("graxpert", False, "shipped"): "nr:v20.0", ("graxpert", True, "shipped"): "nr:v20.0",
+    ("graxpert", False, "testing"): "free", ("graxpert", True, "testing"): "rcastro",
+}
+
+
 @pytest.mark.parametrize("rc", [False, True])
 @pytest.mark.parametrize("gx", [False, True])
-@pytest.mark.parametrize("model", [False, True])
+@pytest.mark.parametrize("model", [None, "shipped", "testing"])
 @pytest.mark.parametrize("pref", ["rcastro", "graxpert"])
 def test_graxpert_is_never_the_denoise_engine(tmp_path, monkeypatch, rc, gx, model, pref):
     if model:
-        _models(monkeypatch, "v20.0")
+        _models(monkeypatch, "v20.0", shipped=("v20.0",) if model == "shipped" else ())
+    else:
+        _models(monkeypatch)
     s = Settings(rcastro_path=_exe(tmp_path, "rc") if rc else "",
                  graxpert_path=_exe(tmp_path, "gx") if gx else "", denoise_engine=pref)
+    want = _EXPECTED_ENGINE[(pref, rc, model)]
     for preset, filt in (("natural", "IRCUT"), ("vivid", "IRCUT"), ("gold_blue", "LP")):
-        assert dict(_plan(_img(filt), s, preset))["noise_sharpen"]["engine"] != "graxpert"
-        assert dict(_plan(_img(filt), s, preset))["noise_sharpen"]["engine"] is not None
+        assert dict(_plan(_img(filt), s, preset))["noise_sharpen"]["engine"] == want
 
 
 def test_graxpert_only_auto_enhance_never_runs_the_graxpert_denoise(tmp_path, monkeypatch):
@@ -281,6 +316,47 @@ def test_cancel_is_not_a_failure():
             run_auto_plan(_img(), _plan(_img(), Settings(), "natural"), Settings())
     finally:
         clear_ambient()
+
+
+def test_cancel_inside_a_stage_propagates_and_is_not_a_failure(monkeypatch):
+    """Cancelled raised from inside a stage's apply (run_cli killing a tool
+    mid-run) must stop the chain, not be counted and skipped."""
+    from nocturne.core.tasks import Cancelled
+    real = ae.make_step
+    applied = []
+
+    def make(stage_id, settings, **kw):
+        step = real(stage_id, settings, **kw)
+        if stage_id == "saturation":
+            def cancel(img, option):
+                raise Cancelled()
+            step.apply = cancel
+        elif stage_id == "local_contrast":
+            step.apply = lambda img, option: applied.append(stage_id) or img
+        return step
+    monkeypatch.setattr(ae, "make_step", make)
+    with pytest.raises(Cancelled):
+        run_auto_plan(_img(), _plan(_img(), Settings(), "natural"), Settings())
+    assert applied == []                               # nothing after it ran
+
+
+def test_a_failure_keeps_its_whole_text_for_the_log(monkeypatch):
+    real = ae.make_step
+
+    def make(stage_id, settings, **kw):
+        step = real(stage_id, settings, **kw)
+        if stage_id == "saturation":
+            def boom(img, option):
+                raise RuntimeError("StarXTerminator exited with status 3\nlong trace")
+            step.apply = boom
+        return step
+    monkeypatch.setattr(ae, "make_step", make)
+    run = run_auto_plan(_img(), _plan(_img(), Settings(), "natural"), Settings())
+    assert run.failures == [("Saturation", "StarXTerminator exited with status 3")]
+    assert len(run.failure_details) == 1
+    assert "RuntimeError: StarXTerminator exited with status 3\nlong trace" \
+        in run.failure_details[0]
+    assert "Traceback" in run.failure_details[0]
 
 
 def test_gold_and_blue_runs_end_to_end_on_dualband(tmp_path):

@@ -2065,7 +2065,9 @@ class MainWindow(QMainWindow):
         if self.project is None:
             return False
         from ..core.filter_type import detect_data_type
-        return detect_data_type(self.project.current().metadata or {}) == "dualband"
+        # Metadata only: this runs on every menu opening, and current() loads
+        # the whole frame from disk on the UI thread.
+        return detect_data_type(self.project.meta_at(self.project.position)) == "dualband"
 
     def _sync_auto_menu(self) -> None:
         """On every opening, not once: the image may have changed since."""
@@ -2126,6 +2128,9 @@ class MainWindow(QMainWindow):
         base = self.project.current()
         plan = build_auto_plan(base, self.settings, include_crop=False,   # respect the user's crop
                                preset=preset)
+        # Now, with the plan: settings can change during a minutes-long run,
+        # and the summary must describe what was built, not what is set up later.
+        left_out = stages_left_out(self.settings)
         shown = self._auto_preset_name = PRESET_NAMES[preset]
         self._clear_warning()
 
@@ -2146,12 +2151,17 @@ class MainWindow(QMainWindow):
                 # Export, a Reset) would otherwise be taken as this stage's.
                 self.log_panel.append_entry(
                     format_log_entry(name, label, None) + f" \u2014 Auto Enhance ({shown})")
+                # And to the file, as _log_step does for a manual apply.
+                sessionlog.write(f"step  {name}" + (f" ({label})" if label else "")
+                                 + f" \u2014 Auto Enhance ({shown})")
+            for (name, _reason), detail in zip(run.failures, run.failure_details):
+                sessionlog.write(f"ERROR Auto Enhance ({shown}): {name} failed\n{detail}")
             if results:
                 self._mark_dirty()
             self._rebuild_panel()
             self._refresh()
             msg = f"Auto-enhanced ({shown}) \u2014 {len(results)} steps."
-            left = [STEP_NAME[s] for s in stages_left_out(self.settings)]
+            left = [STEP_NAME[s] for s in left_out]
             if left:
                 tools = {"Background": "GraXpert", "Deconvolution": "RC-Astro"}
                 were = "was" if len(left) == 1 else "were"

@@ -255,3 +255,103 @@ def test_the_overflow_measures_the_arrow(qtbot, tmp_path):
     finally:
         w.setVisible(True)
     assert probed == real
+
+
+# --- whole-branch review fixes -------------------------------------------
+
+def test_the_menu_check_reads_metadata_not_the_frame(qtbot, tmp_path, monkeypatch):
+    """Every opening of the menu asks whether the image is dual-band; through
+    project.current() that reloaded the full frame on the UI thread each time."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path, filter_card="LP"))
+    _crop(win)
+    loads = []
+    real = win.project.current
+    monkeypatch.setattr(win.project, "current", lambda: loads.append(1) or real())
+    _open(win)
+    assert loads == []
+    assert _entries(win)["Gold and blue"].isEnabled()
+
+
+def _session_lines(monkeypatch):
+    from nocturne.core import sessionlog
+    lines = []
+    monkeypatch.setattr(sessionlog, "write", lambda line: lines.append(line))
+    return lines
+
+
+def test_every_stage_reaches_the_session_log(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    _crop(win)
+    lines = _session_lines(monkeypatch)
+    win._auto_enhance("vivid")
+    steps = [ln for ln in lines if ln.startswith("step  ")]
+    names = [n for n, _o in win.project.entries()][1:]
+    assert len(steps) == len(names), lines
+    assert all(ln.endswith("— Auto Enhance (Vivid)") for ln in steps), steps
+    assert [ln[len("step  "):].split(" (")[0].split(" —")[0] for ln in steps] == names
+    assert any(ln.startswith("step  Noise Reduction (strong (built-in))") for ln in steps), steps
+
+
+def test_a_failed_stage_is_an_error_in_the_session_log_with_the_whole_message(
+        qtbot, tmp_path, monkeypatch):
+    from nocturne.steps.local_contrast import LocalContrastStep
+
+    def boom(self, img, option):
+        raise RuntimeError("tool exploded\nsecond line of the trace")
+    monkeypatch.setattr(LocalContrastStep, "apply", boom)
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    _crop(win)
+    lines = _session_lines(monkeypatch)
+    win._auto_enhance("vivid")
+    errors = [ln for ln in lines if ln.startswith("ERROR ")]
+    assert len(errors) == 1, lines
+    assert errors[0].startswith("ERROR Auto Enhance (Vivid): Local Contrast failed\n")
+    assert "RuntimeError: tool exploded\nsecond line of the trace" in errors[0]
+    # The warning keeps the short reason.
+    assert win._warning.text().endswith("Local Contrast failed: tool exploded")
+
+
+def test_gold_and_blue_on_broadband_changes_nothing(qtbot, tmp_path, monkeypatch):
+    """Reached only if the image changes under an open menu — but then nothing
+    may be discarded: the warning, and the history exactly as it was."""
+    from PySide6.QtWidgets import QMessageBox
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path, filter_card="IRCUT"))
+    _crop(win)
+    asked = []
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: asked.append(a) or QMessageBox.StandardButton.Yes)
+    win._auto_enhance("natural")                      # processing beyond the crop
+    asked.clear()
+    entries, position = list(win.project.entries()), win.project.position
+    assert len(entries) > 2
+    win._auto_enhance("gold_blue")
+    assert win._warning.text() == "Gold and blue is for dual-band (LP filter) data."
+    assert list(win.project.entries()) == entries
+    assert win.project.position == position
+    assert asked == []
+
+
+def test_the_left_out_sentence_is_the_plan_that_ran(qtbot, tmp_path, monkeypatch):
+    """Settings can change while the chain runs (minutes, with external tools);
+    the summary describes the plan that was built, not the settings now."""
+    exe = tmp_path / "graxpert"
+    exe.write_text("#!/bin/sh\n")
+    exe.chmod(0o755)
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    _crop(win)
+    real = win._run_busy
+
+    def run_busy(work, on_result, *a, **k):
+        win.settings.graxpert_path = str(exe)         # set up mid-run
+        return real(work, on_result, *a, **k)
+    monkeypatch.setattr(win, "_run_busy", run_busy)
+    win._auto_enhance()
+    out = win.output_panel.toPlainText()
+    assert "Background and Deconvolution were left out: GraXpert and RC-Astro aren't set up." \
+        in out, out
+    assert "Background" not in [n for n, _o in win.project.entries()]

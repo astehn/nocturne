@@ -1547,6 +1547,12 @@ def test_auto_enhance_help_says_denoise_never_uses_graxpert(monkeypatch):
                                           ("graxpert", "rcastro")):
         s = Settings(graxpert_path=gx, rcastro_path=rc, denoise_engine=pref)
         assert _auto_denoise_engine(s) != "graxpert"
+    # "A model you are testing runs only when you pick it in Settings."
+    assert "A model you are testing runs only when you pick it in Settings" in b
+    test_model = nr_models.NRModel("v21.5", "Ullr (v21.5)", "/x/v21.5.onnx", False)
+    monkeypatch.setattr(nr_models, "available", lambda: [test_model])
+    assert _auto_denoise_engine(Settings()) == "free"
+    assert _auto_denoise_engine(Settings(denoise_engine="nr:v21.5")) == "nr:v21.5"
 
 
 def test_auto_enhance_help_says_a_failed_stage_is_named(_no_nr_models):
@@ -1559,9 +1565,6 @@ def test_auto_enhance_help_says_a_failed_stage_is_named(_no_nr_models):
     assert "skipped in silence" not in b
     assert "The warning line names it and why" in b
     assert "<i>Auto Enhance (Vivid): 8 of 9 steps \u2014 Noise Reduction failed: \u2026</i>" in b
-    mw = _src("nocturne/ui/main_window.py")
-    assert 'f"Auto Enhance ({shown}): {len(results)} of {planned} "' in mw
-    assert 'f"steps \\u2014 {failed} failed: {reasons}"' in mw
 
     img = AstroImage(np.full((32, 32, 3), 0.3, np.float32), is_linear=True)
     plan = [("stretch", 0.3), ("levels", (0.0, 1.0, 1.0)), ("local_contrast", 0.15)]
@@ -1579,6 +1582,33 @@ def test_auto_enhance_help_says_a_failed_stage_is_named(_no_nr_models):
     assert [name for name, _, _ in run.results] == ["Stretch", "Local Contrast"]
     assert run.failures == [("Levels", "tool exploded")]
     assert "how many steps it" in b
+
+
+def test_auto_enhance_help_example_is_the_warning_the_window_shows(
+        qtbot, tmp_path, monkeypatch, _no_nr_models):
+    """The help's example failure line, against the warning a real failing
+    Noise Reduction produces under Vivid: same words, only the counts and the
+    reason differ (8 of 9 needs a tool installed; this machine has none)."""
+    import re
+    from nocturne.steps.noise_sharpen import NoiseSharpenStep
+    from tests.ui.test_main_window import _crop, _make_fits, _window
+    b = _body("auto-enhance")
+    m = re.search(r"<i>(Auto Enhance \(Vivid\): \d+ of \d+ steps \u2014 Noise Reduction "
+                  r"failed: \u2026)</i>", b)
+    assert m, "the topic no longer gives an example failure line"
+    example = m.group(1)
+
+    def boom(self, img, option):
+        raise RuntimeError("tool exploded")
+    monkeypatch.setattr(NoiseSharpenStep, "apply", boom)
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    _crop(win)
+    win._auto_enhance("vivid")
+    shown = win._warning.text()
+    done = len(win.project.entries()) - 1
+    assert shown == (re.sub(r"\d+ of \d+", f"{done} of {done + 1}", example)
+                     .replace("\u2026", "tool exploded")), shown
 
 
 def test_auto_enhance_help_is_right_that_saying_yes_destroys_the_old_edit():

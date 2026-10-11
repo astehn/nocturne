@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import traceback
 from typing import NamedTuple
 
 from ..recipe import LEVELS_AUTO, serialize_option
@@ -116,27 +117,25 @@ def _auto_crop_option(img) -> CropParams:
 
 
 def _auto_denoise_engine(settings: Settings) -> str:
-    """Nocturne NR model > NoiseXTerminator > the built-in denoise — never
-    GraXpert. A GraXpert denoise took 668 s of a 746 s Auto Enhance run on a
-    20 MP master (study 2026-10-11), and a one-tap tool that sits for ten
+    """The Preferred denoise engine when it names one that is here, else a
+    shipped Nocturne NR model > NoiseXTerminator > the built-in denoise —
+    never GraXpert. A GraXpert denoise took 668 s of a 746 s Auto Enhance run
+    on a 20 MP master (study 2026-10-11), and a one-tap tool that sits for ten
     minutes reads as broken whatever the progress says; the built-in "strong"
-    takes ~2 s. With both a model and RC-Astro, the Preferred denoise engine
-    setting decides when it names one of them; otherwise the model first."""
+    takes ~2 s. A testing-tray model runs only when the preference names it:
+    on 2026-10-11 this picked the test delivery "Ullr (v21.5)" by itself."""
     from . import nr_models
     models = nr_models.available()
     has_rc = rcastro_valid(settings)
     pref = getattr(settings, "denoise_engine", "")
-    if models:
-        ids = {m.id for m in models}
-        if isinstance(pref, str) and pref.startswith(nr_models.PREFIX) \
-                and pref[len(nr_models.PREFIX):] in ids:
-            return pref
-        if has_rc and pref == "rcastro":
-            return "rcastro"
-        # A model shipped with the app wins (as in nr_models), else the newest:
-        # discover() lists in delivery order.
-        pool = [m for m in models if m.shipped] or models
-        return nr_models.PREFIX + pool[-1].id
+    if isinstance(pref, str) and pref.startswith(nr_models.PREFIX) \
+            and pref[len(nr_models.PREFIX):] in {m.id for m in models}:
+        return pref
+    if has_rc and pref == "rcastro":
+        return "rcastro"
+    shipped = [m for m in models if m.shipped]
+    if shipped:
+        return nr_models.PREFIX + shipped[-1].id     # discover() lists in delivery order
     return "rcastro" if has_rc else FREE
 
 
@@ -213,6 +212,9 @@ class AutoRun(NamedTuple):
     # A step's own message for the person (Color's sky-balance fallback or its
     # dual-band step-aside): the steps are built here, so the caller cannot ask them.
     notes: tuple[str, ...] = ()
+    # Aligned with `failures`: the whole exception with its traceback, for the
+    # session log a support report is built from (the UI shows the short reason).
+    failure_details: tuple[str, ...] = ()
 
 
 _REASON_MAX = 120
@@ -251,7 +253,8 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
     Robust to a single stage failing (e.g. an external tool subprocess
     errors): that stage is skipped -- not recorded, image left unchanged --
     and the rest of the chain still runs. It is no longer silent: each one is
-    in `failures` as (step.name, short reason), for the caller to show.
+    in `failures` as (step.name, short reason), for the caller to show, and
+    its whole text in `failure_details`, for the session log.
     Cancelled is a BaseException and propagates; it is never a failure."""
     from .tasks import Cancelled, current
 
@@ -261,6 +264,7 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
     failures: list[tuple[str, str]] = []
     engines: list[str | None] = []
     notes: list[str] = []
+    details: list[str] = []
     for i, (stage_id, option) in enumerate(plan):
         tok = current()
         if tok is not None and tok.cancelled:
@@ -286,6 +290,7 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
             result = step.apply(img, option)
         except Exception as exc:
             failures.append((step.name, _short_reason(exc)))
+            details.append("".join(traceback.format_exception(exc)).rstrip())
             if on_progress is not None:
                 on_progress(i + 1, n, step.name)
             continue
@@ -297,4 +302,4 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
             notes.append(step.last_message)
         if on_progress is not None:
             on_progress(i + 1, n, step.name)
-    return AutoRun(results, failures, engines, tuple(notes))
+    return AutoRun(results, failures, engines, tuple(notes), tuple(details))
