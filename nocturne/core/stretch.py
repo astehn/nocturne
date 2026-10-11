@@ -25,7 +25,7 @@ def target_to_amount(target: float) -> float:
 
 
 def apply_stretch(img: AstroImage, amount: float, *,
-                  linked: bool = True) -> AstroImage:
+                  linked: bool = True, version: int | None = None) -> AstroImage:
     """Adaptive nonlinear stretch (linear -> display). `amount` in [0, 1] is the
     aggressiveness; the stretch measures the image so faint signal is lifted.
 
@@ -39,7 +39,11 @@ def apply_stretch(img: AstroImage, amount: float, *,
     Neither is the correct one. The measurement that would settle that is still
     unresolved; the user chooses by eye. See
     docs/superpowers/specs/2026-09-14-linked-unlinked-stretch-design.md.
+
+    `version` selects the LINKED stretch's version (autostretch.STRETCH_VERSION
+    when None); a replayed step passes the one it recorded. Unlinked has one.
     """
-    out = (neutral_stretch if linked else unlinked_stretch)(
-        img.data, amount_to_target(amount))
+    target = amount_to_target(amount)
+    out = (neutral_stretch(img.data, target, version) if linked
+           else unlinked_stretch(img.data, target))
     return AstroImage(out.astype(np.float32), is_linear=False, metadata=dict(img.metadata))

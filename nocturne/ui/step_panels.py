@@ -12,6 +12,7 @@ from .option_buttons import OptionButtons
 from .shape_picker import SegmentRow, ShapePicker, section_label
 from ..core.autostretch import _TARGET_BG
 from ..steps.stretch_step import _DEFAULT as _STEP_DEFAULT
+from ..steps.stretch_step import new_stretch_option
 from ..core.color import ColorSettings
 from ..core.stretch import _TARGET_MAX as _STRETCH_MAX, _TARGET_MIN as _STRETCH_MIN
 from ..core.crop import GUIDE_KINDS, GUIDES
@@ -139,7 +140,9 @@ def stretch_description(linked: bool) -> str:
     box is pinned above the scroll, and Stretch at 1280x800 had 16 px to spare
     in it — a one-line label there still scrolled the step (measured 5 px).
     """
-    name, what = (("Linked", "keeps the sky's own colour") if linked
+    # The short half of the owner's wording (2026-10-11): this line has a
+    # pixel budget, and the full sentence lives in the Import tooltips.
+    name, what = (("Linked", "keeps star and nebula colours") if linked
                   else ("Unlinked", "evens the channels out"))
     return (f"{STEP_DESCRIPTIONS['stretch']}<br>"
             f"Colour balance: <b>{name}</b>, {what}.")
@@ -357,9 +360,9 @@ def build_panel(
         controls.addWidget(heading)
         row = QHBoxLayout()
         linked_btn = QRadioButton("Linked")
-        linked_btn.setToolTip("Keeps the sky's own colour")
+        linked_btn.setToolTip("One curve for all colours: keeps the colours of stars and nebula")
         unlinked_btn = QRadioButton("Unlinked")
-        unlinked_btn.setToolTip("Evens the channels out")
+        unlinked_btn.setToolTip("Each colour stretched on its own: evens the channels out")
         group = QButtonGroup(w)
         group.addButton(linked_btn); group.addButton(unlinked_btn)
         (linked_btn if view_linked else unlinked_btn).setChecked(True)
@@ -397,8 +400,10 @@ def build_panel(
                 "if the picture looks wrong from here, switch it."))
 
         note = _desc_label(
-            "Linked keeps the sky's own colour; Unlinked evens the channels out, "
-            "which usually shows more variety in star and dust colour. This only "
+            "Linked uses one curve for all colours and keeps the colours of stars "
+            "and nebula; Unlinked stretches each colour on its own and evens the "
+            "channels out, which usually shows more variety in star and dust "
+            "colour. This only "
             "changes what you see — you choose again, and commit, at Stretch.")
         note.setTextFormat(Qt.TextFormat.RichText)
         notes.addWidget(note)
@@ -638,7 +643,9 @@ def build_panel(
         # Multiplicative gains on linear data, applied here rather than after the
         # stretch, for a measured reason: an ADDITIVE move at this point is erased
         # by neutral_stretch's background re-levelling (shift 0.00000), while a
-        # gain survives. It also leaves the background alone (also 0.00000), which
+        # gain survives. (Still so in stretch version 2, which levels on the sky
+        # median: a uniform +0.002 green moved the result by at most 3e-5,
+        # rounding, 2026-10-11.) It also leaves the background alone (also 0.00000), which
         # is what we want -- the magenta is in the nebulosity, and the background
         # is already faintly GREEN from chroma noise.
         # De-green Sky moved out to its own stage, which freed the room this
@@ -729,8 +736,10 @@ def build_panel(
         apply_btn.setEnabled(apply_enabled)
         # A DICT, not a bare float: the stretch now carries its MECHANISM
         # as well as its amount, and both have to reach the commit.
-        w.commit_option = lambda: {"amount": slider.value() / 100.0,
-                                   "linked": bool(w.stretch_linked)}
+        # new_stretch_option records the stretch VERSION too, so the step
+        # replays as it was made (autostretch.STRETCH_VERSION).
+        w.commit_option = lambda: new_stretch_option(slider.value() / 100.0,
+                                                     bool(w.stretch_linked))
         if on_apply is not None:
             apply_btn.clicked.connect(lambda: on_apply(w.commit_option()))
         # Optional, and BELOW the slider: the slider keeps working untouched

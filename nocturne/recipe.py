@@ -104,9 +104,15 @@ def serialize_option(stage_id, option):
         # The dict is what the visual picker produces; a bare float is every
         # recipe saved before 2026-09-14. Serialize to the dict either way, so
         # the stored shape is ONE thing rather than two that drift.
-        from .steps.stretch_step import parse_stretch_linked, parse_stretch_option
-        return {"amount": parse_stretch_option(option),
-                "linked": parse_stretch_linked(option)}
+        from .steps.stretch_step import (
+            parse_stretch_linked, parse_stretch_option, parse_stretch_version)
+        out = {"amount": parse_stretch_option(option),
+               "linked": parse_stretch_linked(option)}
+        # Only when recorded: an option without it is version 1 and must stay
+        # without it, so re-saving an old recipe cannot upgrade its stretch.
+        if isinstance(option, dict) and "version" in option:
+            out["version"] = parse_stretch_version(option)
+        return out
     if stage_id in ("local_contrast", "star_reduction", "recover_core", "green_fringe",
                     "remove_green"):
         try:

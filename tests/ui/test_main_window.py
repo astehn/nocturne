@@ -5002,7 +5002,9 @@ def test_apply_stretch_untouched_commits_exactly_what_is_on_screen(qtbot, tmp_pa
     win._go_to_id("stretch")
     on_screen = to_rgb8(win._canvas_img).copy()
 
-    win.apply_current(win._panel.stretch_slider.value() / 100.0)
+    # What Apply hands over: the panel's option, which records the stretch
+    # version. A bare amount is the pre-2026-10-11 shape and replays version 1.
+    win.apply_current(win._panel.commit_option())
     committed = to_rgb8(win.project.current())
 
     assert np.array_equal(committed, on_screen), (
@@ -5046,7 +5048,7 @@ def test_every_step_default_is_what_the_canvas_already_shows(qtbot, tmp_path, mo
     win._async_enabled = False
     win._go_to_id("stretch")
     stretch_on_screen = to_rgb8(win._canvas_img).copy()
-    win.apply_current(win._panel.stretch_slider.value() / 100.0)   # get non-linear
+    win.apply_current(win._panel.commit_option())   # get non-linear (as Apply does)
     assert np.array_equal(to_rgb8(win.project.current()), stretch_on_screen), (
         "Stretch at its default changed the picture — the slider default has "
         "drifted from the display preview's target again")
@@ -5708,7 +5710,10 @@ def test_stretch_preview_equals_what_apply_commits(qtbot, tmp_path):
     win._render_stretch_preview()
     seen = win._displayed.data.copy()
 
-    win.apply_current(0.75)
+    # The option Apply commits at 0.75: a bare 0.75 is the pre-2026-10-11
+    # shape and replays stretch version 1.
+    from nocturne.steps.stretch_step import new_stretch_option
+    win.apply_current(new_stretch_option(0.75))
     assert np.array_equal(seen, win.project.current().data)
 
 

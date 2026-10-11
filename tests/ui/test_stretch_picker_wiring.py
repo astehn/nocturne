@@ -4,6 +4,7 @@ Both halves matter. Setting the slider without the pending state would lose the
 choice silently on Next, which is exactly the class of bug the step-commit model
 was built to remove.
 """
+from nocturne.core.autostretch import STRETCH_VERSION  # the stretch records its version
 import numpy as np
 
 from tests.ui.test_main_window import _make_fits, _window
@@ -119,7 +120,7 @@ def test_picking_linked_over_unlinked_puts_the_pick_on_the_new_panel(qtbot, tmp_
     win._go_to_id("stretch")
     win._apply_picked_stretch({"amount": 0.24, "linked": True})
     assert win._panel.stretch_slider.value() == 24
-    assert win._panel.commit_option() == {"amount": 0.24, "linked": True}
+    assert win._panel.commit_option() == {"amount": 0.24, "linked": True, "version": STRETCH_VERSION}
 
 
 def test_an_unlinked_pick_revisited_is_not_unapplied_work(qtbot, tmp_path):
@@ -132,7 +133,7 @@ def test_an_unlinked_pick_revisited_is_not_unapplied_work(qtbot, tmp_path):
     win._apply_picked_stretch({"amount": 0.24, "linked": False})
     win._panel.apply_btn.click(); qtbot.wait(50)
     committed = list(win.project.entries())
-    assert committed[-1][1] == {"amount": 0.24, "linked": False}, "fixture"
+    assert committed[-1][1] == {"amount": 0.24, "linked": False, "version": STRETCH_VERSION}, "fixture"
     win._go_to_id("levels"); qtbot.wait(20)
     win._go_to_id("stretch"); qtbot.wait(20)
     assert win._panel.stretch_linked is False

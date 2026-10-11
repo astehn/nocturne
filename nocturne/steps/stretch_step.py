@@ -49,6 +49,28 @@ def parse_stretch_linked(option) -> bool:
     return True
 
 
+def parse_stretch_version(option) -> int:
+    """The linked stretch's version an option was made with. Absent means 1:
+    every option written before 2026-10-11 predates version 2, and must replay
+    as what it produced. See autostretch.STRETCH_VERSION."""
+    from ..core.autostretch import STRETCH_V1
+    if isinstance(option, dict):
+        try:
+            return int(option.get("version", STRETCH_V1))
+        except (TypeError, ValueError):
+            return STRETCH_V1
+    return STRETCH_V1
+
+
+def new_stretch_option(amount: float, linked: bool = True) -> dict:
+    """The option for a stretch made NOW: it records the current version, so a
+    later change of version (or of the switch) cannot alter it on replay.
+    Every place that creates a stretch goes through here."""
+    from ..core.autostretch import STRETCH_VERSION
+    return {"amount": float(amount), "linked": bool(linked),
+            "version": STRETCH_VERSION}
+
+
 class StretchStep(Step):
     name = "Stretch"
 
@@ -60,4 +82,5 @@ class StretchStep(Step):
 
     def apply(self, img: AstroImage, option) -> AstroImage:
         return apply_stretch(img, parse_stretch_option(option),
-                             linked=parse_stretch_linked(option))
+                             linked=parse_stretch_linked(option),
+                             version=parse_stretch_version(option))

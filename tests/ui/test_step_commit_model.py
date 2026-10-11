@@ -2546,5 +2546,7 @@ def test_the_automatic_stretch_records_the_amount_it_used(qtbot, tmp_path):
     assert win._ensure_stretched("Levels") is True
     stretches = [(n, o) for n, o in win.project.entries() if n == "Stretch"]
     assert stretches, "the automatic stretch did not record an entry at all"
-    assert stretches[-1][1] == parse_stretch_option("")
+    # A versioned dict since 2026-10-11: a bare amount replays stretch version 1.
+    from nocturne.steps.stretch_step import new_stretch_option
+    assert stretches[-1][1] == new_stretch_option(parse_stretch_option(""))
     assert stretches[-1][1] != "", "an empty option is what made the report silent"

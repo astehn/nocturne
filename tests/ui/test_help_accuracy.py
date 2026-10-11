@@ -1421,7 +1421,7 @@ def test_auto_enhance_help_lists_the_plan_that_is_actually_built():
     # copy of it: asserting plan["stretch"] == AUTO_STRETCH_AMOUNT passes happily
     # while both move away from the prose, which is the failure this file exists
     # to catch.
-    assert plan["stretch"] == AUTO_STRETCH_AMOUNT
+    assert plan["stretch"]["amount"] == AUTO_STRETCH_AMOUNT   # versioned dict since 2026-10-11
     # Both numbers formatted from the constants, so if either moves the prose
     # fails rather than quietly describing a plan the app no longer runs. They
     # were 0.30 and 0.43 until 2026-09-14, when the manual default came down to
@@ -2094,3 +2094,35 @@ def test_color_help_matches_what_photometric_colour_does():
     assert "undoes a" in _body("stretch") and "photometric colour calibration completely" in _body("stretch")
     # Auto Enhance's topic mentions the step-aside
     assert "On dual-band (<b>LP</b>) data" in _body("auto-enhance")
+
+
+def test_stretch_help_describes_the_stretch_version_in_use():
+    """The Stretch topic says how the linked stretch picks its sky and its black
+    point, which is stretch VERSION 2's behaviour (2026-10-11). Flip the revert
+    switch (autostretch.STRETCH_VERSION) and this fails, so the help is changed
+    with it rather than left describing a stretch that no longer runs."""
+    from nocturne.core import autostretch as A
+    b = _body("stretch")
+    assert "darkest part of the frame" in b and "noisiest channel" in b
+    assert A.STRETCH_VERSION == A.STRETCH_V2
+    src = _src("nocturne/core/autostretch.py")
+    assert "_SKY_PCT = 30.0" in src            # "the darkest part"
+    assert "noisiest" in src.split("def _neutral_stretch_v1")[0]
+
+
+def test_linked_is_never_said_to_keep_the_skys_own_colour():
+    """The linked stretch makes the sky neutral (measured on the sky since
+    stretch version 2), so "keeps the sky's own colour" said the opposite of
+    what it does, in six places (review 2026-10-11, I-2). The owner's wording,
+    2026-10-11: "One curve for all colours: keeps the colours of stars and
+    nebula" / "Each colour stretched on its own: evens the channels out"."""
+    for rel in ("nocturne/ui/step_panels.py", "nocturne/ui/main_window.py",
+                "nocturne/ui/stretch_picker.py", "nocturne/ui/help_content.py"):
+        assert "sky's own colour" not in _src(rel), rel
+    from nocturne.ui.stretch_picker import COLOUR_PICKS
+    subs = {name: sub for name, _linked, sub in COLOUR_PICKS}
+    assert subs["Linked"] == "One curve for all colours: keeps the colours of stars and nebula"
+    assert subs["Unlinked"] == "Each colour stretched on its own: evens the channels out"
+    b = _body("stretch")
+    assert "one curve for all colours" in b and "keeps the colours of stars and nebula" in b
+    assert "makes the sky neutral" in b
