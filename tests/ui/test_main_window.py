@@ -2496,6 +2496,31 @@ def test_auto_enhance_populates_editable_history(qtbot, tmp_path):
     assert "Stretch" in names or "Color" in names
 
 
+def test_auto_enhance_toolbar_click_runs_natural(qtbot, tmp_path, monkeypatch):
+    """triggered(bool) must not reach `preset`: a click is always Natural."""
+    import nocturne.ui.main_window as mw
+    seen = []
+    real = mw.build_auto_plan
+    monkeypatch.setattr(mw, "build_auto_plan",
+                        lambda *a, **k: seen.append(k.get("preset")) or real(*a, **k))
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    _crop(win)
+    win._auto_enhance_act.trigger()
+    assert seen == ["natural"]
+    assert "Star Reduction" in [n for n, _o in win.project.entries()]
+
+
+def test_auto_enhance_passes_the_preset_through(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path, filter_card="LP"))
+    _crop(win)
+    win._auto_enhance("gold_blue")
+    names = [n for n, _o in win.project.entries()]
+    assert names[-2:] == ["Star Reduction", "Narrowband"]
+    assert "Saturation" not in names
+
+
 def test_auto_enhance_respects_the_users_crop(qtbot, tmp_path, monkeypatch):
     """Auto Enhance runs from the user's cropped frame: it keeps that crop, adds
     no auto-crop of its own, and discards the intervening processing — rather

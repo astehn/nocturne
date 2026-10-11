@@ -2069,11 +2069,11 @@ class MainWindow(QMainWindow):
                 break   # a non-geometry step precedes the crop -> it wouldn't be preserved
         return False
 
-    def _auto_enhance(self) -> None:
+    def _auto_enhance(self, preset: str = "natural") -> None:
         if self.project is None:
             # The image opens in the background, so carry on from its arrival:
             # a fresh image has no crop, and that is what Auto Enhance says next.
-            self._after_open = self._auto_enhance
+            self._after_open = lambda: self._auto_enhance(preset)
             try:
                 self._choose_fits()
             finally:
@@ -2099,7 +2099,8 @@ class MainWindow(QMainWindow):
                 return
         self.project.jump_back(kept)   # keep the user's crop/geometry, drop the processing
         base = self.project.current()
-        plan = build_auto_plan(base, self.settings, include_crop=False)   # respect the user's crop
+        plan = build_auto_plan(base, self.settings, include_crop=False,   # respect the user's crop
+                               preset=preset)
         self._clear_warning()
 
         def work():
@@ -2109,7 +2110,8 @@ class MainWindow(QMainWindow):
                 on_progress=lambda i, n, name: self._auto_signals.progress.emit(i, n, name),
             )
 
-        def on_result(results) -> None:
+        def on_result(run) -> None:
+            results = run.results
             for name, option, img in results:
                 self.project.record_precomputed(name, option, img)
                 # Its stages log no step line of their own, so the next line
@@ -3938,6 +3940,10 @@ class MainWindow(QMainWindow):
         for label, nr_engine in (nr_engines or {}).items():
             if engine == nr_engine:
                 return label
+        # "free" (recorded by Auto Enhance) is the built-in denoise; only the
+        # no-external-tool box names that as an entry.
+        if engine == "free":
+            return DEFAULT_BUILTIN if DEFAULT_BUILTIN in choices else None
         if engine == self.settings.denoise_engine:
             for default in (DEFAULT_ENGINE, DEFAULT_BUILTIN):
                 if default in choices:

@@ -109,7 +109,10 @@ def _noise_note(settings, engine) -> EngineNote:
     """Noise Reduction has TWO external engines and an option naming the one
     asked for (else the settings' default). The first valid one in that order
     runs, as `NoiseSharpenStep.apply` does — the fixed "NoiseXTerminator" this
-    used to answer was wrong for every GraXpert user."""
+    used to answer was wrong for every GraXpert user. "free" is the built-in
+    denoise CHOSEN (Auto Enhance records it), so it is not a fallback."""
+    if engine == "free":
+        return EngineNote("Noise Reduction", _FALLBACKS["noise_sharpen"], "")
     products = {"graxpert": ("GraXpert", graxpert_valid),
                 "rcastro": ("NoiseXTerminator", rcastro_valid)}
     want = engine if engine in products else getattr(settings, "denoise_engine", "rcastro")
