@@ -39,14 +39,17 @@ def test_a_broken_starnet2_path_is_reported(qtbot, tmp_path):
     assert "StarNet2" in win._broken_tools()
 
 
-def test_the_tools_help_lists_starnet2_on_its_own_and_the_export_as_starx_only():
+def test_the_tools_help_lists_starnet2_on_its_own_and_the_export_as_free():
     topic = TOPICS["tools"]
     body = topic.body
     rc = body.split("<h4>RC-Astro", 1)[1].split("<h4>", 1)[0]
     assert "StarNet2" in topic.title
     assert "<h4>StarNet2 (free, optional)</h4>" in body
     assert "<b>StarNet2</b>" not in rc, "StarNet2 is not an RC-Astro product"
-    assert "starless+stars export" in rc
+    # Since 2026-10-11 the split export falls back to StarNet2 / the free split;
+    # nothing may still call it an RC-Astro-only feature.
+    assert "starless+stars export" not in rc
+    assert "except the starless+stars export" not in body
 
 
 def test_settings_says_free_or_paid_and_what_graxpert_is_needed_for(qtbot):
@@ -59,3 +62,12 @@ def test_settings_says_free_or_paid_and_what_graxpert_is_needed_for(qtbot):
     for text in ("GraXpert (free, needed for Background)", "RC-Astro (paid, optional)",
                  "StarNet2 (free, optional)", "ASTAP (free, optional)"):
         assert text in labels, text
+
+
+def test_settings_does_not_call_the_split_export_rc_astro_only(qtbot):
+    from PySide6.QtWidgets import QLabel
+    from nocturne.settings import Settings
+    from nocturne.ui.settings_dialog import SettingsDialog
+    d = SettingsDialog(Settings())
+    qtbot.addWidget(d)
+    assert not any("starless+stars" in w.text() for w in d.findChildren(QLabel))
