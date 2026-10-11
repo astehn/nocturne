@@ -7111,17 +7111,19 @@ class MainWindow(QMainWindow):
         img = self.project.current()
         self._clear_warning()   # clear any stale error before exporting (parity with apply_current)
         if fmt == "Starless + Stars (two TIFFs)":
-            if not rcastro_valid(self.settings):
-                self._show_warning("Starless + stars split needs RC-Astro (see Settings).")
-                return
+            # The same split as every other tool (_split_tagged: StarX, else
+            # StarNet2, else the free built-in one). It was RC-Astro-only, the
+            # one export most people want and the one a free setup could not make
+            # (Andreas, 2026-10-11: "one of the most common usecases").
             folder = file_dialogs.choose_folder(self, "Export starless + stars to…", start_dir(self.settings.base_dir),
                                                 accept="Export")
             if not folder:
                 return
 
+            used = {}
+
             def _split():
-                rc = RCAstro(resolve_binary(self.settings.rcastro_path))
-                starless, stars = rc.remove_stars(img, runner=self._rc_runner)
+                starless, stars, used["kind"] = self._split_tagged(img)
                 sl, icc = self._prepare_for_export(starless, space)
                 st, _ = self._prepare_for_export(stars, space)
                 save_tiff(sl, os.path.join(folder, "starless.tif"), icc=icc,
@@ -7130,7 +7132,8 @@ class MainWindow(QMainWindow):
                           linked=self._view_linked)
 
             def _split_done(_):
-                self.log_panel.append_entry("Exported starless.tif + stars.tif")
+                self.log_panel.append_entry(
+                    f"Exported starless.tif + stars.tif ({used.get('kind', 'free')})")
                 # One of the pair, so Finder opens the folder with it selected.
                 self._export_done("starless.tif + stars.tif",
                                   os.path.join(folder, "starless.tif"))
@@ -7337,7 +7340,9 @@ class MainWindow(QMainWindow):
         apply_enabled = loaded
         if stage.id == "background":
             apply_enabled = loaded and graxpert_valid(self.settings)
-        split_enabled = loaded and rcastro_valid(self.settings)
+        # A real star tool (StarX/StarNet2) is set up. The split export works
+        # without one too (free split); this only decides the panel's note.
+        split_enabled = loaded and preferred_splitter(self.settings) is not None
         both_denoise = graxpert_valid(self.settings) and rcastro_valid(self.settings)
         denoise_choices = ["Default", NOISEX_CHOICE, "GraXpert"] if both_denoise else None
         nr_engines = None

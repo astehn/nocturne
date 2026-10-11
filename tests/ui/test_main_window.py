@@ -6589,3 +6589,21 @@ def test_apply_crop_comes_back_after_a_rotate_or_flip(qtbot, tmp_path, turn):
     win.image_view.show_crop_box()
     win._panel.shape_picker.button("3:2").click()
     assert win._panel.apply_btn.isEnabled(), "Apply Crop must be live once a new box is shown"
+
+
+def test_starless_stars_export_works_without_any_star_tool(qtbot, tmp_path, monkeypatch):
+    """Andreas, 2026-10-11: exporting starless + stars is "one of the most common
+    usecases", and it refused to run without RC-Astro. With no tool set up it
+    now uses the free split and says so in the log."""
+    from nocturne.ui import file_dialogs
+    from nocturne.settings import Settings
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win.settings = Settings()                         # no RC-Astro, no StarNet2
+    out = tmp_path / "split"; out.mkdir()
+    monkeypatch.setattr(file_dialogs, "choose_folder", lambda *a, **k: str(out))
+    win.export_final("Starless + Stars (two TIFFs)")
+    qtbot.waitUntil(lambda: (out / "stars.tif").exists(), timeout=10000)
+    assert (out / "starless.tif").exists()
+    qtbot.waitUntil(lambda: any("Exported starless.tif + stars.tif (free)" in e
+                                for e in win.log_panel.entries()), timeout=10000)

@@ -361,11 +361,15 @@ def test_recover_core_panel_has_live_preview_readout(qtbot):
     assert seen.get("amt") == 0.60                 # live-preview hook fires
 
 
-def test_export_panel_split_disabled_without_rcastro(qtbot):
+def test_export_panel_split_offered_without_a_star_tool(qtbot):
+    """Starless + Stars falls back to the free split (2026-10-11); it is never
+    greyed, and the note says which split it will use."""
     w = build_panel(_stage("export"), split_enabled=False)
     qtbot.addWidget(w)
     assert w.fmt_box.count() == 4
-    assert w.fmt_box.model().item(3).isEnabled() is False  # split needs RC-Astro
+    assert w.fmt_box.model().item(3).isEnabled() is True
+    notes = " ".join(l.text() for l in w.findChildren(QLabel))
+    assert "built-in star split" in notes
 
 
 def test_export_panel_split_enabled_with_rcastro(qtbot):
