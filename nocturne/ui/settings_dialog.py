@@ -238,7 +238,7 @@ class SettingsDialog(QDialog):
         t.addRow("", self.rescan_btn)
         t.addRow("", self.rescan_result)
         t.addRow("Preferred denoise engine", self.denoise_box)
-        note = QLabel("RC-Astro unlocks BlurX / NoiseX / StarX and the starless+stars export. "
+        note = QLabel("RC-Astro unlocks BlurX / NoiseX / StarX. "
                       "ASTAP adds plate-solving — install it and its D05 star database "
                       "(from the ASTAP page) for target identification and annotation.")
         note.setWordWrap(True)

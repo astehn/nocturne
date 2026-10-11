@@ -1136,8 +1136,6 @@ def build_panel(
         from ..core.colour import EIGHT_BIT_SPACES, SPACES
         box = QComboBox()
         box.addItems(EXPORT_FORMATS)
-        if not split_enabled:
-            box.model().item(3).setEnabled(False)  # starless+stars split needs StarX
 
         # Colour space. Every export is TAGGED with whichever is chosen, so a
         # reader never has to guess — an untagged file is why a correct M 16
@@ -1183,7 +1181,8 @@ def build_panel(
             "here. Wider spaces are for 16-bit TIFF only — in 8-bit they band."))
         if not split_enabled:
             notes.addWidget(_desc_label(
-                "Starless + stars split needs RC-Astro (set its path in Settings)."))
+                "Starless + stars uses the built-in star split. StarNet2 (free) or "
+                "StarXTerminator gives cleaner layers — set one up in Settings."))
         w.fmt_box = box
         # The step's main action: pinned by MainWindow like every Apply.
         w.export_btn = w.primary_action = export_btn
