@@ -870,19 +870,23 @@ def test_dualband_help_is_right_that_sho_is_unavailable_and_names_the_real_palet
         assert f"<b>{palette}</b>" in b, f"the topic does not name the {palette!r} palette"
 
 
-def test_dualband_help_is_honest_that_auto_enhance_applies_no_palette():
+def test_dualband_help_says_which_auto_enhance_preset_applies_a_palette():
     """A user who taps Auto Enhance on dualband data and gets a red-gold image
-    needs to know that is the design, not a failure to detect narrowband."""
+    needs to know that is the design, and that Gold and blue is the preset
+    that finishes with the palette."""
     from nocturne.core.auto_enhance import build_auto_plan, detect_data_type
     from nocturne.core.image import AstroImage
     from nocturne.settings import Settings
     b = _body("dualband")
-    assert "no palette in <b>Auto " in b and "red-gold" in b
+    assert "no palette in <b>Auto " not in b
+    assert "Natural and Vivid presets leave dualband data red-gold" in b
+    assert "<b>Gold and blue</b> preset, offered only on LP data" in b
     img = AstroImage(np.full((32, 32, 3), 0.3, np.float32), is_linear=True,
                      metadata={"filter": "LP"})
-    stages = [stage for stage, _ in build_auto_plan(img, Settings())]
-    assert stages, "the auto plan is empty; this test proves nothing"
-    assert "narrowband" not in stages, "Auto Enhance now applies a palette; update the help"
+    for preset in ("natural", "vivid"):
+        stages = [stage for stage, _ in build_auto_plan(img, Settings(), preset=preset)]
+        assert stages and "narrowband" not in stages, f"{preset} now applies a palette"
+    assert [s for s, _ in build_auto_plan(img, Settings(), preset="gold_blue")][-1] == "narrowband"
     # and the topic's LP / IRCUT reading of the header
     assert "<b>LP</b>" in b and "<b>IRCUT</b>" in b
     assert detect_data_type({"filter": "LP"}) == "dualband"
@@ -1394,28 +1398,36 @@ def test_upscale_help_is_right_that_stars_never_go_through_the_engine():
     assert out.metadata["upscale"]["scale"] == 2
 
 
-@pytest.mark.xfail(strict=True, reason="auto-enhance-presets Task 1 changed the plan; "
-                   "Task 2 rewrites the auto-enhance help and this test with it")
-def test_auto_enhance_help_lists_the_plan_that_is_actually_built():
+@pytest.fixture
+def _no_nr_models(monkeypatch):
+    from nocturne.core import nr_models
+    monkeypatch.setattr(nr_models, "available", lambda: [])
+
+
+def test_auto_enhance_help_lists_the_plan_that_is_actually_built(_no_nr_models):
     """The topic said "background, colour, stretch, and finishing polish" and
     quoted not one value. Pin every stage and every constant to build_auto_plan,
-    including the two that depend on what is installed."""
+    per preset, including the stages that depend on what is installed."""
     from nocturne.core.auto_enhance import (
-        AUTO_BACKGROUND_STRENGTH, AUTO_DENOISE_STRONG, AUTO_GREEN_FRINGE,
+        AUTO_BACKGROUND_STRENGTH, AUTO_DECONVOLUTION, AUTO_DENOISE_STRONG, AUTO_GREEN_FRINGE,
         AUTO_LOCAL_CONTRAST, AUTO_SATURATION_AMOUNT, AUTO_SATURATION_NEBULA,
-        AUTO_STRETCH_AMOUNT, build_auto_plan)
+        AUTO_SATURATION_NEBULA_DUALBAND, AUTO_STAR_REDUCTION, AUTO_STRETCH_AMOUNT,
+        GOLD_BLUE_STAR_REDUCTION, VIVID_LOCAL_CONTRAST, VIVID_SATURATION,
+        VIVID_STAR_REDUCTION, VIVID_STRETCH_AMOUNT, build_auto_plan)
     from nocturne.core.image import AstroImage
     from nocturne.core.levels import _BLACK_SIGMA
     from nocturne.settings import Settings
+    from nocturne.steps.noise_sharpen import FREE
     from nocturne.ui.pipeline import STEP_NAME
     from nocturne.ui.step_panels import STRETCH_DEFAULT
     b = _body("auto-enhance")
     img = AstroImage(np.full((32, 32, 3), 0.3, np.float32), is_linear=True)
+    lp = AstroImage(img.data, is_linear=True, metadata={"filter": "LP"})
 
     # Auto Enhance runs from the user's crop, so the plan it uses omits crop.
     plan = dict(build_auto_plan(img, Settings(), include_crop=False))
     assert list(plan) == ["color", "stretch", "levels", "saturation", "green_fringe",
-                          "noise_sharpen", "local_contrast"], "the plan changed"
+                          "noise_sharpen", "local_contrast", "star_reduction"], "the plan changed"
     for stage in plan:
         assert f"<b>{STEP_NAME[stage]}</b>" in b, f"the topic never names {STEP_NAME[stage]!r}"
 
@@ -1424,71 +1436,132 @@ def test_auto_enhance_help_lists_the_plan_that_is_actually_built():
     # while both move away from the prose, which is the failure this file exists
     # to catch.
     assert plan["stretch"]["amount"] == AUTO_STRETCH_AMOUNT   # versioned dict since 2026-10-11
-    # Both numbers formatted from the constants, so if either moves the prose
-    # fails rather than quietly describing a plan the app no longer runs. They
-    # were 0.30 and 0.43 until 2026-09-14, when the manual default came down to
-    # the value Andreas picked from ladders of four of his own masters — at
-    # which point "gentler than" stopped being true.
     assert AUTO_STRETCH_AMOUNT == STRETCH_DEFAULT / 100.0, (
         "the help says these are the same; make them so, or reword it")
     assert f"<b>{AUTO_STRETCH_AMOUNT:.2f}</b>, the same as the manual" in b
     assert plan["saturation"] == (AUTO_SATURATION_AMOUNT, AUTO_SATURATION_NEBULA)
     assert f"<b>{AUTO_SATURATION_AMOUNT:.2f}</b> with a light " \
-           f"<b>{AUTO_SATURATION_NEBULA:.2f}</b> nebula boost" in b
+           f"<b>{AUTO_SATURATION_NEBULA:.2f}</b> nebula boost " \
+           f"(<b>{AUTO_SATURATION_NEBULA_DUALBAND:.2f}</b> on dual-band data)" in b
+    assert dict(build_auto_plan(lp, Settings(), include_crop=False))["saturation"] == \
+        (AUTO_SATURATION_AMOUNT, AUTO_SATURATION_NEBULA_DUALBAND)
     assert plan["local_contrast"] == AUTO_LOCAL_CONTRAST
-    assert f"<b>{AUTO_LOCAL_CONTRAST:.2f}</b>" in b
+    assert f"<b>{AUTO_LOCAL_CONTRAST:.2f}</b>, a light" in b
+    assert plan["star_reduction"] == AUTO_STAR_REDUCTION
+    assert f"<b>Star Reduction</b> at <b>{AUTO_STAR_REDUCTION:.2f}</b>" in b
     assert plan["green_fringe"] == AUTO_GREEN_FRINGE == 1.0 and "De-green Stars</b> on" in b
     assert plan["noise_sharpen"]["level"] == AUTO_DENOISE_STRONG
     assert f"at <i>{AUTO_DENOISE_STRONG}</i>, always" in b
-    assert plan["noise_sharpen"]["engine"] is None      # nothing installed
+    assert plan["noise_sharpen"]["engine"] == FREE        # nothing installed: built-in
+    assert "else Nocturne\u2019s own built-in denoise" in b
     assert f"median minus {_BLACK_SIGMA} " in b
 
-    # the two conditional stages, with the tools present
-    full = dict(build_auto_plan(img, Settings(graxpert_path="/bin/echo",
-                                              astap_path="/bin/echo"),
+    # Vivid
+    vivid = dict(build_auto_plan(img, Settings(), include_crop=False, preset="vivid"))
+    assert list(vivid) == list(plan)
+    assert vivid["stretch"]["amount"] == VIVID_STRETCH_AMOUNT
+    assert f"Vivid uses <b>{VIVID_STRETCH_AMOUNT:.2f}</b>" in b
+    assert vivid["saturation"] == VIVID_SATURATION
+    assert f"Vivid: <b>{VIVID_SATURATION[0]:.2f}</b> with <b>{VIVID_SATURATION[1]:.2f}</b>" in b
+    assert vivid["local_contrast"] == VIVID_LOCAL_CONTRAST
+    assert f"Vivid: <b>{VIVID_LOCAL_CONTRAST:.2f}</b>" in b
+    assert vivid["star_reduction"] == VIVID_STAR_REDUCTION
+    assert f"Vivid: <b>{VIVID_STAR_REDUCTION:.2f}</b>. Gold and blue: " \
+           f"<b>{GOLD_BLUE_STAR_REDUCTION:.2f}</b>" in b
+
+    # Gold and blue
+    gb = dict(build_auto_plan(lp, Settings(), include_crop=False, preset="gold_blue"))
+    assert list(gb) == ["color", "stretch", "levels", "green_fringe", "noise_sharpen",
+                        "star_reduction", "narrowband"]
+    assert gb["stretch"]["amount"] == AUTO_STRETCH_AMOUNT
+    assert gb["star_reduction"] == GOLD_BLUE_STAR_REDUCTION
+    assert "It skips Saturation and Local Contrast" in b
+    assert "<b>Narrowband</b> \u2014 Gold and blue only, last." in b
+
+    # the conditional stages, with the tools present
+    full = dict(build_auto_plan(img, Settings(graxpert_path="/bin/echo", astap_path="/bin/echo",
+                                              rcastro_path="/bin/echo"),
                                 include_crop=False))
+    assert list(full)[:3] == ["background", "color", "deconvolution"]
     assert full["background"] == AUTO_BACKGROUND_STRENGTH
     assert f"<b>Background</b> at <i>{AUTO_BACKGROUND_STRENGTH}</i>" in b
     assert "<b>only if GraXpert is set up in Settings</b>" in b
+    assert full["deconvolution"] == AUTO_DECONVOLUTION["broadband"]
+    assert f"<b>Deconvolution</b> at <i>{AUTO_DECONVOLUTION['broadband']}</i> " \
+           f"(<i>{AUTO_DECONVOLUTION['dualband']}</i> on dual-band data)" in b
+    assert "<b>only if RC-Astro is set up</b>" in b
     assert full["color"].method == "photometric" and plan["color"].method == "sky"
     assert "<b>photometric</b> if ASTAP is set up" in b and "sky-neutralise" in b
-    assert len(plan) == 7 and len(full) == 8
-    assert "the plan is <b>7</b> steps, and with GraXpert <b>8</b>" in b
 
 
-@pytest.mark.xfail(strict=True, reason="auto-enhance-presets Task 1 changed the plan; "
-                   "Task 2 rewrites the auto-enhance help and this test with it")
-def test_auto_enhance_help_names_the_stages_it_refuses_to_run():
+def test_auto_enhance_help_names_the_stages_it_refuses_to_run(_no_nr_models):
     """Everything the plan leaves out is a step the user can reach by hand, and
-    the topic now says which and why. Guard the list against the pipeline's."""
-    from nocturne.core.auto_enhance import build_auto_plan
+    the topic says which and why. Guard the list against the pipeline's."""
+    from nocturne.core.auto_enhance import PRESETS, build_auto_plan
     from nocturne.core.image import AstroImage
     from nocturne.settings import Settings
     from nocturne.ui.pipeline import PROCESSING_ORDER, STEP_NAME
     b = _body("auto-enhance")
     img = AstroImage(np.full((32, 32, 3), 0.3, np.float32), is_linear=True)
-    planned = {s for s, _ in build_auto_plan(img, Settings(graxpert_path="/bin/echo",
-                                                          astap_path="/bin/echo"))}
+    every = Settings(graxpert_path="/bin/echo", astap_path="/bin/echo",
+                     rcastro_path="/bin/echo")
+    planned = set()
+    for preset in PRESETS:
+        meta = {"filter": "LP"} if preset == "gold_blue" else {}
+        planned |= {s for s, _ in build_auto_plan(
+            AstroImage(img.data, is_linear=True, metadata=meta), every, preset=preset)}
     omitted = [s for s in PROCESSING_ORDER if s not in planned]
-    assert omitted == ["tint", "deconvolution", "remove_green",
-                       "recover_core", "curves", "star_reduction"], \
+    assert omitted == ["tint", "remove_green", "recover_core", "curves"], \
         "the set of stages Auto Enhance skips changed"
-    for stage in ("deconvolution", "recover_core", "curves", "star_reduction"):
-        assert f"<b>{STEP_NAME[stage]}</b>" in b, \
+    for stage in ("recover_core", "curves"):
+        assert f"<b>{STEP_NAME[stage]}</b> and" in b or f"and <b>{STEP_NAME[stage]}</b>" in b, \
             f"the topic does not say {STEP_NAME[stage]!r} is left out"
-    assert "narrowband" not in planned and "<b>No narrowband palette, ever.</b>" in b
-    assert "red-gold" in b
+    assert "<b>Recover Core</b> and <b>Curves</b>, always" in b
+    # and the two left out for want of a tool
+    bare = {s for s, _ in build_auto_plan(img, Settings())}
+    assert {"background", "deconvolution"} - bare == {"background", "deconvolution"}
+    assert "<b>Background</b> without GraXpert" in b
+    assert "<b>Deconvolution</b> without RC-Astro" in b
 
 
-def test_auto_enhance_help_warns_that_a_failed_stage_is_skipped_in_silence():
-    """TODO calls this out and the help never did: run_auto_plan catches per
-    stage and continues, so a one-click result can be missing a step with no
-    error anywhere. The step count is the only signal."""
+def test_auto_enhance_help_names_its_presets_and_drops_the_no_palette_promise():
+    from nocturne.core.auto_enhance import PRESET_NAMES
+    b = _body("auto-enhance")
+    for shown in PRESET_NAMES.values():
+        assert f"<p><b>{shown}</b> \u2014 " in b, f"the topic does not describe {shown!r}"
+    assert "a click is always Natural" in b
+    assert "No narrowband palette" not in b
+
+
+def test_auto_enhance_help_says_denoise_never_uses_graxpert(monkeypatch):
+    """GraXpert's denoise is never chosen, whatever is installed — the help says so."""
+    import itertools
+    from nocturne.core import nr_models
+    from nocturne.core.auto_enhance import _auto_denoise_engine
+    from nocturne.settings import Settings
+    b = _body("auto-enhance")
+    assert "It <b>never uses GraXpert</b> for denoise" in b
+    assert "else GraXpert" not in b
+    monkeypatch.setattr(nr_models, "available", lambda: [])
+    for gx, rc, pref in itertools.product(("", "/bin/echo"), ("", "/bin/echo"),
+                                          ("graxpert", "rcastro")):
+        s = Settings(graxpert_path=gx, rcastro_path=rc, denoise_engine=pref)
+        assert _auto_denoise_engine(s) != "graxpert"
+
+
+def test_auto_enhance_help_says_a_failed_stage_is_named(_no_nr_models):
+    """run_auto_plan catches per stage and continues; since the presets it
+    returns each failure, and the window puts it in the warning line."""
     from nocturne.core.auto_enhance import run_auto_plan
     from nocturne.core.image import AstroImage
     from nocturne.settings import Settings
     b = _body("auto-enhance")
-    assert "<b>skipped in silence</b>" in b and "count the steps" in b
+    assert "skipped in silence" not in b
+    assert "The warning line names it and why" in b
+    assert "<i>Auto Enhance (Vivid): 8 of 9 steps \u2014 Noise Reduction failed: \u2026</i>" in b
+    mw = _src("nocturne/ui/main_window.py")
+    assert 'f"Auto Enhance ({shown}): {len(results)} of {planned} "' in mw
+    assert 'f"steps \\u2014 {failed} failed: {reasons}"' in mw
 
     img = AstroImage(np.full((32, 32, 3), 0.3, np.float32), is_linear=True)
     plan = [("stretch", 0.3), ("levels", (0.0, 1.0, 1.0)), ("local_contrast", 0.15)]
@@ -1500,14 +1573,12 @@ def test_auto_enhance_help_warns_that_a_failed_stage_is_skipped_in_silence():
     original = levels_step.LevelsStep.apply
     levels_step.LevelsStep.apply = _boom
     try:
-        results = run_auto_plan(img, plan, Settings()).results
+        run = run_auto_plan(img, plan, Settings())
     finally:
         levels_step.LevelsStep.apply = original
-    names = [name for name, _, _ in results]
-    assert names == ["Stretch", "Local Contrast"], \
-        "run_auto_plan no longer swallows a failing stage; the help says it does"
-    assert len(results) == len(plan) - 1     # the count is all the user is told
-    assert "how many steps it applied" in b
+    assert [name for name, _, _ in run.results] == ["Stretch", "Local Contrast"]
+    assert run.failures == [("Levels", "tool exploded")]
+    assert "how many steps it" in b
 
 
 def test_auto_enhance_help_is_right_that_saying_yes_destroys_the_old_edit():

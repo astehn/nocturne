@@ -6559,8 +6559,9 @@ def test_undo_lines_are_styled_apart_from_steps(qtbot, tmp_path):
 
 
 def test_undo_after_auto_enhance_names_its_last_stage_not_a_later_line(qtbot, tmp_path):
-    """Review I1: Auto Enhance logs no step line per stage, so an Export logged
-    next was taken as the last stage's line and Undo said "Undo: Exported"."""
+    """Review I1: Auto Enhance logged no step line per stage, so an Export logged
+    next was taken as the last stage's line and Undo said "Undo: Exported".
+    Each stage now logs its own line, naming the preset."""
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     _crop(win)
@@ -6569,7 +6570,7 @@ def test_undo_after_auto_enhance_names_its_last_stage_not_a_later_line(qtbot, tm
     win.log_panel.append_entry("Exported x.tiff")
     win._undo()
     line = _step_lines(win)[-1]
-    assert line.startswith(f"↶ Undo: {last}") and line.endswith("— Auto Enhance"), line
+    assert line.startswith(f"↶ Undo: {last}") and line.endswith("— Auto Enhance (Natural)"), line
 
 
 def test_a_reset_line_is_not_taken_as_the_older_states_step(qtbot, tmp_path):

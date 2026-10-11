@@ -97,6 +97,8 @@ PRESETS: dict[str, tuple[tuple[str, object], ...]] = {
     ),
 }
 DUALBAND_ONLY = frozenset({"gold_blue"})
+# How each preset is written for a person: the menu, the busy label, the log.
+PRESET_NAMES = {"natural": "Natural", "vivid": "Vivid", "gold_blue": "Gold and blue"}
 
 
 def _auto_crop_option(img) -> CropParams:
@@ -208,6 +210,9 @@ class AutoRun(NamedTuple):
     results: list[tuple[str, object, AstroImage]]   # (step.name, serialized option, image after)
     failures: list[tuple[str, str]]                 # (step.name, short reason)
     engines: list[str | None]                       # step.last_engine per result (None: no engine)
+    # A step's own message for the person (Color's sky-balance fallback or its
+    # dual-band step-aside): the steps are built here, so the caller cannot ask them.
+    notes: tuple[str, ...] = ()
 
 
 _REASON_MAX = 120
@@ -255,6 +260,7 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
     results: list[tuple[str, object, AstroImage]] = []
     failures: list[tuple[str, str]] = []
     engines: list[str | None] = []
+    notes: list[str] = []
     for i, (stage_id, option) in enumerate(plan):
         tok = current()
         if tok is not None and tok.cancelled:
@@ -287,6 +293,8 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
         recorded = getattr(step, "recorded_option", lambda o: o)(option)
         results.append((step.name, serialize_option(stage_id, recorded), img))
         engines.append(getattr(step, "last_engine", None))
+        if getattr(step, "last_message", ""):
+            notes.append(step.last_message)
         if on_progress is not None:
             on_progress(i + 1, n, step.name)
-    return AutoRun(results, failures, engines)
+    return AutoRun(results, failures, engines, tuple(notes))
