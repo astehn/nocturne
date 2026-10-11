@@ -376,6 +376,8 @@ def test_export_panel_split_enabled_with_rcastro(qtbot):
     w = build_panel(_stage("export"), split_enabled=True)
     qtbot.addWidget(w)
     assert w.fmt_box.model().item(3).isEnabled() is True
+    notes = " ".join(l.text() for l in w.findChildren(QLabel))
+    assert "built-in star split" not in notes
 
 
 def test_export_panel_formats(qtbot):

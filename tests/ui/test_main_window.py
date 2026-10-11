@@ -710,7 +710,8 @@ def test_export_final_split_writes_two_tiffs(qtbot, tmp_path, monkeypatch):
 
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
-    # RC-Astro "configured" so the split path is allowed
+    # RC-Astro configured, so the split must go through IT (the free split
+    # would also write two files — the log tag is what tells them apart).
     rc_bin = tmp_path / "rc"; rc_bin.write_text("#!/bin/sh\n")
     rc_bin.chmod(0o755)   # a real tool is EXECUTABLE, not merely present
     win.settings = Settings(rcastro_path=str(rc_bin))
@@ -732,11 +733,14 @@ def test_export_final_split_writes_two_tiffs(qtbot, tmp_path, monkeypatch):
     # at call time (2026-09-18), so patching the name on main_window no longer
     # intercepts it. Patching here works for both import styles.
     monkeypatch.setattr(rcmod, "RCAstro", _FakeRC)
-    monkeypatch.setattr(mw, "RCAstro", _FakeRC)
     win.export_final("Starless + Stars (two TIFFs)")
     assert (out / "starless.tif").exists()
     assert (out / "stars.tif").exists()
     assert asked == ["Export"], "the folder panel's button must say Export, not Open"
+    # The fake is not named RCAstro, so splitter_name calls it StarNet2 — what
+    # matters is that the configured tool ran, not the free fallback.
+    done = [e for e in win.log_panel.entries() if "Exported starless.tif" in e]
+    assert done and not done[-1].endswith("(free)")
 
 
 def test_export_final_single_file(qtbot, tmp_path, monkeypatch):
@@ -1444,7 +1448,6 @@ def test_setup_star_reduction_caches_split(qtbot, tmp_path, monkeypatch):
     win.settings = _fake_rc_settings(tmp_path)
     import nocturne.tools.rcastro as rcmod
     monkeypatch.setattr(rcmod, "RCAstro", _FakeSplitRC)   # see the note above
-    monkeypatch.setattr(mw, "RCAstro", _FakeSplitRC)
     win._go_to_id("stretch")
     win.apply_current(0.5)               # non-linear image for the finishing tail
     win._go_to_id("star_reduction")      # triggers _setup_star_reduction (sync)
@@ -6597,13 +6600,31 @@ def test_starless_stars_export_works_without_any_star_tool(qtbot, tmp_path, monk
     now uses the free split and says so in the log."""
     from nocturne.ui import file_dialogs
     from nocturne.settings import Settings
+    from astropy.io import fits
+    yy, xx = np.mgrid[:48, :48]
+    sky = np.full((3, 48, 48), 0.10) + np.random.default_rng(1).normal(0, 0.004, (3, 48, 48))
+    for cy, cx in ((12, 14), (33, 30)):                        # two stars
+        sky += 0.8 * np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / 3.0)
+    p = tmp_path / "stars.fits"
+    fits.PrimaryHDU((np.clip(sky, 0, 1) * 60000).astype(np.uint16)).writeto(str(p))
     win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path))
+    win.open_fits(str(p))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)       # stretched, so the TIFFs carry the data as-is
     win.settings = Settings()                         # no RC-Astro, no StarNet2
     out = tmp_path / "split"; out.mkdir()
     monkeypatch.setattr(file_dialogs, "choose_folder", lambda *a, **k: str(out))
     win.export_final("Starless + Stars (two TIFFs)")
-    qtbot.waitUntil(lambda: (out / "stars.tif").exists(), timeout=10000)
-    assert (out / "starless.tif").exists()
-    qtbot.waitUntil(lambda: any("Exported starless.tif + stars.tif (free)" in e
-                                for e in win.log_panel.entries()), timeout=10000)
+    assert any("Exported starless.tif + stars.tif (free)" in e
+               for e in win.log_panel.entries())
+    # A real split, not the picture saved twice: the stars layer has stars in
+    # it, and Screen-blending the two gives back the whole (sRGB) export.
+    import tifffile
+    sl = tifffile.imread(out / "starless.tif").astype(np.float64) / 65535
+    st = tifffile.imread(out / "stars.tif").astype(np.float64) / 65535
+    whole, _icc = win._prepare_for_export(win.project.current(), "sRGB")
+    whole = np.asarray(getattr(whole, "data", whole), np.float64)
+    if whole.max() > 1.5:
+        whole = whole / 65535
+    assert st.max() > 0.05
+    assert np.abs(1 - (1 - sl) * (1 - st) - whole.reshape(sl.shape)).max() < 2e-3

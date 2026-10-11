@@ -1111,7 +1111,7 @@ _TOPIC_LIST = (
        "<b>starless + stars</b> pair (two TIFFs) for compositing elsewhere. It uses the "
        "same star split as the rest of Nocturne — StarXTerminator, else StarNet2, else the "
        "built-in one — and the log says which. The stars image is <i>unscreened</i>, so recombine the two with a "
-       "<b>Screen</b> blend to reconstruct the image exactly.</p>"
+       "<b>Screen</b> blend to reconstruct the image — exactly in sRGB; in a wider space very slightly off (each layer is converted on its own).</p>"
        "<p><b>Colour space.</b> Every export is tagged with the space it is in, so other "
        "programs show it exactly as you see it here. <b>sRGB</b> is the default and the right "
        "answer almost always: it is the space your screen shows and the one every browser "

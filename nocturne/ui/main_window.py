@@ -63,7 +63,6 @@ from ..steps.star_split import preferred_splitter
 from ..steps.factory import make_step
 from ..steps.load import load_fits
 from ..tools.base import run_cli, ToolError
-from ..tools.rcastro import RCAstro
 from ..core.metrics import rms_delta
 from ..core.update_check import DOWNLOAD_URL, SUPPORT_URL, is_newer, latest_release_version
 from .busy_gate import BusyGate, keep_live
@@ -7342,7 +7341,7 @@ class MainWindow(QMainWindow):
             apply_enabled = loaded and graxpert_valid(self.settings)
         # A real star tool (StarX/StarNet2) is set up. The split export works
         # without one too (free split); this only decides the panel's note.
-        split_enabled = loaded and preferred_splitter(self.settings) is not None
+        split_enabled = preferred_splitter(self.settings) is not None
         both_denoise = graxpert_valid(self.settings) and rcastro_valid(self.settings)
         denoise_choices = ["Default", NOISEX_CHOICE, "GraXpert"] if both_denoise else None
         nr_engines = None
