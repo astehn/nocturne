@@ -65,6 +65,9 @@ def _headline(name: str, ser) -> str:
             # says it, as the log line does ("0.12 unlinked").
             linked = "linked" if ser.get("linked", True) else "unlinked"
             return f"{ser['amount']} {linked}"
+        if name == "Color" and ser.get("stepped_aside"):
+            return (f"{ser.get('method', 'photometric')} → stepped aside on dual-band "
+                    f"data; sky balance")
         if name == "Color" and ser.get("fell_back"):
             return f"{ser.get('method', 'photometric')} → fell back to sky balance"
         if name == "Colour Balance":
@@ -210,7 +213,11 @@ def build_report(entries, metadata, *, app_version: str, date: datetime.date,
         colour = [ser for n, ser in ser_entries if n == "Color"]
         last = colour[-1] if colour and isinstance(colour[-1], dict) else {}
         sky_line = None
-        if last.get("fell_back"):
+        if last.get("stepped_aside"):
+            sky_line = ("- Color: **Nocturne (built-in sky balance)** — photometric "
+                        "calibration was chosen and stepped aside: it isn't meaningful "
+                        "through a dual-band filter")
+        elif last.get("fell_back"):
             sky_line = ("- Color: **Nocturne (built-in sky balance)** — photometric "
                         "calibration was chosen but could not run")
         elif last.get("method") == "sky":

@@ -350,3 +350,48 @@ def test_read_pointings_counts_to_the_end_and_can_be_cancelled(tmp_path):
             read_pointings(paths)
     finally:
         clear_ambient()
+
+
+def test_an_lp_mosaic_opened_from_the_dialog_steps_aside_from_photometric(tmp_path):
+    """The Stack dialog opens the IN-MEMORY result, not the file. That dict was
+    hand-rolled ({panels, frames}) with no filter, so a dual-band mosaic opened
+    straight away ran photometric colour, while the same file reopened stepped
+    aside (review 2026-10-10). The in-memory metadata must say what the file says."""
+    from nocturne.core.color import ColorSettings
+    from nocturne.core.fits_io import load_fits
+    from nocturne.stacking.mosaic import MosaicOptions, run_mosaic
+    from nocturne.steps.color import DUALBAND_MESSAGE, ColorStep
+
+    paths = []
+    for prefix, dec, seed in (("a", 41.00, 1), ("b", 41.05, 2)):
+        base = make_star_field(shape=(80, 80), n_stars=40, seed=seed)
+        for i in range(5):
+            t = SimilarityTransform(translation=(i * 0.5, -i * 0.5))
+            f = warp(base, t.inverse, order=1, preserve_range=True).astype(np.float32)
+            p = tmp_path / f"{prefix}{i}.fit"
+            write_color_fits(p, f, exptime=10.0,
+                             header={"RA": 10.0 + i * 0.001, "DEC": dec + i * 0.001,
+                                     "FILTER": "LP", "OBJECT": "IC 1396A",
+                                     "FOCALLEN": 160.0, "XPIXSZ": 2.9})
+            paths.append(str(p))
+    out = tmp_path / "m.fits"
+
+    def fake_solver(master_path):
+        d = 41.05 if "panel_01" in master_path else 41.00
+        return _panel_wcs(10.0, d), (80, 80)
+
+    result = run_mosaic(MosaicOptions(include=paths, output_path=str(out),
+                                      astap_path="unused", method="average",
+                                      max_spread_deg=0.02), solver=fake_solver)
+    meta = result.image.metadata
+    reopened = load_fits(str(out)).metadata
+    assert meta.get("filter") == "LP" == reopened.get("filter")
+    assert meta.get("target") == reopened.get("target") == "IC 1396A"
+    assert meta.get("frames") == 10 and meta.get("panels") == 2
+    assert meta.get("focal_length") == reopened.get("focal_length")
+    # The plate-solve hints are the MOSAIC's (its WCS), not the first panel's.
+    assert meta.get("solve_cards") == reopened.get("solve_cards")
+
+    step = ColorStep(astap=None, gaia_query=None)
+    step.apply(result.image, ColorSettings(method="photometric"))
+    assert step.last_message == DUALBAND_MESSAGE and step.fell_back is True

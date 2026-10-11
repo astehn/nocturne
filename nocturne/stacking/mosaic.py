@@ -668,9 +668,6 @@ def run_mosaic(opts: MosaicOptions, *, on_progress=None, solver=None) -> MosaicR
     peak = float(master.max())
     if peak > 0:
         master = master / peak
-    image = AstroImage(np.clip(master, 0.0, 1.0).astype(np.float32),
-                       is_linear=True,
-                       metadata={"panels": len(solved), "frames": frame_count})
     # The WCS goes INTO THE FILE, not just the result object. Placing panels
     # astrometrically and then discarding the solution would leave a mosaic that
     # cannot be annotated, cannot be re-solved cheaply, and cannot even report
@@ -685,6 +682,21 @@ def run_mosaic(opts: MosaicOptions, *, on_progress=None, solver=None) -> MosaicR
     if opts.autocrop:
         cards["CRPIX1"] = float(cards.get("CRPIX1", 1.0)) - left
         cards["CRPIX2"] = float(cards.get("CRPIX2", 1.0)) - top
+    # The in-memory result is what the Stack dialog opens, so it must say what
+    # the file says. It was a bare {panels, frames}: a dual-band mosaic opened
+    # straight away had no filter and ran photometric colour, while the same
+    # file reopened stepped aside (2026-10-10). The plate-solve hints come from
+    # the cards just built -- the mosaic's WCS, not the first panel's solve.
+    from ..core.fits_io import solve_cards_from_header
+    from .stacker import master_metadata
+    mh, mw = master.shape[:2]
+    meta = master_metadata(ref_meta or {}, frame_count, integration, mw, mh)
+    meta["panels"] = len(solved)
+    meta.pop("solve_cards", None)
+    if solve := solve_cards_from_header(cards):
+        meta["solve_cards"] = solve
+    image = AstroImage(np.clip(master, 0.0, 1.0).astype(np.float32),
+                       is_linear=True, metadata=meta)
     save_fits(image, opts.output_path, header=cards)
     return MosaicResult(image, len(solved), frame_count, integration,
                         dropped, opts.output_path, wcs)
