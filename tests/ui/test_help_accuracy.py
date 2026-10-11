@@ -2108,3 +2108,21 @@ def test_stretch_help_describes_the_stretch_version_in_use():
     src = _src("nocturne/core/autostretch.py")
     assert "_SKY_PCT = 30.0" in src            # "the darkest part"
     assert "noisiest" in src.split("def _neutral_stretch_v1")[0]
+
+
+def test_linked_is_never_said_to_keep_the_skys_own_colour():
+    """The linked stretch makes the sky neutral (measured on the sky since
+    stretch version 2), so "keeps the sky's own colour" said the opposite of
+    what it does, in six places (review 2026-10-11, I-2). The owner's wording,
+    2026-10-11: "One curve for all colours: keeps the colours of stars and
+    nebula" / "Each colour stretched on its own: evens the channels out"."""
+    for rel in ("nocturne/ui/step_panels.py", "nocturne/ui/main_window.py",
+                "nocturne/ui/stretch_picker.py", "nocturne/ui/help_content.py"):
+        assert "sky's own colour" not in _src(rel), rel
+    from nocturne.ui.stretch_picker import COLOUR_PICKS
+    subs = {name: sub for name, _linked, sub in COLOUR_PICKS}
+    assert subs["Linked"] == "One curve for all colours: keeps the colours of stars and nebula"
+    assert subs["Unlinked"] == "Each colour stretched on its own: evens the channels out"
+    b = _body("stretch")
+    assert "one curve for all colours" in b and "keeps the colours of stars and nebula" in b
+    assert "makes the sky neutral" in b

@@ -4069,6 +4069,14 @@ class MainWindow(QMainWindow):
             # what is committed — the panel is always built showing that.
             return _same_option(self._curve_option(value),
                                 normalize_curves(self._committed_option("curves")))
+        if step_id == "stretch" and self._stretch_is_older_version():
+            # An old project's stretch replays in the version it recorded, but
+            # the live preview renders the CURRENT version: same amount, a
+            # different picture (37 levels on the review's fixture). Once the
+            # preview has been rendered it is not the commit, so it is pending
+            # and Apply upgrades it; arriving without touching renders nothing
+            # and still shows the committed image (review 2026-10-11, I-1).
+            return False
         neutral = getattr(self._panel, "neutral_option", None)
         if neutral is not None and _same_option(neutral, value):
             return True
@@ -4076,6 +4084,16 @@ class MainWindow(QMainWindow):
         if committed is None:
             return False        # never applied here: nothing to match
         return _same_option(committed, value)
+
+    def _stretch_is_older_version(self) -> bool:
+        """Was the committed Stretch made with an older stretch version than the
+        one a new Apply would use (autostretch.STRETCH_VERSION)?"""
+        from ..core import autostretch
+        from ..steps.stretch_step import parse_stretch_version
+        committed = self._committed_option("stretch")
+        if committed is None:
+            return False
+        return parse_stretch_version(committed) != autostretch.STRETCH_VERSION
 
     def _color_method_pending(self) -> bool:
         """Whether Color's method dropdown differs from what was committed.
@@ -5635,7 +5653,8 @@ class MainWindow(QMainWindow):
         # Said in the log, because it decides more than the view: Stretch
         # uses it, and Colour steps aside under it (his ask, 2026-09-27).
         self.log_panel.append_info(
-            "Linked — the view and Stretch keep the sky's own colour."
+            "Linked — the view and Stretch use one curve for all colours, "
+            "keeping the colours of stars and nebula."
             if linked else
             "Unlinked — the view and Stretch even the channels out; Colour is "
             "skipped, as its corrections do nothing under an unlinked stretch.")

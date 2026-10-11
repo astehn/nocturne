@@ -148,6 +148,13 @@ STRETCH_V2 = 2
 # live preview, the visual picker, the linear display, Auto Enhance and new
 # recipes. Set it back to STRETCH_V1 to return to the old stretch. Stretches
 # already saved keep the version they recorded, either way.
+#
+# Reverting is THIS LINE, never a `git revert` and never deleting a version's
+# function: projects and recipes saved since 2026-10-11 say "version": 2, and a
+# build without _neutral_stretch_v2 would replay them as version 1 without a
+# word. Two tests pin the current value on purpose and must be changed with it
+# (test_help_accuracy's stretch-help test, which also makes you fix the help,
+# and test_stretch_versions' test_a_new_option_records_the_current_version).
 STRETCH_VERSION = STRETCH_V2
 
 # Version 2's sky. The darkest 30% of a smoothed luminance: the prototype's
@@ -272,6 +279,9 @@ def stretch_v2_params(data: np.ndarray, target: float = _TARGET_BG):
     return meds, ref, shadow, m, data_mask
 
 
+# NEVER REMOVE OR CHANGE THIS FUNCTION. Every Stretch saved with "version": 2
+# replays through it when its project or recipe is reopened. A different
+# stretch is a new version beside it, selected by STRETCH_VERSION.
 def _neutral_stretch_v2(data: np.ndarray, target: float = _TARGET_BG) -> np.ndarray:
     """STRETCH VERSION 2: version 1's neutralise-then-link, measured on the sky.
 
@@ -309,6 +319,11 @@ def _neutral_stretch_v2(data: np.ndarray, target: float = _TARGET_BG) -> np.ndar
     return out
 
 
+# NEVER REMOVE OR CHANGE THIS FUNCTION. Every Stretch saved before 2026-10-11
+# (no "version" in its option) replays through it when its project or recipe is
+# reopened. The helpers it calls (_sample, _apply_params, _mtf, _mtf_midtones,
+# _SIGMA, _SAMPLE_TARGET) are shared: changing one changes old pictures too,
+# which the byte hashes in tests/core/test_stretch_versions.py exist to catch.
 def _neutral_stretch_v1(data: np.ndarray, target: float = _TARGET_BG) -> np.ndarray:
     """STRETCH VERSION 1 (until 2026-10-11), kept byte-for-byte so every stretch
     saved before version 2 replays exactly as it was made. Do not edit.

@@ -82,8 +82,8 @@ _SCREEN_USE = 0.9       # leave the dock and menu bar visible
 # half no longer favours unlinked on his M 45 and IC 1396A (49/49/49, 48/48/48);
 # the colour-drift table has not been re-run. Still no label either way.
 COLOUR_PICKS: list[tuple[str, bool, str]] = [
-    ("Linked", True, "keeps the sky's own colour"),
-    ("Unlinked", False, "evens the channels out"),
+    ("Linked", True, "One curve for all colours: keeps the colours of stars and nebula"),
+    ("Unlinked", False, "Each colour stretched on its own: evens the channels out"),
 ]
 
 # An unlinked stretch does not weaken a photometric calibration, it ANNIHILATES
@@ -96,10 +96,11 @@ _SPCC_CAVEAT = "Photometric calibration will be discarded"
 # 2026-09-14). The 2026-10-04 app audit lost track of exactly that switch.
 _SWITCH_CAVEAT = "Switches to Linked, and Colour is offered again"
 
-# The brightness at which BOTH colour panels are rendered. Mid-ladder, so the
+# The stretch AMOUNT (not a target) at which BOTH colour panels are rendered:
+# 0.24 is the "Balanced" rung of STRETCH_PICKS. Mid-ladder, so the
 # picture is representative of what follows without the pick accidentally
 # becoming a brightness decision too.
-_COLOUR_TARGET = 0.24
+_COLOUR_AMOUNT = 0.24
 
 
 def preview_edge(available: QSize, chrome: QSize, rows: int,
@@ -150,7 +151,10 @@ def _colour_caption(name: str, value, img: AstroImage) -> str:
     """No number: unlike brightness there is no control to land on, so a figure
     here would be decoration. The subtitle carries the meaning instead."""
     sub = dict((n, s) for n, _v, s in COLOUR_PICKS)[name]
-    return f"{name}\n{sub}"
+    # Broken at the colon by hand: the owner's sentence is wider than a panel
+    # at the 1280x800 floor, and a label left to wrap itself grows a line the
+    # fit (which probes with this same caption) never measured.
+    return f"{name}\n" + sub.replace(": ", ":\n", 1)
 
 
 def _is_grey(data: np.ndarray) -> bool:
@@ -181,7 +185,7 @@ def colour_pick(base: AstroImage, *, spcc_applied: bool = False,
     if _is_grey(base.data):
         return None
     small = downscale(base, _PREVIEW_MAX)
-    at = _COLOUR_TARGET
+    at = _COLOUR_AMOUNT
 
     def options(_state: dict):
         return [(name, linked, apply_stretch(small, at, linked=linked))

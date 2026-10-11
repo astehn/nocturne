@@ -56,6 +56,12 @@ def _digest(a):
 
 
 # Captured from neutral_stretch on main @ 15e3505, BEFORE version 2 existed.
+# They pin the exact bytes old projects reproduce. If they fail after a numpy
+# (or Python/platform) upgrade with no change to autostretch.py, do NOT just
+# regenerate them: build the same fixtures on a checkout of 15e3505 under the
+# NEW numpy and compare with the branch. Equal there means the library moved
+# old pictures for everyone and the hashes may be re-captured from 15e3505;
+# different means our code changed version 1 and must be fixed.
 _V1_HASHES = {
     ("nebula", 0.205): "b30d6a184de233c6938b8f21",
     ("nebula", 0.31): "e9c65733c463748a304e38b3",
@@ -364,7 +370,13 @@ def test_the_downscaled_preview_measures_the_same_sky_as_the_full_frame(edge):
     must agree to a twentieth of the noise. The black point legitimately sits
     nearer the sky on the copy — averaging lowers the noise it is measured from,
     exactly as in version 1 — so what is pinned there is what the user sees:
-    the stretched sky, within one 8-bit level, and neutral at both sizes."""
+    the stretched sky, within one 8-bit level, and neutral at both sizes.
+
+    On real data the picker is looser: his M 45 decon state at 640 px puts blue
+    2.8 levels from the full frame (1.4 at 1024; IC 1396A <= 0.7), all from the
+    black point on the averaged copy — the sky medians agree to 7e-6. Version 1
+    was 5.5 levels off there. The live Stretch preview is full-size, so Apply
+    is unaffected (review 2026-10-11, M-1)."""
     data, sky = _scene()
     small, step = _downscale(data, edge)
     meds_f, ref_f, *_ = stretch_v2_params(data, 0.205)
