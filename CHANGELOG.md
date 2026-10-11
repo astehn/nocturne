@@ -2,6 +2,25 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.51.0] — 2026-10-11
+
+Photometric colour that finally works, a cleaner stretch, and shape buttons for cropping.
+
+### Added
+- Crop shapes as buttons in Crop, Trim, Share and Upscale Crop: Free, Original, 1:1, 5:4, 4:3, 3:2 and 16:9, each drawn in its own proportions, with a Portrait button that turns them tall (3:2 becomes 2:3). Guides and Rotate/Flip are buttons too.
+
+### Changed
+- Photometric colour (SPCC) now actually calibrates. It measured star colour without taking off the sky, so it always came out near 1.00 and changed nothing. On broadband data it now corrects for real (typically R 0.80 · G 1.07 · B 1.17); on dual-band data it steps aside and balances on the sky, and says so.
+- The linked stretch measures the sky on the sky, and sets its black point from the noisiest colour: a neutral sky and far less coloured speckle in the dark parts. Projects and recipes made before this keep the stretch they were made with.
+- Levels' Auto button is now called Auto black point.
+- Share's text opacity starts at 100% every time.
+- The start screen shows two rows of recent projects on a 1440×900 MacBook.
+- New recipes remember the crop's shape, so Batch cuts each picture to it. Free behaves as before.
+
+### Fixed
+- Apply Crop stayed grey after a Rotate or Flip.
+- Moving the Stretch slider back to its applied value still counted as an unapplied change.
+
 ## [0.50.0] — 2026-10-10
 
 A new gold-and-blue Narrowband palette, a redesigned start screen, and Undo that says what it undid.
