@@ -14,13 +14,13 @@ from PySide6.QtCore import (QByteArray, QEvent, QEventLoop, QObject, QPoint, QRe
                             QUrl, Signal)
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
-    QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMessageBox,
+    QApplication, QFileDialog, QHBoxLayout, QLabel, QMainWindow, QMenu, QMessageBox,
     QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout,
     QWidget,
 )
 
 from .. import APP_NAME, __version__, app_title
-from ..core.auto_enhance import build_auto_plan, run_auto_plan
+from ..core.auto_enhance import DUALBAND_ONLY, PRESET_NAMES, build_auto_plan, run_auto_plan, stages_left_out
 from ..core import telemetry as telemetry_mod
 from ..core.provenance import build_report
 from ..core import nr_models
@@ -486,6 +486,11 @@ def _remove_quietly(path: str) -> None:
         pass
 
 
+def _and_join(words: list[str]) -> str:
+    """"A", "A and B", "A, B and C"."""
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+
+
 def _plain_step_line(name: str, option) -> str:
     """A step's line rebuilt from its history record, where the line it logged
     is not known: text and numbers as they are, anything structured left out."""
@@ -615,6 +620,7 @@ class MainWindow(QMainWindow):
             lambda done, total: self._set_progress("", done, total))
         self._auto_signals = _AutoEnhanceSignals()
         self._auto_signals.progress.connect(self._on_auto_progress)
+        self._auto_preset_name = PRESET_NAMES["natural"]   # for the progress label
         self._save_signals = _SaveSignals()
         self._save_signals.progress.connect(
             lambda d, t: self._set_progress("Saving project", d, t))
@@ -2050,10 +2056,26 @@ class MainWindow(QMainWindow):
         self._refresh()
 
     def _on_auto_progress(self, i: int, n: int, name: str) -> None:
-        self._busy_label_text = f"Auto-enhancing — {name} ({i}/{n})…"
+        self._busy_label_text = f"Auto-enhancing ({self._auto_preset_name}) — {name} ({i}/{n})…"
         if self._busy_shown:
             self._busy_label.setText(self._busy_label_text)
         self._set_progress(name, i, n)
+
+    def _is_dualband(self) -> bool:
+        if self.project is None:
+            return False
+        from ..core.filter_type import detect_data_type
+        # Metadata only: this runs on every menu opening, and current() loads
+        # the whole frame from disk on the UI thread.
+        return detect_data_type(self.project.meta_at(self.project.position)) == "dualband"
+
+    def _sync_auto_menu(self) -> None:
+        """On every opening, not once: the image may have changed since."""
+        ok = self._is_dualband()
+        for act in self._auto_menu.actions():
+            if act.data() in DUALBAND_ONLY:
+                act.setEnabled(ok)
+                act.setToolTip("" if ok else "For dual-band (LP filter) data")
 
     def _has_crop(self) -> bool:
         """True when a Crop sits in the leading geometry run — i.e. the user has
@@ -2069,11 +2091,11 @@ class MainWindow(QMainWindow):
                 break   # a non-geometry step precedes the crop -> it wouldn't be preserved
         return False
 
-    def _auto_enhance(self) -> None:
+    def _auto_enhance(self, preset: str = "natural") -> None:
         if self.project is None:
             # The image opens in the background, so carry on from its arrival:
             # a fresh image has no crop, and that is what Auto Enhance says next.
-            self._after_open = self._auto_enhance
+            self._after_open = lambda: self._auto_enhance(preset)
             try:
                 self._choose_fits()
             finally:
@@ -2085,6 +2107,11 @@ class MainWindow(QMainWindow):
             self._show_warning("Crop your image first — Auto Enhance works from your cropped frame.")
             return
         if self._busy:
+            return
+        if preset in DUALBAND_ONLY and not self._is_dualband():
+            # Before the discard below: the menu greys this out, so reaching it
+            # means the image changed under an open menu.
+            self._show_warning(f"{PRESET_NAMES[preset]} is for dual-band (LP filter) data.")
             return
         entries = self.project.entries()
         kept = self._leading_kept(entries, set(GEOMETRY_NAMES))   # keep the crop (+ any rotate/flip)
@@ -2099,7 +2126,12 @@ class MainWindow(QMainWindow):
                 return
         self.project.jump_back(kept)   # keep the user's crop/geometry, drop the processing
         base = self.project.current()
-        plan = build_auto_plan(base, self.settings, include_crop=False)   # respect the user's crop
+        plan = build_auto_plan(base, self.settings, include_crop=False,   # respect the user's crop
+                               preset=preset)
+        # Now, with the plan: settings can change during a minutes-long run,
+        # and the summary must describe what was built, not what is set up later.
+        left_out = stages_left_out(self.settings)
+        shown = self._auto_preset_name = PRESET_NAMES[preset]
         self._clear_warning()
 
         def work():
@@ -2109,32 +2141,48 @@ class MainWindow(QMainWindow):
                 on_progress=lambda i, n, name: self._auto_signals.progress.emit(i, n, name),
             )
 
-        def on_result(results) -> None:
-            for name, option, img in results:
+        def on_result(run) -> None:
+            results = run.results
+            stage_of = {v: k for k, v in STEP_NAME.items()}
+            for (name, option, img), engine in zip(results, run.engines):
                 self.project.record_precomputed(name, option, img)
-                # Its stages log no step line of their own, so the next line
-                # (an Export, a Reset) would otherwise be taken as theirs.
-                token = self.project.state_token(self.project.position)
-                self._step_lines[token] = _plain_step_line(name, option) + " \u2014 Auto Enhance"
+                label = str(self._step_log_label(stage_of.get(name, ""), option, engine) or "")
+                # Its own line per stage, naming the preset: the next line (an
+                # Export, a Reset) would otherwise be taken as this stage's.
+                self.log_panel.append_entry(
+                    format_log_entry(name, label, None) + f" \u2014 Auto Enhance ({shown})")
+                # And to the file, as _log_step does for a manual apply.
+                sessionlog.write(f"step  {name}" + (f" ({label})" if label else "")
+                                 + f" \u2014 Auto Enhance ({shown})")
+            for (name, _reason), detail in zip(run.failures, run.failure_details):
+                sessionlog.write(f"ERROR Auto Enhance ({shown}): {name} failed\n{detail}")
             if results:
                 self._mark_dirty()
             self._rebuild_panel()
             self._refresh()
-            msg = f"Auto-enhanced — {len(results)} steps"
-            if not graxpert_valid(self.settings):
-                msg += ". Install GraXpert (free) for better background & noise."
+            msg = f"Auto-enhanced ({shown}) \u2014 {len(results)} steps."
+            left = [STEP_NAME[s] for s in left_out]
+            if left:
+                tools = {"Background": "GraXpert", "Deconvolution": "RC-Astro"}
+                were = "was" if len(left) == 1 else "were"
+                isnt = "isn't" if len(left) == 1 else "aren't"
+                msg += (f" {_and_join(left)} {were} left out: "
+                        f"{_and_join([tools[n] for n in left])} {isnt} set up.")
             if preferred_splitter(self.settings) is None:
                 msg += " StarNet2 (free) or StarXTerminator gives cleaner stars."
-            # Auto Enhance asks for photometric colour whenever ASTAP is set up,
-            # so on dual-band data it steps aside on most runs; the Color step's
-            # own message never reaches this summary, so carry that one here.
-            if any(name == STEP_NAME["color"] and isinstance(opt, dict)
-                   and opt.get("stepped_aside") for name, opt, _img in results):
-                from ..steps.color import DUALBAND_MESSAGE
-                msg += " " + DUALBAND_MESSAGE
+            # Color's own message (a sky-balance fallback, or its dual-band
+            # step-aside) never reaches this summary otherwise.
+            for note in dict.fromkeys(run.notes):
+                msg += " " + note
             self._show_output(msg)
+            if run.failures:
+                planned = len(results) + len(run.failures)
+                failed = _and_join([n for n, _r in run.failures])
+                reasons = "; ".join(r for _n, r in run.failures)
+                self._show_warning(f"Auto Enhance ({shown}): {len(results)} of {planned} "
+                                   f"steps \u2014 {failed} failed: {reasons}")
 
-        self._run_busy(work, on_result, "Auto-enhancing…", "Auto Enhance failed")
+        self._run_busy(work, on_result, f"Auto-enhancing ({shown})\u2026", "Auto Enhance failed")
 
     def _solve_current(self, img):
         """Blocking solve of a snapshotted display image; returns (SolveResult, objects)."""
@@ -2664,6 +2712,18 @@ class MainWindow(QMainWindow):
         self._auto_enhance_act = tb.addAction(load_icon("auto-enhance", tint["auto-enhance"]),
                                               "Auto Enhance", self._auto_enhance)
         self._auto_enhance_act.setEnabled(False)   # gated on a crop existing (see _refresh)
+        # The click stays Natural; the arrow picks a preset. Nothing is
+        # remembered: a remembered pick would make the same click do
+        # different things on different days.
+        self._auto_menu = QMenu(self)
+        self._auto_menu.setToolTipsVisible(True)    # Gold and blue says why it is grey
+        for key, shown in PRESET_NAMES.items():
+            act = self._auto_menu.addAction(shown, lambda _c=False, k=key: self._auto_enhance(k))
+            act.setData(key)
+        self._auto_menu.aboutToShow.connect(self._sync_auto_menu)
+        self._auto_enhance_act.setMenu(self._auto_menu)
+        tb.widgetForAction(self._auto_enhance_act).setPopupMode(
+            QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         tb.addSeparator()
         # --- make an image ---
         self._stack_act = stack_act = tb.addAction(
@@ -3938,6 +3998,10 @@ class MainWindow(QMainWindow):
         for label, nr_engine in (nr_engines or {}).items():
             if engine == nr_engine:
                 return label
+        # "free" (recorded by Auto Enhance) is the built-in denoise; only the
+        # no-external-tool box names that as an entry.
+        if engine == "free":
+            return DEFAULT_BUILTIN if DEFAULT_BUILTIN in choices else None
         if engine == self.settings.denoise_engine:
             for default in (DEFAULT_ENGINE, DEFAULT_BUILTIN):
                 if default in choices:
@@ -4873,6 +4937,17 @@ class MainWindow(QMainWindow):
         pipeline looks like.
         """
         name = STEP_NAME[stage_id]
+        label = self._step_log_label(stage_id, option, getattr(step, "last_engine", None))
+        self.log_panel.append_entry(format_log_entry(name, label, rms_delta(base, result)))
+        # And to the file. The panel is wiped when a project closes and gone
+        # when the app exits — which is exactly when somebody sits down to
+        # write a support ticket.
+        sessionlog.write(f"step  {name}" + (f" ({label})" if label else ""))
+
+    @staticmethod
+    def _step_log_label(stage_id: str, option, engine_tag) -> str:
+        """The bracketed part of a step's log line; shared with Auto Enhance so
+        its lines use the manual step's words for the same option and engine."""
         if stage_id == "levels" and option == LEVELS_AUTO:
             # The one Levels option that IS user-facing: it says the black point
             # will be re-derived per image, which a bare "Levels" cannot.
@@ -4905,18 +4980,16 @@ class MainWindow(QMainWindow):
             label = ""
         else:
             label = option
-        engine = render_engine(getattr(step, "last_engine", None) or "")
+        engine = render_engine(engine_tag or "")
         # Not appended when the label already carries it: Saturation's
         # _sat_log_option prints the tag itself, and only when the nebula boost
         # actually split — at neb 0.00 nothing separated and naming an engine
         # would report work the step did not do.
         if engine and f"({engine})" not in label:
-            label = f"{label} ({engine})" if label else f"({engine})"
-        self.log_panel.append_entry(format_log_entry(name, label, rms_delta(base, result)))
-        # And to the file. The panel is wiped when a project closes and gone
-        # when the app exits — which is exactly when somebody sits down to
-        # write a support ticket.
-        sessionlog.write(f"step  {name}" + (f" ({label})" if label else ""))
+            # Bare when alone: format_log_entry brackets the label itself, and
+            # "Narrowband ((built-in))" was the result.
+            label = f"{label} ({engine})" if label else engine
+        return label
 
     def _run_busy(self, work, on_result, label: str, err_prefix: str, *,
                   on_error=None, on_dropped=None, cancellable: bool = True) -> None:

@@ -40,10 +40,13 @@ _NR_LEVELS = {"light": 0.5, "medium": 0.75, "strong": 1.0}
 
 _TV_LEVELS = {"light": 0.4, "medium": 0.7, "strong": 0.9}      # free TV fallback
 
+FREE = "free"   # engine option: the built-in denoise, chosen rather than fallen back to
+
 
 def parse_noise_option(option) -> tuple[str | None, str]:
     """Return (engine, level). option is {"engine","level"} (engine in
-    {"rcastro","graxpert"}) or a legacy bare level string (engine None)."""
+    {"rcastro","graxpert","free","nr:<id>"}) or a legacy bare level string
+    (engine None)."""
     if isinstance(option, dict):
         lvl = option.get("level", "medium")
         return option.get("engine"), (lvl if lvl in _TV_LEVELS else "medium")
@@ -62,7 +65,11 @@ def _nr_id(engine) -> str | None:
 class NoiseSharpenStep(Step):
     """Post-stretch denoise. Engine = chosen (RC-Astro NoiseXTerminator or
     GraXpert AI); falls back to the other installed engine, then to free TV.
-    A Nocturne NR model ("nr:<id>") is never substituted: it runs or fails."""
+    A Nocturne NR model ("nr:<id>") is never substituted: it runs or fails.
+    "free" is the built-in denoise, also never substituted: Auto Enhance asks
+    for it on a GraXpert-only machine, where the fallback chain would run a
+    GraXpert denoise of ~10 minutes (668 s of a 746 s run on a 20 MP master,
+    2026-10-11) — and a recipe replays it as recorded."""
 
     name = "Noise Reduction"
 
@@ -92,6 +99,8 @@ class NoiseSharpenStep(Step):
         engine, _level = parse_noise_option(option)
         if _nr_id(engine) is not None:
             return "nr"
+        if engine == FREE:
+            return "free"
         order = ["graxpert", "rcastro"] if engine == "graxpert" else ["rcastro", "graxpert"]
         for e in order:
             if e == "rcastro" and has_rcastro:
@@ -113,6 +122,9 @@ class NoiseSharpenStep(Step):
             result = nr_models.denoise(img, _NR_LEVELS[level], model)
             self.last_engine = nr_models.LOG_PREFIX + model_id
             return result
+        if engine == FREE:
+            self.last_engine = "free"
+            return reduce_noise(img, _TV_LEVELS[level])
         order = ["graxpert", "rcastro"] if engine == "graxpert" else ["rcastro", "graxpert"]
         # The option is a PREFERENCE and the log used to print it: with
         # GraXpert installed and RC-Astro absent it said "rcastro" while

@@ -98,7 +98,7 @@ def test_auto_enhance_on_lp_data_steps_aside_without_failing(monkeypatch):
                              gaia_query=lambda *a, **k: [GaiaStar(100.0, 0.0, 0.8, 10.0)])
         return orig(stage_id, settings, **kw)
     monkeypatch.setattr("nocturne.core.auto_enhance.make_step", make)
-    results = run_auto_plan(img, plan, Settings())
+    results = run_auto_plan(img, plan, Settings()).results
     assert len(results) == 1, "the colour stage must still land"
     name, ser, _ = results[0]
     assert ser["method"] == "photometric" and ser.get("fell_back") is True

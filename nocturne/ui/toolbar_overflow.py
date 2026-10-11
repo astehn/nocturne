@@ -79,6 +79,8 @@ class ToolbarOverflow(QObject):
         proxy.setText(act.text())
         proxy.setIcon(act.icon())
         proxy.setToolTip(act.toolTip())
+        if proxy.menu() is not act.menu():
+            proxy.setMenu(act.menu())    # a tool's own menu (Auto Enhance's presets) comes along
 
     @property
     def all_actions(self) -> list[QAction]:
@@ -137,6 +139,12 @@ class ToolbarOverflow(QObject):
             return max(0, w.sizeHint().width())
         p = self._probe
         p.setToolButtonStyle(style)
+        # A tool with a menu carries an arrow (Auto Enhance's presets), ~16 px
+        # the plain probe would not count.
+        menu = act.menu() if act is not self._more_act else None
+        p.setMenu(menu)
+        p.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup if menu is not None
+                       else QToolButton.ToolButtonPopupMode.DelayedPopup)
         p.setIconSize(self._tb.iconSize())
         p.setText(src_text)
         p.setIcon(src_icon)

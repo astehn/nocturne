@@ -91,7 +91,8 @@ def test_auto_enhance_records_the_fallback_too():
     must ask the step what ran as well. Default Settings: no ASTAP."""
     from nocturne.core.auto_enhance import run_auto_plan
     from nocturne.settings import Settings
-    out = run_auto_plan(_img(), [("color", ColorSettings(method="photometric"))], Settings())
+    out = run_auto_plan(_img(), [("color", ColorSettings(method="photometric"))],
+                        Settings()).results
     (name, recorded, _img_after), = out
     assert name == "Color"
     assert recorded["method"] == "photometric" and recorded.get("fell_back") is True

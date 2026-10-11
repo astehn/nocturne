@@ -48,10 +48,10 @@ def test_plan_shape_without_graxpert():
     plan = build_auto_plan(img, Settings())
     s = _stages(plan)
     assert s == ["crop", "color", "stretch", "levels", "saturation",
-                 "green_fringe", "noise_sharpen", "local_contrast"]
-    # aggressive/removed steps excluded
+                 "green_fringe", "noise_sharpen", "local_contrast", "star_reduction"]
+    # Natural has no palette; Deconvolution needs RC-Astro (absent here)
     assert "narrowband" not in s
-    assert "deconvolution" not in s and "star_reduction" not in s
+    assert "deconvolution" not in s
     assert "curves" not in s and "recover_core" not in s
 
 
@@ -73,7 +73,7 @@ def test_plan_shape_with_graxpert(tmp_path):
     plan = build_auto_plan(_broadband_stack(), settings)
     s = _stages(plan)
     assert s == ["crop", "background", "color", "stretch", "levels", "saturation",
-                 "green_fringe", "noise_sharpen", "local_contrast"]
+                 "green_fringe", "noise_sharpen", "local_contrast", "star_reduction"]
 
 
 def test_plan_uses_photometric_color_when_astap_available(tmp_path):
@@ -137,20 +137,22 @@ def test_denoise_engine_prefers_rcastro_over_graxpert(tmp_path):
     assert noise_option["engine"] == "rcastro"
 
 
-def test_denoise_engine_falls_back_to_graxpert(tmp_path):
+def test_denoise_engine_never_falls_back_to_graxpert(tmp_path):
+    # A GraXpert denoise took 668 s of a 746 s run (study 2026-10-11): the
+    # built-in denoise, explicitly, instead.
     graxpert = tmp_path / "graxpert"
     graxpert.write_text("#!/bin/sh\n")
     graxpert.chmod(0o755)
     settings = Settings(graxpert_path=str(graxpert))
     plan = build_auto_plan(_broadband_stack(), settings)
     noise_option = dict(plan)["noise_sharpen"]
-    assert noise_option["engine"] == "graxpert"
+    assert noise_option["engine"] == "free"
 
 
-def test_denoise_engine_none_when_nothing_installed():
+def test_denoise_engine_free_when_nothing_installed():
     plan = build_auto_plan(_broadband_stack(), Settings())
     noise_option = dict(plan)["noise_sharpen"]
-    assert noise_option["engine"] is None
+    assert noise_option["engine"] == "free"
 
 
 def test_denoise_level_is_always_strong():
@@ -174,7 +176,7 @@ def test_plan_stage_ids_are_a_monotonic_prefix_of_processing_order():
 def test_run_auto_plan_applies_each_step():
     base = _broadband_stack()
     plan = build_auto_plan(base, Settings())
-    out = run_auto_plan(base, plan, Settings())
+    out = run_auto_plan(base, plan, Settings()).results
     assert len(out) == len(plan)
     names = [n for n, _o, _img in out]
     assert "Stretch" in names or "Color" in names           # real steps ran
@@ -189,8 +191,7 @@ def test_run_auto_plan_applies_each_step():
 
     recorded_ids = [sid for sid, _ in plan]
     assert "narrowband" not in recorded_ids
-    assert "deconvolution" not in recorded_ids
-    assert "star_reduction" not in recorded_ids
+    assert "deconvolution" not in recorded_ids     # no RC-Astro configured
 
 
 def test_run_auto_plan_records_flat_gamma_levels():
@@ -203,7 +204,7 @@ def test_run_auto_plan_records_flat_gamma_levels():
     plan = build_auto_plan(base, Settings())
     assert dict(plan)["levels"] == AUTO_LEVELS   # build-time placeholder is still identity
 
-    out = run_auto_plan(base, plan, Settings())
+    out = run_auto_plan(base, plan, Settings()).results
     levels_entries = [(name, opt) for name, opt, _img in out if name == "Levels"]
     assert len(levels_entries) == 1
     _name, recorded = levels_entries[0]
@@ -255,13 +256,15 @@ def test_run_auto_plan_skips_failing_step_and_continues():
 
     auto_enhance_mod.make_step = _patched
     try:
-        out = run_auto_plan(base, plan, Settings())
+        run = run_auto_plan(base, plan, Settings())
     finally:
         auto_enhance_mod.make_step = real_make_step
+    out = run.results
 
     names = [n for n, _o, _img in out]
     assert "Stretch" not in names              # failing step skipped, not recorded
     assert len(out) == len(plan) - 1           # rest of the chain still ran
+    assert run.failures == [("Boom", "external tool exploded")]   # and it is reported
 
 
 def test_run_auto_plan_stops_on_cancel():
