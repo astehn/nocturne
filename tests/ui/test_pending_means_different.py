@@ -25,8 +25,12 @@ def _stretched(qtbot, tmp_path):
 
 
 def test_nudging_a_slider_back_to_the_committed_value_clears_pending(qtbot, tmp_path):
+    # Commit what the real Apply commits (a versioned option). A bare 0.5 now
+    # means a stretch from BEFORE the sky-measured stretch, and touching an old
+    # commit is deliberately pending: Apply would upgrade it (stretch-skyfix I-1).
+    from nocturne.steps.stretch_step import new_stretch_option
     win = _stretched(qtbot, tmp_path)
-    win.apply_current(0.5)
+    win.apply_current(new_stretch_option(0.5))
     assert not win._has_pending()
 
     win._on_stretch_change(0.8)

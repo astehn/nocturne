@@ -4083,6 +4083,14 @@ class MainWindow(QMainWindow):
         committed = self._committed_option(step_id)
         if committed is None:
             return False        # never applied here: nothing to match
+        if step_id == "stretch" and isinstance(value, (int, float)):
+            # The slot holds the slider's amount; Apply commits the whole option
+            # ({"amount", "linked", "version"}). Compare what Apply WOULD commit,
+            # as Curves does above — a bare amount never equals a dict, so a
+            # slider put back on the applied value stayed pending.
+            from ..steps.stretch_step import new_stretch_option
+            value = new_stretch_option(
+                float(value), bool(getattr(self._panel, "stretch_linked", True)))
         return _same_option(committed, value)
 
     def _stretch_is_older_version(self) -> bool:
