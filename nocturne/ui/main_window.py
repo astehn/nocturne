@@ -2859,10 +2859,13 @@ class MainWindow(QMainWindow):
         # indistinguishable from a step whose amount nobody knows. Ask the step
         # what "" means rather than writing the number here: that is the
         # duplication which drifted DEFAULT_TARGET_BG apart in the first place.
-        from ..steps.stretch_step import parse_stretch_option
+        from ..steps.stretch_step import new_stretch_option, parse_stretch_option
         amount = parse_stretch_option("")      # 0.30, the derived default
-        result = self._step_for("stretch").apply(base, "")
-        self.project.run_step(_PrecomputedStep("Stretch", result), amount)
+        # As a versioned dict, not the bare amount: a bare number reads as
+        # stretch version 1 when the project is reopened and Stretch replays.
+        option = new_stretch_option(amount)
+        result = self._step_for("stretch").apply(base, option)
+        self.project.run_step(_PrecomputedStep("Stretch", result), option)
         self._mark_dirty()
         self.log_panel.append_entry(
             format_log_entry("Stretch", "auto", rms_delta(base, result)))

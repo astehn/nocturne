@@ -66,8 +66,14 @@ def test_one_nan_pixel_no_longer_blanks_a_displayed_channel():
     pixel in a LINEAR image (the autostretched display path) turned an entire
     channel black on the canvas. 400 of 400 pixels, verified before the fix.
 
-    Asserts the good pixels are UNCHANGED against the clean render, not merely
-    'not black' — a fix that dimmed the channel would pass the weaker check."""
+    Asserts the good pixels are UNCHANGED against a reference render, not
+    merely 'not black' — a fix that dimmed the channel would pass the weaker
+    check. The reference is the image with that pixel marked as no data (0 in
+    every channel), which is what stretch version 2 (2026-10-11) makes a NaN
+    pixel: like a stacking border, it takes no part in the sky measurement.
+    Against the CLEAN render the good pixels moved by up to 2 levels, because
+    this 20x20 uniform-noise fixture has no sky and its darkest-30% mask is
+    reshuffled by removing any one pixel; on a real frame one pixel is nothing."""
     from nocturne.core.image import AstroImage
     from nocturne.ui.preview import to_rgb8
     rng = np.random.default_rng(7)
@@ -75,7 +81,9 @@ def test_one_nan_pixel_no_longer_blanks_a_displayed_channel():
     dirty = clean.copy()
     dirty[5, 5, 1] = np.nan
 
-    ref = to_rgb8(AstroImage(clean, is_linear=True))
+    no_data = clean.copy()
+    no_data[5, 5] = 0.0
+    ref = to_rgb8(AstroImage(no_data, is_linear=True))
     out = to_rgb8(AstroImage(dirty, is_linear=True))
     good = np.ones((20, 20), bool)
     good[5, 5] = False

@@ -77,7 +77,10 @@ _SCREEN_USE = 0.9       # leave the dock and menu bar visible
 # neutral_stretch favours linked on colour drift; sky neutrality measured over
 # four of Andreas's masters favours unlinked; they measure different quantities
 # and the first has never been reproduced. A correctness label would ship a
-# claim we cannot support.
+# claim we cannot support. Both measurements were of stretch VERSION 1. Version
+# 2 (2026-10-11) levels the linked sky on the sky itself, so the sky-neutrality
+# half no longer favours unlinked on his M 45 and IC 1396A (49/49/49, 48/48/48);
+# the colour-drift table has not been re-run. Still no label either way.
 COLOUR_PICKS: list[tuple[str, bool, str]] = [
     ("Linked", True, "keeps the sky's own colour"),
     ("Unlinked", False, "evens the channels out"),

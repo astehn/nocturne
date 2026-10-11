@@ -44,7 +44,10 @@ def tint_gains(tint: float, temperature: float) -> tuple:
 
     * An ADDITIVE move here is erased. `neutral_stretch` re-levels the
       background additively afterwards, so a +0.002 green offset produced a
-      colour shift of exactly 0.00000. A multiplicative one survives.
+      colour shift of exactly 0.00000. A multiplicative one survives. Stretch
+      version 2 (2026-10-11) levels on the sky's median rather than the whole
+      frame's, which a uniform offset moves just the same: still erased (at
+      most 3e-5, float rounding).
     * A gain preserves the RATIOS between channels, so the colour differences
       between stars survive. A clamp (which is what mirroring SCNR would give)
       removes the difference between an orange star and a blue one at the same

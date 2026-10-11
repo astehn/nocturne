@@ -217,12 +217,14 @@ def test_stretch_panel_emits_amount_AND_mechanism(qtbot):
     qtbot.addWidget(w)
     w.stretch_slider.setValue(70)
     w.apply_btn.click()
-    assert got == [{"amount": 0.70, "linked": True}]
+    # ...and its stretch VERSION since 2026-10-11, so it replays as it was made
+    from nocturne.core.autostretch import STRETCH_VERSION
+    assert got == [{"amount": 0.70, "linked": True, "version": STRETCH_VERSION}]
 
     got.clear()
     w.stretch_linked = False
     w.apply_btn.click()
-    assert got == [{"amount": 0.70, "linked": False}]
+    assert got == [{"amount": 0.70, "linked": False, "version": STRETCH_VERSION}]
 
 
 def test_only_the_stretch_panel_emits_a_dict(qtbot):

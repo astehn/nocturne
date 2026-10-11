@@ -89,7 +89,9 @@ def build_auto_plan(img, settings: Settings, include_crop: bool = True) -> list[
 
     method = "photometric" if astap_valid(settings) else "sky"
     plan.append(("color", ColorSettings(method=method)))
-    plan.append(("stretch", AUTO_STRETCH_AMOUNT))
+    # With its version, or the recorded step would replay as version 1.
+    from ..steps.stretch_step import new_stretch_option
+    plan.append(("stretch", new_stretch_option(AUTO_STRETCH_AMOUNT)))
     plan.append(("levels", AUTO_LEVELS))
     plan.append(("saturation", (AUTO_SATURATION_AMOUNT, AUTO_SATURATION_NEBULA)))
     plan.append(("green_fringe", AUTO_GREEN_FRINGE))

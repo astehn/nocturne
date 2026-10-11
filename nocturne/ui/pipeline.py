@@ -22,7 +22,10 @@ _CORE = [
     Stage("stretch", "Stretch", "stretch"),
     # Was a button on the Color panel, five steps before its own cause: the
     # green cast this fixes is CREATED by the stretch (Bayer gives green
-    # twice the photosites, so neutral_stretch amplifies it ~1.9x). Moved
+    # twice the photosites, so the per-channel stretch neutral_stretch
+    # replaced amplified it ~1.9x; neutral_stretch's single curve does not,
+    # and stretch version 2's sky measurement is tested not to let green's
+    # lower noise tint the sky either — tests/core/test_stretch_versions.py). Moved
     # here, right after Stretch, so the panel's own advice ("reach for this
     # only if a cast survives the stretch") is something the user can
     # actually judge. See docs/superpowers/specs for the move's rationale.

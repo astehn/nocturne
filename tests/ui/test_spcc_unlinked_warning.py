@@ -2,6 +2,7 @@
 0.0004 of a level left). The picker says so, but only while it is open; Apply
 Stretch committed without a word (found by Andreas, 2026-09-29).
 """
+from nocturne.steps.stretch_step import new_stretch_option  # records the version
 from nocturne.core.color import ColorSettings
 
 from tests.ui.test_main_window import _make_fits, _window
@@ -65,7 +66,7 @@ def test_committing_unlinked_after_spcc_is_logged(qtbot, tmp_path, monkeypatch):
     win._apply_picked_stretch({"amount": 0.24, "linked": False})
     before = win.activity.text()
     win._panel.apply_btn.click(); qtbot.wait(50)
-    assert win.project.entries()[-1][1] == {"amount": 0.24, "linked": False}, "fixture"
+    assert win.project.entries()[-1][1] == new_stretch_option(0.24, False), "fixture"
     added = win.activity.text()[len(before):].lower()
     assert "photometric" in added and "discarded" in added
 
@@ -118,7 +119,7 @@ def test_recommitting_unlinked_does_not_log_the_discard_again(qtbot, tmp_path, m
     before = win.activity.text()
     win._panel.stretch_slider.setValue(30)
     win._panel.apply_btn.click(); qtbot.wait(50)
-    assert win.project.entries()[-1][1] == {"amount": 0.30, "linked": False}, "fixture"
+    assert win.project.entries()[-1][1] == new_stretch_option(0.30, False), "fixture"
     assert "discarded" not in win.activity.text()[len(before):].lower()
 
 

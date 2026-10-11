@@ -12,6 +12,7 @@ from .option_buttons import OptionButtons
 from .shape_picker import SegmentRow, ShapePicker, section_label
 from ..core.autostretch import _TARGET_BG
 from ..steps.stretch_step import _DEFAULT as _STEP_DEFAULT
+from ..steps.stretch_step import new_stretch_option
 from ..core.color import ColorSettings
 from ..core.stretch import _TARGET_MAX as _STRETCH_MAX, _TARGET_MIN as _STRETCH_MIN
 from ..core.crop import GUIDE_KINDS, GUIDES
@@ -638,7 +639,9 @@ def build_panel(
         # Multiplicative gains on linear data, applied here rather than after the
         # stretch, for a measured reason: an ADDITIVE move at this point is erased
         # by neutral_stretch's background re-levelling (shift 0.00000), while a
-        # gain survives. It also leaves the background alone (also 0.00000), which
+        # gain survives. (Still so in stretch version 2, which levels on the sky
+        # median: a uniform +0.002 green moved the result by at most 3e-5,
+        # rounding, 2026-10-11.) It also leaves the background alone (also 0.00000), which
         # is what we want -- the magenta is in the nebulosity, and the background
         # is already faintly GREEN from chroma noise.
         # De-green Sky moved out to its own stage, which freed the room this
@@ -729,8 +732,10 @@ def build_panel(
         apply_btn.setEnabled(apply_enabled)
         # A DICT, not a bare float: the stretch now carries its MECHANISM
         # as well as its amount, and both have to reach the commit.
-        w.commit_option = lambda: {"amount": slider.value() / 100.0,
-                                   "linked": bool(w.stretch_linked)}
+        # new_stretch_option records the stretch VERSION too, so the step
+        # replays as it was made (autostretch.STRETCH_VERSION).
+        w.commit_option = lambda: new_stretch_option(slider.value() / 100.0,
+                                                     bool(w.stretch_linked))
         if on_apply is not None:
             apply_btn.clicked.connect(lambda: on_apply(w.commit_option()))
         # Optional, and BELOW the slider: the slider keeps working untouched
