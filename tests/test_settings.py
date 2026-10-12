@@ -1,3 +1,4 @@
+from tests.fake_tool import fake_tool
 from nocturne.settings import (
     Settings, load_settings, save_settings, graxpert_valid,
 )
@@ -32,9 +33,7 @@ def test_a_removed_field_left_over_in_an_old_file_is_ignored(tmp_path):
 
 
 def test_graxpert_valid(tmp_path):
-    f = tmp_path / "graxpert"
-    f.write_text("#!/bin/sh\n", encoding="utf-8")
-    f.chmod(0o755)                 # executable: this test passed WITHOUT it, which was the bug
+    f = fake_tool(tmp_path / "graxpert")   # executable: this test passed WITHOUT it, which was the bug
     assert graxpert_valid(Settings(graxpert_path=str(f))) is True
     assert graxpert_valid(Settings(graxpert_path="/nope")) is False
 
@@ -95,7 +94,7 @@ def test_astap_valid_checks_it_is_runnable(tmp_path):
     # a FILE, which is not the question anyone was asking.
     from nocturne.settings import Settings, astap_valid
     assert astap_valid(Settings(astap_path="")) is False
-    real = tmp_path / "astap"; real.write_text("x", encoding="utf-8"); real.chmod(0o755)
+    real = fake_tool(tmp_path / "astap", "x")
     assert astap_valid(Settings(astap_path=str(real))) is True
     assert astap_valid(Settings(astap_path=str(tmp_path / "nope"))) is False
 
@@ -352,10 +351,7 @@ def test_rescan_leaves_a_working_custom_path_alone(tmp_path):
     claiming to help.
     """
     from nocturne.settings import Settings, detect_tool_paths
-    mine = tmp_path / "custom" / "graxpert"
-    mine.parent.mkdir()
-    mine.write_text("#!/bin/sh\n", encoding="utf-8")
-    mine.chmod(0o755)
+    mine = fake_tool(tmp_path / "custom" / "graxpert")
     found = detect_tool_paths(Settings(graxpert_path=str(mine)),
                               candidates=_fake_tools(tmp_path), replace_invalid=True)
     assert "graxpert_path" not in found
@@ -378,9 +374,7 @@ def test_a_data_file_is_not_a_tool(tmp_path):
 
 def test_an_executable_is_a_tool(tmp_path):
     from nocturne.settings import Settings, graxpert_valid
-    exe = tmp_path / "graxpert"
-    exe.write_text("#!/bin/sh\n", encoding="utf-8")
-    exe.chmod(0o755)
+    exe = fake_tool(tmp_path / "graxpert")
     assert graxpert_valid(Settings(graxpert_path=str(exe)))
 
 
@@ -489,10 +483,7 @@ def test_linux_finds_a_graxpert_unpacked_where_its_zip_puts_it(tmp_path, monkeyp
     unpacked his to ~/Applications/GraXpert-linux, which the app now finds with
     nothing configured."""
     from nocturne.settings import Settings, detect_tool_paths
-    binary = tmp_path / "Applications" / "GraXpert-linux" / "GraXpert"
-    binary.parent.mkdir(parents=True)
-    binary.write_text("#!/bin/sh\n", encoding="utf-8")
-    binary.chmod(0o755)
+    binary = fake_tool(tmp_path / "Applications" / "GraXpert-linux" / "GraXpert")
     found = detect_tool_paths(Settings(), {"graxpert_path": [str(binary)]})
     assert found == {"graxpert_path": str(binary)}
 
@@ -514,14 +505,8 @@ def test_a_tool_merely_on_PATH_is_found_but_only_as_a_last_resort(tmp_path, monk
     explicit locations, so a real install still beats a wrapper of the same name.
     """
     import nocturne.settings as st
-    real = tmp_path / "opt" / "astap" / "astap"
-    real.parent.mkdir(parents=True)
-    real.write_text("#!/bin/sh\n", encoding="utf-8")
-    real.chmod(0o755)
-    on_path = tmp_path / "bin" / "astap"
-    on_path.parent.mkdir(parents=True)
-    on_path.write_text("#!/bin/sh\n", encoding="utf-8")
-    on_path.chmod(0o755)
+    real = fake_tool(tmp_path / "opt" / "astap" / "astap")
+    on_path = fake_tool(tmp_path / "bin" / "astap")
     monkeypatch.setattr(st.shutil, "which", lambda name: str(on_path) if name == "astap" else None)
 
     # explicit location present -> it wins, because "which:" is listed after it
@@ -539,9 +524,7 @@ def test_path_lookup_never_overrides_a_configured_tool(tmp_path, monkeypatch):
     """The whole safety model of detect_tool_paths: someone whose tool lives
     somewhere unusual has already paid the cost of finding it."""
     import nocturne.settings as st
-    stray = tmp_path / "astap"
-    stray.write_text("#!/bin/sh\n", encoding="utf-8")
-    stray.chmod(0o755)
+    stray = fake_tool(tmp_path / "astap")
     monkeypatch.setattr(st.shutil, "which", lambda name: str(stray))
     configured = st.Settings(astap_path="/somewhere/of/my/own/astap")
     assert st.detect_tool_paths(configured, {"astap_path": ["which:astap"]}) == {}

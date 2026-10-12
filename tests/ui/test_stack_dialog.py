@@ -1,4 +1,5 @@
 import os
+from tests.fake_tool import fake_tool
 import pytest
 
 pytest.importorskip("PySide6")
@@ -671,9 +672,7 @@ def test_mosaic_option_is_offered_when_the_subs_span_several_pointings(qtbot, tm
     paths += [_sub_with_pointing(tmp_path, f"b{i}.fit", 10.0, 43.0) for i in range(3)]
 
     settings = Settings()
-    settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("#!/bin/sh\n", encoding="utf-8")
-    (tmp_path / "astap").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
+    settings.astap_path = str(fake_tool(tmp_path / "astap"))   # a real tool is EXECUTABLE, not merely present
 
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
@@ -723,9 +722,7 @@ def test_stacking_with_mosaic_checked_runs_the_mosaic_path(qtbot, tmp_path):
     paths += [_sub_with_pointing(tmp_path, f"b{i}.fit", 10.0, 43.0) for i in range(3)]
 
     settings = Settings()
-    settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("#!/bin/sh\n", encoding="utf-8")
-    (tmp_path / "astap").chmod(0o755)
+    settings.astap_path = str(fake_tool(tmp_path / "astap"))
 
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
@@ -766,9 +763,7 @@ def test_a_mosaic_is_named_a_mosaic(qtbot, tmp_path):
     """M31_302x10s_50min.fits does not say the one thing that makes this file
     different from every other master in the folder."""
     settings = Settings()
-    settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("#!/bin/sh\n", encoding="utf-8")
-    (tmp_path / "astap").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
+    settings.astap_path = str(fake_tool(tmp_path / "astap"))   # a real tool is EXECUTABLE, not merely present
 
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
@@ -790,9 +785,7 @@ def test_a_mosaic_is_named_a_mosaic(qtbot, tmp_path):
 
 def test_turning_the_mosaic_option_off_takes_the_word_back_out(qtbot, tmp_path):
     settings = Settings()
-    settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("#!/bin/sh\n", encoding="utf-8")
-    (tmp_path / "astap").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
+    settings.astap_path = str(fake_tool(tmp_path / "astap"))   # a real tool is EXECUTABLE, not merely present
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
     dlg.folder_edit.setText(str(tmp_path))
@@ -811,9 +804,7 @@ def test_a_hand_typed_output_name_is_never_overwritten(qtbot, tmp_path):
     """The mosaic rename must respect the existing rule: once the user edits the
     path, the dialog stops touching it."""
     settings = Settings()
-    settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("#!/bin/sh\n", encoding="utf-8")
-    (tmp_path / "astap").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
+    settings.astap_path = str(fake_tool(tmp_path / "astap"))   # a real tool is EXECUTABLE, not merely present
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
     dlg.folder_edit.setText(str(tmp_path))
@@ -2055,9 +2046,7 @@ def test_the_pointing_scan_runs_off_the_gui_thread(qtbot, tmp_path, monkeypatch)
     paths = [_sub_with_pointing(tmp_path, f"a{i}.fit", 10.0, 41.0) for i in range(3)]
     paths += [_sub_with_pointing(tmp_path, f"b{i}.fit", 10.0, 43.0) for i in range(3)]
     settings = Settings()
-    settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("#!/bin/sh\n", encoding="utf-8")
-    (tmp_path / "astap").chmod(0o755)
+    settings.astap_path = str(fake_tool(tmp_path / "astap"))
 
     threads = []
     real = sd.read_pointings

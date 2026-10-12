@@ -5,6 +5,7 @@ real NGC 7635 master 2026-09-18 — the free fallback leaves 40.3% of star flux
 where StarNet2 leaves 20.9%, and the 1:1 crops are not close.
 """
 import numpy as np
+from tests.fake_tool import fake_tool
 import pytest
 
 from nocturne.core.image import AstroImage
@@ -87,8 +88,8 @@ def test_rc_astro_still_wins_when_both_are_installed(tmp_path):
     """The user paid for StarXTerminator and it is still the best. StarNet2 is
     the answer for everyone else, not a replacement for it."""
     from nocturne.tools.rcastro import RCAstro
-    rc = tmp_path / "rc-astro"; rc.write_text("#!/bin/sh\n", encoding="utf-8"); rc.chmod(0o755)
-    sn = tmp_path / "starnet2"; sn.write_text("#!/bin/sh\n", encoding="utf-8"); sn.chmod(0o755)
+    rc = fake_tool(tmp_path / "rc-astro")
+    sn = fake_tool(tmp_path / "starnet2")
     both = Settings(rcastro_path=str(rc), starnet_path=str(sn))
     assert isinstance(_splitter(both), RCAstro)
     assert isinstance(_splitter(Settings(starnet_path=str(sn))), StarNet)

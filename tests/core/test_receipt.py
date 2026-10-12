@@ -4,6 +4,7 @@ The 2026-09-01 feature audit's first P0: "Optional tools are not a problem by
 themselves. The problem is when the output differs materially and the user
 cannot see which engine actually ran."
 """
+from tests.fake_tool import fake_tool
 from nocturne.core.receipt import (BUILT_IN, EngineNote, engine_for, notes_for,
                                    render_lines)
 from nocturne.settings import Settings
@@ -12,8 +13,7 @@ from nocturne.settings import Settings
 def _configured(tmp_path, **tools):
     """Settings whose named tools point at a real executable."""
     exe = tmp_path / "tool"
-    exe.write_text("#!/bin/sh\n", encoding="utf-8")
-    exe.chmod(0o755)
+    exe = fake_tool(exe, "#!/bin/sh\n")
     return Settings(**{k: str(exe) for k in tools})
 
 

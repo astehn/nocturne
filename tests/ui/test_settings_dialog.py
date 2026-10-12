@@ -2,6 +2,7 @@ from PySide6.QtWidgets import QPushButton
 import pytest
 
 pytest.importorskip("PySide6")
+from tests.fake_tool import fake_tool
 from nocturne.settings import Settings  # noqa: E402
 from nocturne.ui.settings_dialog import SettingsDialog  # noqa: E402
 
@@ -246,8 +247,7 @@ def test_an_unanswered_question_shows_as_off_and_saves_as_a_real_answer(qtbot):
 
 def test_a_configured_starnet2_says_so_without_pressing_test(qtbot, tmp_path):
     exe = tmp_path / "starnet2"
-    exe.write_text("#!/bin/sh\n", encoding="utf-8")
-    exe.chmod(0o755)
+    exe = fake_tool(exe, "#!/bin/sh\n")
     dlg = SettingsDialog(Settings(starnet_path=str(exe)))
     qtbot.addWidget(dlg)
     assert "✓" in dlg._starnet_result.text()
@@ -264,8 +264,7 @@ def test_every_tool_path_field_has_a_status_on_open(qtbot, tmp_path):
     """The structural guard. A sixth tool added to the dialog without a status
     row repeats this silently — the field looks configured and says nothing."""
     exe = tmp_path / "t"
-    exe.write_text("#!/bin/sh\n", encoding="utf-8")
-    exe.chmod(0o755)
+    exe = fake_tool(exe, "#!/bin/sh\n")
     dlg = SettingsDialog(Settings(graxpert_path=str(exe), rcastro_path=str(exe),
                                   starnet_path=str(exe), astap_path=str(exe)))
     qtbot.addWidget(dlg)
@@ -282,8 +281,7 @@ def test_typing_a_starnet2_path_updates_its_status_as_you_type(qtbot, tmp_path):
     then frozen — set the path, get no confirmation, which is the exact state
     the fix was supposed to end. Found by an adversarial review, not by me."""
     exe = tmp_path / "starnet2"
-    exe.write_text("#!/bin/sh\n", encoding="utf-8")
-    exe.chmod(0o755)
+    exe = fake_tool(exe, "#!/bin/sh\n")
     dlg = SettingsDialog(Settings())
     qtbot.addWidget(dlg)
     assert "optional" in dlg._starnet_result.text()
@@ -327,8 +325,7 @@ def test_rescan_handles_every_tool_the_detector_can_find(qtbot, tmp_path, monkey
     from nocturne.ui import settings_dialog as sd
 
     exe = tmp_path / "found"
-    exe.write_text("#!/bin/sh\n", encoding="utf-8")
-    exe.chmod(0o755)
+    exe = fake_tool(exe, "#!/bin/sh\n")
     # Every field the detector knows about, all found at once — the case the
     # dialog has to survive.
     monkeypatch.setattr(sd, "detect_tool_paths",

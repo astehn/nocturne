@@ -3,6 +3,7 @@ table of stage lists, the never-GraXpert denoise rule, and failures returned."""
 import numpy as np
 import pytest
 
+from tests.fake_tool import fake_tool
 import nocturne.core.auto_enhance as ae
 from nocturne.core import nr_models
 from nocturne.core.auto_enhance import AutoRun, build_auto_plan, run_auto_plan
@@ -23,8 +24,7 @@ def _img(filt="IRCUT"):
 
 def _exe(tmp_path, name):
     p = tmp_path / name
-    p.write_text("#!/bin/sh\n", encoding="utf-8")
-    p.chmod(0o755)
+    p = fake_tool(p, "#!/bin/sh\n")
     return str(p)
 
 

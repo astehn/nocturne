@@ -6,6 +6,7 @@ pytest.importorskip("PySide6")
 from PySide6.QtGui import QAction  # noqa: E402
 from PySide6.QtWidgets import QMenu, QToolBar, QToolButton, QWidget  # noqa: E402
 
+from tests.fake_tool import fake_tool
 from tests.ui.test_main_window import _crop, _make_fits, _window  # noqa: E402
 
 
@@ -339,8 +340,7 @@ def test_the_left_out_sentence_is_the_plan_that_ran(qtbot, tmp_path, monkeypatch
     """Settings can change while the chain runs (minutes, with external tools);
     the summary describes the plan that was built, not the settings now."""
     exe = tmp_path / "graxpert"
-    exe.write_text("#!/bin/sh\n", encoding="utf-8")
-    exe.chmod(0o755)
+    exe = fake_tool(exe, "#!/bin/sh\n")
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     _crop(win)

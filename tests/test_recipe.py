@@ -1,4 +1,5 @@
 import pytest
+from tests.fake_tool import fake_tool
 from nocturne import __version__
 from nocturne.core.crop import CropParams
 from nocturne.core.color import ColorSettings
@@ -290,8 +291,7 @@ def test_every_saveable_enhancement_can_actually_be_replayed():
 
 def _tool(tmp_path):
     exe = tmp_path / "tool"
-    exe.write_text("#!/bin/sh\n", encoding="utf-8")
-    exe.chmod(0o755)
+    exe = fake_tool(exe, "#!/bin/sh\n")
     return str(exe)
 
 

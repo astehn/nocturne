@@ -8,6 +8,7 @@ substituted — not even when GraXpert is installed and a recipe is replayed.
 import datetime
 
 import numpy as np
+from tests.fake_tool import fake_tool
 import pytest
 
 from nocturne.core.image import AstroImage
@@ -31,10 +32,7 @@ def _img():
 
 
 def _exe(tmp_path, name):
-    p = tmp_path / name
-    p.write_text("#!/bin/sh\n", encoding="utf-8")
-    p.chmod(0o755)
-    return str(p)
+    return str(fake_tool(tmp_path / name))
 
 
 FREE = {"engine": "free", "level": "strong"}

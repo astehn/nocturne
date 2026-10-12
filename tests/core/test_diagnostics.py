@@ -1,3 +1,4 @@
+from tests.fake_tool import fake_tool
 from nocturne.core.diagnostics import summary_block
 from nocturne.settings import Settings
 
@@ -9,8 +10,7 @@ def _probes(_path, argv, **kw):
 
 def test_it_opens_with_what_the_ticket_is_about(tmp_path):
     exe = tmp_path / "t"
-    exe.write_text("#!/bin/sh\n", encoding="utf-8")
-    exe.chmod(0o755)
+    exe = fake_tool(exe, "#!/bin/sh\n")
     text = summary_block("0.39.1", "macOS 15.6 (arm64)", "2560x1440 @2x",
                          Settings(graxpert_path=str(exe), starnet_path=str(exe)),
                          failure="Star separation failed: lzw_decode",
@@ -26,8 +26,7 @@ def test_an_unprobeable_tool_still_appears(tmp_path):
     """Which tools are INSTALLED is itself the diagnostic. Alvaro's whole
     ticket turned on his NOT having RC-Astro."""
     exe = tmp_path / "t"
-    exe.write_text("#!/bin/sh\n", encoding="utf-8")
-    exe.chmod(0o755)
+    exe = fake_tool(exe, "#!/bin/sh\n")
     text = summary_block("0.39.1", "macOS", "x", Settings(astap_path=str(exe)),
                          version_probe=lambda *a, **k: "")
     assert "ASTAP" in text and "version unknown" in text
