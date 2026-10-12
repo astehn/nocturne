@@ -59,13 +59,22 @@ def test_a_missing_certifi_is_survivable(monkeypatch):
 def test_ca_path_is_usable_sees_a_missing_bundle(monkeypatch):
     """The check the packaged app could not do for itself: from source the build
     machine's path exists, so a bundle that only works here looks healthy."""
-    assert ca_path_is_usable()          # this machine has Homebrew's store
-    monkeypatch.setenv("SSL_CERT_FILE", "/nonexistent/cert.pem")
-    monkeypatch.setenv("SSL_CERT_DIR", "/nonexistent/certs")
     import importlib
     import ssl
+
+    import certifi
+    # The precondition is the bundle the app itself points at (configure_ssl),
+    # not this machine's own OpenSSL layout: Homebrew's store exists on the
+    # build Mac, and on Windows Python has no default CA file at all (it reads
+    # the system store), so "the default path exists" was a fact about one
+    # machine.
+    monkeypatch.setenv("SSL_CERT_FILE", certifi.where())
     importlib.reload(ssl)               # verify paths are read at import
     try:
+        assert ca_path_is_usable()
+        monkeypatch.setenv("SSL_CERT_FILE", "/nonexistent/cert.pem")
+        monkeypatch.setenv("SSL_CERT_DIR", "/nonexistent/certs")
+        importlib.reload(ssl)
         assert not ca_path_is_usable()
     finally:
         monkeypatch.undo()

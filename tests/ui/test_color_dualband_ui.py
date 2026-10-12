@@ -1,4 +1,5 @@
 """What the window says when photometric colour steps aside on dual-band data."""
+import sys
 import numpy as np
 import pytest
 
@@ -10,9 +11,14 @@ from nocturne.steps.color import DUALBAND_MESSAGE  # noqa: E402
 from tests.ui.test_main_window import _crop, _make_fits, _window  # noqa: E402
 
 
+# Any real program will do as a stand-in tool path; /bin/echo does not exist
+# on Windows, where is_tool also wants an extension.
+_RUNNABLE = sys.executable
+
+
 def test_auto_enhance_on_lp_data_says_it_stepped_aside(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
-    win.settings.astap_path = "/bin/echo"      # photometric is planned; LP never solves
+    win.settings.astap_path = _RUNNABLE      # photometric is planned; LP never solves
     win.open_fits(_make_fits(tmp_path, filter_card="LP"))
     _crop(win)
     win._auto_enhance()

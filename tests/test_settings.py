@@ -1,3 +1,7 @@
+import sys
+
+import pytest
+
 from tests.fake_tool import fake_tool
 from nocturne.settings import (
     Settings, load_settings, save_settings, graxpert_valid,
@@ -242,8 +246,21 @@ def test_annotation_settings_absent_in_old_file_defaults(tmp_path):
 # this is the other half — the tools install to predictable places, so in the
 # common case nobody should have to configure anything at all.
 
+# The name detection reports GraXpert by: the .app BUNDLE on macOS/Linux-shaped
+# layouts, the installer's .exe on Windows.
+_GX_FOUND = "GraXpert.exe" if sys.platform == "win32" else "GraXpert.app"
+
+
 def _fake_tools(tmp_path):
-    """A macOS-shaped layout: two .app bundles and one bare CLI binary."""
+    """A macOS-shaped layout: two .app bundles and one bare CLI binary. On
+    Windows, where a bundle cannot exist, the installers' .exe layout instead:
+    detection itself is the same code on every OS."""
+    if sys.platform == "win32":
+        gx = fake_tool(tmp_path / "GraXpert" / "GraXpert.exe")
+        astap = fake_tool(tmp_path / "astap" / "astap.exe")
+        rc = fake_tool(tmp_path / "RC-Astro" / "CLI" / "rc-astro.exe")
+        return {"graxpert_path": [str(gx)], "rcastro_path": [str(rc)],
+                "astap_path": [str(astap)]}
     gx = tmp_path / "GraXpert.app" / "Contents" / "MacOS"
     gx.mkdir(parents=True, exist_ok=True)
     (gx / "GraXpert").write_text("#!/bin/sh\n", encoding="utf-8")
@@ -269,7 +286,7 @@ def test_detects_each_tool_at_its_default_location(tmp_path):
     assert set(found) == {"graxpert_path", "rcastro_path", "astap_path"}
     # a .app is offered as the BUNDLE; resolve_binary already handles the rest,
     # which is why no user ever needed Show Package Contents
-    assert found["graxpert_path"].endswith("GraXpert.app")
+    assert found["graxpert_path"].endswith(_GX_FOUND)
 
 
 def test_detection_never_overwrites_a_configured_path(tmp_path):
@@ -300,7 +317,7 @@ def test_autoconfigure_writes_the_found_paths_to_disk(tmp_path):
     save_settings(Settings(), path)
     filled = autoconfigure_tools(path, candidates=_fake_tools(tmp_path))
     assert set(filled) == {"graxpert_path", "rcastro_path", "astap_path"}
-    assert load_settings(path).graxpert_path.endswith("GraXpert.app")
+    assert load_settings(path).graxpert_path.endswith(_GX_FOUND)
 
 
 def test_autoconfigure_is_a_no_op_when_everything_is_already_set(tmp_path):
@@ -340,7 +357,7 @@ def test_rescan_replaces_a_path_that_does_not_work(tmp_path):
     broken = Settings(graxpert_path="/nope/not/here/graxpert")
     assert "graxpert_path" not in detect_tool_paths(broken, candidates=_fake_tools(tmp_path))
     found = detect_tool_paths(broken, candidates=_fake_tools(tmp_path), replace_invalid=True)
-    assert found["graxpert_path"].endswith("GraXpert.app")
+    assert found["graxpert_path"].endswith(_GX_FOUND)
 
 
 def test_rescan_leaves_a_working_custom_path_alone(tmp_path):
@@ -385,7 +402,7 @@ def test_rescan_repairs_a_path_pointing_at_a_data_file(tmp_path):
     doc.write_text("# not a program\n", encoding="utf-8")
     found = detect_tool_paths(Settings(graxpert_path=str(doc)),
                               candidates=_fake_tools(tmp_path), replace_invalid=True)
-    assert found.get("graxpert_path", "").endswith("GraXpert.app")
+    assert found.get("graxpert_path", "").endswith(_GX_FOUND)
 
 
 # --- the title plate ------------------------------------------------------
@@ -469,12 +486,13 @@ def test_the_candidate_list_is_the_one_for_this_platform():
     """A macOS .app cannot exist on Linux and vice versa, so shipping one list
     would mean every user reading their own settings past someone else's paths.
     """
-    import sys
-    from nocturne.settings import TOOL_CANDIDATES, _LINUX_CANDIDATES, _MAC_CANDIDATES
-    expected = _MAC_CANDIDATES if sys.platform == "darwin" else _LINUX_CANDIDATES
+    from nocturne.settings import (TOOL_CANDIDATES, _LINUX_CANDIDATES, _MAC_CANDIDATES,
+                                   _WINDOWS_CANDIDATES)
+    expected = {"darwin": _MAC_CANDIDATES, "win32": _WINDOWS_CANDIDATES}.get(
+        sys.platform, _LINUX_CANDIDATES)
     assert TOOL_CANDIDATES is expected
-    assert set(_MAC_CANDIDATES) == set(_LINUX_CANDIDATES), \
-        "both platforms must cover the same three tools"
+    assert set(_MAC_CANDIDATES) == set(_LINUX_CANDIDATES) == set(_WINDOWS_CANDIDATES), \
+        "every platform must cover the same tools"
 
 
 def test_linux_finds_a_graxpert_unpacked_where_its_zip_puts_it(tmp_path, monkeypatch):
@@ -488,6 +506,8 @@ def test_linux_finds_a_graxpert_unpacked_where_its_zip_puts_it(tmp_path, monkeyp
     assert found == {"graxpert_path": str(binary)}
 
 
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="AppImage is a Linux format; on Windows only PATHEXT extensions are tools")
 def test_an_appimage_is_matched_by_pattern_newest_last(tmp_path):
     """AppImages carry their version in the filename, so a pattern is the only
     way to name one — and with two installed, the higher version must win."""

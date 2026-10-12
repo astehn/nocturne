@@ -1,3 +1,4 @@
+import sys
 from PySide6.QtWidgets import QPushButton
 import pytest
 
@@ -121,19 +122,23 @@ def test_rescan_button_fills_the_fields(qtbot, monkeypatch, tmp_path):
     from nocturne.settings import Settings
     from nocturne.ui import settings_dialog
 
-    gx = tmp_path / "GraXpert.app" / "Contents" / "MacOS"
-    gx.mkdir(parents=True)
-    (gx / "GraXpert").write_text("#!/bin/sh\n", encoding="utf-8")
-    (gx / "GraXpert").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
+    if sys.platform == "win32":          # no bundles there: the installer's .exe
+        installed = str(fake_tool(tmp_path / "GraXpert" / "GraXpert.exe"))
+    else:
+        gx = tmp_path / "GraXpert.app" / "Contents" / "MacOS"
+        gx.mkdir(parents=True)
+        (gx / "GraXpert").write_text("#!/bin/sh\n", encoding="utf-8")
+        (gx / "GraXpert").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
+        installed = str(tmp_path / "GraXpert.app")
     monkeypatch.setattr(settings_dialog, "TOOL_CANDIDATES",
-                        {"graxpert_path": [str(tmp_path / "GraXpert.app")],
+                        {"graxpert_path": [installed],
                          "rcastro_path": [str(tmp_path / "absent")],
                          "astap_path": [str(tmp_path / "absent")]})
 
     dlg = settings_dialog.SettingsDialog(Settings(graxpert_path="/fumbled/by/hand"))
     qtbot.addWidget(dlg)
     dlg.rescan_btn.click()
-    assert dlg._gx.text().endswith("GraXpert.app")      # the broken path was replaced
+    assert dlg._gx.text() == installed      # the broken path was replaced
     assert "GraXpert" in dlg.rescan_result.text()
 
 

@@ -1,5 +1,9 @@
 import os
 import stat
+import sys
+
+import pytest
+
 
 from nocturne.settings import Settings, resolve_binary, graxpert_valid
 
@@ -30,6 +34,8 @@ def test_plain_path_passes_through(tmp_path):
     assert resolve_binary(str(f)) == str(f)
 
 
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="a macOS .app bundle; its inner binary has no extension Windows can run")
 def test_graxpert_valid_accepts_app_bundle(tmp_path):
     app, _ = _make_app(tmp_path)
     assert graxpert_valid(Settings(graxpert_path=app)) is True

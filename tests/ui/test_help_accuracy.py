@@ -9,6 +9,7 @@ These tests are deliberately shallow — they check that a claim in the help has
 counterpart in the code, not that the prose is good. A shallow check that runs is
 worth more than a thorough one nobody performs.
 """
+import sys
 import pathlib
 import re
 
@@ -19,6 +20,11 @@ pytest.importorskip("PySide6")
 from nocturne.ui import help_content as h  # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
+
+
+# Any real program will do as a stand-in tool path; /bin/echo does not exist
+# on Windows, where is_tool also wants an extension.
+_RUNNABLE = sys.executable
 
 
 def _src(rel):
@@ -1116,7 +1122,7 @@ def test_missing_tools_names_only_the_step_that_cannot_run_at_all():
     assert missing_tools(Recipe(steps=[{"stage": "background", "option": "off"}]),
                          bare) == [], "an off Background needs no tool"
     assert missing_tools(Recipe(steps=[{"stage": "background", "option": "strong"}]),
-                         Settings(graxpert_path="/bin/echo")) == []
+                         Settings(graxpert_path=_RUNNABLE)) == []
     for stage in ("saturation", "green_fringe", "noise_sharpen", "star_reduction",
                   "deconvolution", "narrowband", "stretch", "levels", "curves"):
         assert missing_tools(Recipe(steps=[{"stage": stage, "option": ""}]), bare) == [], \
@@ -1479,8 +1485,8 @@ def test_auto_enhance_help_lists_the_plan_that_is_actually_built(_no_nr_models):
     assert "<b>Narrowband</b> \u2014 Gold and blue only, last." in b
 
     # the conditional stages, with the tools present
-    full = dict(build_auto_plan(img, Settings(graxpert_path="/bin/echo", astap_path="/bin/echo",
-                                              rcastro_path="/bin/echo"),
+    full = dict(build_auto_plan(img, Settings(graxpert_path=_RUNNABLE, astap_path=_RUNNABLE,
+                                              rcastro_path=_RUNNABLE),
                                 include_crop=False))
     assert list(full)[:3] == ["background", "color", "deconvolution"]
     assert full["background"] == AUTO_BACKGROUND_STRENGTH
@@ -1503,8 +1509,8 @@ def test_auto_enhance_help_names_the_stages_it_refuses_to_run(_no_nr_models):
     from nocturne.ui.pipeline import PROCESSING_ORDER, STEP_NAME
     b = _body("auto-enhance")
     img = AstroImage(np.full((32, 32, 3), 0.3, np.float32), is_linear=True)
-    every = Settings(graxpert_path="/bin/echo", astap_path="/bin/echo",
-                     rcastro_path="/bin/echo")
+    every = Settings(graxpert_path=_RUNNABLE, astap_path=_RUNNABLE,
+                     rcastro_path=_RUNNABLE)
     planned = set()
     for preset in PRESETS:
         meta = {"filter": "LP"} if preset == "gold_blue" else {}
@@ -1543,7 +1549,7 @@ def test_auto_enhance_help_says_denoise_never_uses_graxpert(monkeypatch):
     assert "It <b>never uses GraXpert</b> for denoise" in b
     assert "else GraXpert" not in b
     monkeypatch.setattr(nr_models, "available", lambda: [])
-    for gx, rc, pref in itertools.product(("", "/bin/echo"), ("", "/bin/echo"),
+    for gx, rc, pref in itertools.product(("", _RUNNABLE), ("", _RUNNABLE),
                                           ("graxpert", "rcastro")):
         s = Settings(graxpert_path=gx, rcastro_path=rc, denoise_engine=pref)
         assert _auto_denoise_engine(s) != "graxpert"

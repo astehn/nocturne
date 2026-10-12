@@ -145,6 +145,6 @@ def test_the_aspect_map_has_one_definition():
     import pathlib
     root = pathlib.Path(__file__).parents[2]
     literal = '("16:9", 16 / 9)'
-    found = sorted(str(f.relative_to(root)) for f in (root / "nocturne").rglob("*.py")
+    found = sorted(f.relative_to(root).as_posix() for f in (root / "nocturne").rglob("*.py")
                    if literal in f.read_text(errors="ignore", encoding="utf-8"))
     assert found == ["nocturne/core/crop.py"], f"aspect ratios defined in: {found}"

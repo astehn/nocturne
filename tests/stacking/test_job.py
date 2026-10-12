@@ -132,8 +132,10 @@ def test_emit_flushes_without_waiting_for_eof():
     and then blocks, read from the pipe without waiting for EOF, and assert the
     line arrives."""
     import pathlib
+    import queue
     import subprocess
-    import select
+    import sys
+    import threading
 
     repo_root = pathlib.Path(__file__).resolve().parents[2]
     # Create a tiny script that imports our module and emits, then sleeps forever
@@ -149,7 +151,7 @@ time.sleep(3600)
 
     # Run it and read one line from stdout without waiting for EOF
     proc = subprocess.Popen(
-        [str(repo_root / ".venv" / "bin" / "python"), "-c", script],
+        [sys.executable, "-c", script],    # .venv/bin/python is POSIX-only
         cwd=str(repo_root),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -157,10 +159,14 @@ time.sleep(3600)
     )
     try:
         # Use a short timeout to catch if the line never appears (unbuffered failure)
-        ready, _, _ = select.select([proc.stdout], [], [], 2.0)
-        if not ready:
-            raise TimeoutError("emit() did not flush — data still in buffer")
-        line = proc.stdout.readline()
+        # A reader thread, not select(): select() cannot wait on a pipe on Windows.
+        lines = queue.Queue()
+        threading.Thread(target=lambda: lines.put(proc.stdout.readline()),
+                         daemon=True).start()
+        try:
+            line = lines.get(timeout=2.0)
+        except queue.Empty:
+            raise TimeoutError("emit() did not flush — data still in buffer") from None
         assert line, "no output received from child"
         event = json.loads(line)
         assert event["event"] == "test"

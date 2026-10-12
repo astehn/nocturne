@@ -6,6 +6,7 @@ every one. A 1233-frame overnight drizzle on 2026-09-02 ran ~4x the estimate and
 left no record of which phase was slow.
 """
 import logging
+from pathlib import Path
 
 from nocturne.core.applog import configure_logging, log_path
 
@@ -44,7 +45,12 @@ def test_calling_it_twice_does_not_write_everything_twice(tmp_path, monkeypatch)
 def test_an_unwritable_path_does_not_stop_the_app(tmp_path, monkeypatch):
     """Startup calls this. A log file is a diagnostic, never a launch failure."""
     _fresh(monkeypatch)
-    assert configure_logging("/nonexistent-root-dir/deeper/n.log") is None
+    # Under a FILE, so no folder can be made there on any OS. "/nonexistent-root-dir"
+    # was unwritable only on POSIX: on Windows it is C:\nonexistent-root-dir,
+    # which an ordinary user may create.
+    blocker = tmp_path / "a-file"
+    blocker.write_text("", encoding="utf-8")
+    assert configure_logging(str(blocker / "deeper" / "n.log")) is None
 
 
 def test_it_does_not_leak_into_the_root_logger(tmp_path, monkeypatch):
@@ -55,7 +61,8 @@ def test_it_does_not_leak_into_the_root_logger(tmp_path, monkeypatch):
 
 
 def test_the_default_path_sits_beside_settings(monkeypatch):
-    assert log_path("/home/x") == "/home/x/.nocturne/nocturne.log"
+    # Compared as paths: on Windows the joins are backslashes.
+    assert Path(log_path("/home/x")) == Path("/home/x/.nocturne/nocturne.log")
 
 
 def test_startup_configures_it(monkeypatch):

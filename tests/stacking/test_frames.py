@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 from nocturne.stacking.frames import discover_subs, load_sub, luminance
 from tests.stacking.synthetic import make_star_field, write_color_fits
@@ -8,7 +10,7 @@ def test_discover_subs_sorted(tmp_path):
         write_color_fits(tmp_path / name, make_star_field())
     (tmp_path / "notes.txt").write_text("ignore me", encoding="utf-8")
     found = discover_subs(str(tmp_path))
-    assert [p.split("/")[-1] for p in found] == ["a.fit", "b.fit", "c.fits"]
+    assert [os.path.basename(p) for p in found] == ["a.fit", "b.fit", "c.fits"]
 
 
 def test_load_sub_returns_color_image(tmp_path):

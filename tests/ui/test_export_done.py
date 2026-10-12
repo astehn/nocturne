@@ -6,6 +6,7 @@ line lives in the pinned description box, because Export scrolls ~400 px at
 1280x800 and a "done" line below the fold would not be seen.
 """
 import re
+import sys
 
 import pytest
 
@@ -91,6 +92,13 @@ def test_a_new_image_clears_it(qtbot, tmp_path, monkeypatch):
 
 def test_a_name_is_text_not_markup(qtbot, tmp_path, monkeypatch):
     win = _at_export(qtbot, tmp_path)
+    if sys.platform == "win32":
+        # "<" and ">" cannot be in a Windows file name; an entity can, and must
+        # be shown as typed, not decoded.
+        _export(win, monkeypatch, tmp_path / "a&lt;b&gt;c.tiff")
+        assert "a&lt;b&gt;c.tiff" in _desc(win).replace("&amp;", "&")
+        assert "&amp;lt;b&amp;gt;" in win._panel.desc_box.text()
+        return
     _export(win, monkeypatch, tmp_path / "a<b>c.tiff")
     assert "a<b>c.tiff" in _desc(win).replace("&lt;", "<").replace("&gt;", ">")
     assert "&lt;b&gt;" in win._panel.desc_box.text()
@@ -145,4 +153,5 @@ def test_reveal_uses_the_platforms_own_file_manager(qtbot, tmp_path, monkeypatch
     if platform == "darwin":
         assert calls == [("popen", ["open", "-R", str(target)])]
     else:
-        assert calls == [("url", str(tmp_path))]
+        # A URL's local path has forward slashes even on Windows.
+        assert calls == [("url", tmp_path.as_posix())]

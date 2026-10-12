@@ -1,3 +1,8 @@
+import sys
+
+from tests.fake_tool import fake_tool
+
+
 
 
 def test_the_astap_preflight_agrees_with_settings(tmp_path):
