@@ -50,3 +50,13 @@ def test_stacking_reads_the_real_memory_on_windows():
                           "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"],
                          capture_output=True, text=True, encoding="utf-8").stdout.strip()
     assert parallel._total_ram_bytes() == int(out)       # not the 8 GB guess
+
+
+@windows_only
+def test_stacking_counts_physical_cores_on_windows():
+    import subprocess
+    from nocturne.stacking import parallel
+    out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                          "(Get-CimInstance Win32_Processor | Measure-Object NumberOfCores -Sum).Sum"],
+                         capture_output=True, text=True, encoding="utf-8").stdout.strip()
+    assert parallel._performance_cores() == int(out)      # not half the logical count

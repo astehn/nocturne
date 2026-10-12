@@ -111,7 +111,38 @@ def _performance_cores() -> int:
         n = _sysctl_int(key)
         if n and n > 0:
             return n
+    if os.name == "nt":
+        n = _windows_physical_cores()
+        if n:
+            return n
     return max(1, (os.cpu_count() or 2) // 2)
+
+
+def _windows_physical_cores() -> int | None:
+    """Physical cores from GetLogicalProcessorInformationEx. Halving the logical
+    count assumes hyperthreading; a VM or a CPU without it then gets half its
+    cores — the 4-core test VM was planned as 2, the 2-core one as 1
+    (2026-10-12)."""
+    try:
+        k32 = ctypes.windll.kernel32
+        size = ctypes.c_uint32(0)
+        k32.GetLogicalProcessorInformationEx(0, None, ctypes.byref(size))  # RelationProcessorCore
+        if not size.value:
+            return None
+        buf = ctypes.create_string_buffer(size.value)
+        if not k32.GetLogicalProcessorInformationEx(0, buf, ctypes.byref(size)):
+            return None
+        count, offset = 0, 0
+        while offset < size.value:
+            # Each record: DWORD Relationship, DWORD Size, then the payload.
+            rec_size = ctypes.c_uint32.from_buffer_copy(buf.raw[offset + 4:offset + 8]).value
+            if rec_size == 0:
+                break
+            count += 1
+            offset += rec_size
+        return count or None
+    except Exception:
+        return None
 
 
 def _total_ram_bytes() -> int:
