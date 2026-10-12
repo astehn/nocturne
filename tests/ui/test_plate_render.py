@@ -40,7 +40,9 @@ def _px(img):
     """Raw RGB rows — QImage pads each row to a 4-byte boundary, so slice to width."""
     img = img.convertToFormat(QImage.Format.Format_RGB888)
     w, h = img.width(), img.height()
-    return np.frombuffer(img.constBits(), np.uint8).reshape(h, img.bytesPerLine())[:, :w * 3].reshape(h, w, 3)
+    # .copy(): the converted QImage is freed on return, and a view into it read
+    # freed memory — an access violation on Windows (2026-10-12).
+    return np.frombuffer(img.constBits(), np.uint8).reshape(h, img.bytesPerLine())[:, :w * 3].reshape(h, w, 3).copy()
 
 
 def _mean(img):

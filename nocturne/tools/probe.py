@@ -3,9 +3,12 @@ from __future__ import annotations
 import re
 import subprocess
 
+from ..core.tasks import no_window_kwargs
+
 
 def _default_runner(argv: list[str]) -> tuple[int, str, str]:
-    proc = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    proc = subprocess.run(argv, capture_output=True, text=True, timeout=60,
+                          **no_window_kwargs())
     return proc.returncode, proc.stdout, proc.stderr
 
 
@@ -110,5 +113,6 @@ def _strip_preamble(line: str) -> str:
 
 
 def _default_runner_t(argv: list[str], timeout: float):
-    proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+    proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
+                          **no_window_kwargs())
     return proc.returncode, proc.stdout, proc.stderr

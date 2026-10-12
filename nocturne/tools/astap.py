@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..core.image import AstroImage
-from ..core.tasks import Cancelled, current, kill_process
+from ..core.tasks import Cancelled, child_process_kwargs, current, kill_process
 from .base import ToolError
 
 # Whether projection (core/catalog, core/annotate) must flip y when turning a
@@ -70,7 +70,7 @@ def _run_astap(args: list[str], cwd: str, timeout: float = SOLVE_TIMEOUT_S) -> i
     token = current()
     start = time.monotonic()
     proc = subprocess.Popen(args, cwd=cwd, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True, start_new_session=True)
+                            stderr=subprocess.PIPE, text=True, **child_process_kwargs())
     if token is not None:
         token.bind_process(proc)          # a later cancel() kills the group
     try:

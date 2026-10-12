@@ -7337,6 +7337,11 @@ class MainWindow(QMainWindow):
         if sys.platform == "darwin":
             subprocess.Popen(["open", "-R", path])
             return
+        if sys.platform == "win32" and os.path.isfile(path):
+            # Explorer with the file selected, as Finder does above. One argument,
+            # "/select,<path>": Explorer parses its own command line.
+            subprocess.Popen(f'explorer /select,"{os.path.normpath(path)}"')
+            return
         from PySide6.QtCore import QUrl
         from PySide6.QtGui import QDesktopServices
         folder = path if os.path.isdir(path) else os.path.dirname(path)

@@ -34,7 +34,7 @@ import os
 
 from PySide6.QtCore import QCoreApplication, QEventLoop, QObject, Qt, Signal
 
-from ..core.tasks import kill_process
+from ..core.tasks import child_process_kwargs, kill_process
 from ..stacking.job import job_command
 
 # closeEvent's bound on waiting for a reader thread to finish at quit.
@@ -231,7 +231,7 @@ class JobQueue(QObject):
             proc = subprocess.Popen(
                 job_command(path),
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1, start_new_session=True)
+                text=True, bufsize=1, **child_process_kwargs())
         except BaseException:
             _discard(path)          # no reader will ever reach its cleanup
             raise
