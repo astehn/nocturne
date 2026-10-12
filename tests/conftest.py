@@ -21,8 +21,18 @@ tests or creating the `qapp` fixture.
 """
 
 import os
+import sys
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+# On Windows the offscreen plugin looks for fonts in PySide6/lib/fonts, which Qt
+# no longer ships, and finds NONE: every string is measured in a built-in
+# fallback ("Preserve luminosity" 228 px, against 103 px in Segoe UI), so every
+# does-this-text-fit test fails and none of them means anything. Point it at
+# the system's fonts. Measured 2026-10-12: with this, the layout tests that
+# failed offscreen pass, as they do under the real `windows` plugin.
+if sys.platform == "win32":
+    os.environ.setdefault("QT_QPA_FONTDIR", os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts"))
 
 
 # --- the user's real settings file is off limits to the suite ----------------
@@ -101,3 +111,25 @@ _NR_SANDBOX = tempfile.mkdtemp(prefix="nocturne_nr_models_")
 def _nr_models_sandbox(monkeypatch):
     monkeypatch.setattr(_nr_models, "TRAY_DIR", _NR_SANDBOX)
     monkeypatch.setattr(_nr_models, "SHIPPED_DIR", _NR_SANDBOX)
+
+
+# --- Windows: the default font the real platform gives -----------------------
+#
+# Offscreen's default family is "Sans Serif", which resolves to Arial; the real
+# `windows` plugin gives Segoe UI 9 pt (both measured on the VM, 2026-10-12).
+# Text-fit tests must measure what a Windows user sees, so the suite's
+# QApplication starts with that font. A no-op everywhere else.
+if sys.platform == "win32":
+    import pytest
+
+    @pytest.fixture(scope="session")
+    def qapp_cls():
+        from PySide6.QtGui import QFont
+        from PySide6.QtWidgets import QApplication
+
+        class _WindowsDefaultFontApp(QApplication):
+            def __init__(self, *args):
+                super().__init__(*args)
+                self.setFont(QFont("Segoe UI", 9))
+
+        return _WindowsDefaultFontApp
