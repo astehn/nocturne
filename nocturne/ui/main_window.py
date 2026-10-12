@@ -7195,7 +7195,16 @@ class MainWindow(QMainWindow):
             used = {}
 
             def _split():
-                starless, stars, used["kind"] = self._split_tagged(img)
+                src = img
+                if src.is_linear:
+                    # Before Stretch a picture export carries the canvas's
+                    # display stretch (export.display_data). Applied to each
+                    # layer on its own, the two files no longer Screen back to
+                    # the picture; stretched once, first, they do.
+                    from ..core.export import display_data
+                    src = AstroImage(display_data(src, linked=self._view_linked),
+                                     is_linear=False, metadata=dict(src.metadata))
+                starless, stars, used["kind"] = self._split_tagged(src)
                 sl, icc = self._prepare_for_export(starless, space)
                 st, _ = self._prepare_for_export(stars, space)
                 save_tiff(sl, os.path.join(folder, "starless.tif"), icc=icc,

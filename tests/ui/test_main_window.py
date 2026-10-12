@@ -6654,3 +6654,32 @@ def test_starless_stars_export_works_without_any_star_tool(qtbot, tmp_path, monk
         whole = whole / 65535
     assert st.max() > 0.05
     assert np.abs(1 - (1 - sl) * (1 - st) - whole.reshape(sl.shape)).max() < 2e-3
+
+
+def test_starless_stars_before_stretch_add_back_up_to_what_the_canvas_shows(qtbot, tmp_path, monkeypatch):
+    """Before Stretch every picture export carries the canvas's display stretch.
+    The split used to stretch each LAYER on its own, so Screen-blending the two
+    files did not give the picture back (2026-10-11). Stretch once, then split."""
+    from astropy.io import fits
+    from nocturne.ui import file_dialogs
+    from nocturne.settings import Settings
+    from nocturne.core.export import display_data
+    import tifffile
+    yy, xx = np.mgrid[:48, :48]
+    sky = np.full((3, 48, 48), 0.02) + np.random.default_rng(2).normal(0, 0.002, (3, 48, 48))
+    for cy, cx in ((12, 14), (33, 30)):
+        sky += 0.5 * np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / 3.0)
+    p = tmp_path / "linear.fits"
+    fits.PrimaryHDU((np.clip(sky, 0, 1) * 60000).astype(np.uint16)).writeto(str(p))
+    win = _window(qtbot, tmp_path)
+    win.open_fits(str(p))
+    win.settings = Settings()
+    img = win.project.current()
+    assert img.is_linear                         # the case under test: no Stretch yet
+    out = tmp_path / "split"; out.mkdir()
+    monkeypatch.setattr(file_dialogs, "choose_folder", lambda *a, **k: str(out))
+    win.export_final("Starless + Stars (two TIFFs)")
+    sl = tifffile.imread(out / "starless.tif").astype(np.float64) / 65535
+    st = tifffile.imread(out / "stars.tif").astype(np.float64) / 65535
+    shown = display_data(img, linked=win._view_linked).astype(np.float64)
+    assert np.abs(1 - (1 - sl) * (1 - st) - shown.reshape(sl.shape)).max() < 3e-3
