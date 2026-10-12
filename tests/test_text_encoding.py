@@ -57,6 +57,13 @@ def test_app_text_io_names_its_encoding():
     assert bad == []
 
 
+def test_release_tooling_text_io_names_its_encoding():
+    """packaging/deploy.py rewrites CHANGELOG.md, whose headings carry "—":
+    on Windows it read the file as cp1252 and failed."""
+    bad = [b for p in sorted((ROOT / "packaging").glob("*.py")) for b in _offences(p)]
+    assert bad == []
+
+
 def test_the_check_sees_each_shape_it_claims_to(tmp_path):
     """A scanner that finds nothing would pass the test above for ever."""
     src = tmp_path / "nocturne" / "x.py"

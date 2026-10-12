@@ -43,16 +43,16 @@ def set_version_files(root: Path, version: str) -> None:
     parse_version(version)  # guard: refuse to write a malformed version
     pyproject = root / "pyproject.toml"
     text, n = re.subn(r'(?m)^version = "[^"]*"',
-                      f'version = "{version}"', pyproject.read_text(), count=1)
+                      f'version = "{version}"', pyproject.read_text(encoding="utf-8"), count=1)
     if n != 1:
         raise ValueError(f"no version line found in {pyproject}")
-    pyproject.write_text(text)
+    pyproject.write_text(text, encoding="utf-8")
     init = root / "nocturne" / "__init__.py"
     text, n = re.subn(r'(?m)^__version__ = "[^"]*"',
-                      f'__version__ = "{version}"', init.read_text(), count=1)
+                      f'__version__ = "{version}"', init.read_text(encoding="utf-8"), count=1)
     if n != 1:
         raise ValueError(f"no __version__ line found in {init}")
-    init.write_text(text)
+    init.write_text(text, encoding="utf-8")
 
 
 @dataclass
@@ -389,7 +389,7 @@ def build_samples_cmd(config: DeployConfig, samples_dir: Path) -> list[str] | No
 
 
 def real_run(cmd: list[str], *, capture: bool = False) -> str:
-    r = subprocess.run(cmd, check=True, text=True, capture_output=capture, cwd=ROOT)
+    r = subprocess.run(cmd, check=True, text=True, errors="replace", capture_output=capture, cwd=ROOT)
     return (r.stdout or "") if capture else ""
 
 
@@ -432,11 +432,11 @@ def get_log_since(tag: str, run=real_run) -> list[str]:
 
 
 def prepend_file(path: Path, block: str, anchor: str) -> None:
-    lines = path.read_text().splitlines(keepends=True)
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     for i, ln in enumerate(lines):
         if anchor in ln:
             lines.insert(i, block + "\n\n")
-            path.write_text("".join(lines))
+            path.write_text("".join(lines), encoding="utf-8")
             return
     raise ValueError(f"anchor {anchor!r} not found in {path}")
 
@@ -478,7 +478,7 @@ def preflight(config: DeployConfig, run=real_run) -> None:
 
 
 def _load_notes(path: Path) -> Notes:
-    d = json.loads(path.read_text())
+    d = json.loads(path.read_text(encoding="utf-8"))
     return Notes(headline=d.get("headline", ""), added=d.get("added", []),
                  changed=d.get("changed", []), fixed=d.get("fixed", []))
 
@@ -610,7 +610,7 @@ def _verify_bundle_codecs(exe: Path, run=subprocess.run) -> None:
     anywhere.
     """
     try:
-        r = run([str(exe), "--check-codecs"], capture_output=True, text=True,
+        r = run([str(exe), "--check-codecs"], capture_output=True, text=True, errors="replace",
                 timeout=180)
     except Exception as exc:                      # noqa: BLE001
         print(f"warning: could not run the bundle's codec self-test ({exc})")
@@ -645,7 +645,7 @@ def _verify_bundle_https(exe: Path, run=subprocess.run) -> None:
     env = {k: v for k, v in os.environ.items()
            if k not in ("SSL_CERT_FILE", "SSL_CERT_DIR")}
     try:
-        r = run([str(exe), "--check-network"], capture_output=True, text=True,
+        r = run([str(exe), "--check-network"], capture_output=True, text=True, errors="replace",
                 env=env, timeout=180)
     except Exception as exc:                      # noqa: BLE001
         print(f"warning: could not run the bundle's network self-test ({exc})")
