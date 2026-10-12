@@ -134,3 +134,27 @@ def test_fits_export_keeps_linear_data_linear(tmp_path):
     save_fits(img, str(out))
     back = np.transpose(_fits.getdata(str(out)), (1, 2, 0))
     assert np.abs(back - data).max() < 1e-6, "FITS export altered linear data"
+
+
+def test_a_failed_fits_write_leaves_the_old_file_and_no_scrap(tmp_path, monkeypatch):
+    """Written beside the target and swapped in (2026-10-12): a write that dies
+    part-way must leave whatever was there before, byte for byte, and no
+    temporary file behind."""
+    import numpy as np
+    from astropy.io import fits
+    from nocturne.core.export import save_fits
+    from nocturne.core.image import AstroImage
+    out = tmp_path / "master.fits"
+    save_fits(AstroImage(np.ones((8, 8, 3), np.float32), is_linear=True), str(out))
+    before = out.read_bytes()
+
+    def dies(self, name, *a, **k):
+        with open(name, "wb") as f:
+            f.write(b"SIMPLE  =                    T")     # a truncated start
+        raise KeyboardInterrupt                        # e.g. the job being killed
+    monkeypatch.setattr(fits.PrimaryHDU, "writeto", dies)
+    import pytest
+    with pytest.raises(KeyboardInterrupt):
+        save_fits(AstroImage(np.zeros((8, 8, 3), np.float32), is_linear=True), str(out))
+    assert out.read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["master.fits"]

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import tifffile
 from astropy.io import fits
@@ -137,4 +139,20 @@ def save_fits(img: AstroImage, path: str, header: dict | None = None) -> None:
     if header:
         for key, value in header.items():
             hdu.header[key] = value
-    hdu.writeto(path, overwrite=True)
+    # Written beside the target, then swapped in: a stack cancelled (or a crash)
+    # during the ~1 s write of a 100 MB master would otherwise leave a truncated
+    # file under the final name — one that opens as a broken picture, or
+    # replaces a good master the user already had (2026-10-12).
+    import tempfile
+    folder = os.path.dirname(os.path.abspath(path))
+    fd, tmp = tempfile.mkstemp(prefix=".nocturne-", suffix=".fits", dir=folder)
+    os.close(fd)
+    try:
+        hdu.writeto(tmp, overwrite=True)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
