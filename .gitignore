@@ -87,3 +87,20 @@ runs/
 
 # Brainstorming mockups and subagent ledgers (local working files)
 .superpowers/
+
+# ---------------------------------------------------------------------------
+# GitHub carries ONLY what the application needs (Andreas, 2026-10-12): the app,
+# its tests, the build recipe, and the release documents (README with its
+# images, CHANGELOG, LICENSE, NOTICE, pyproject). Everything else stays local.
+# A new file outside those belongs here at creation.
+/.claude/
+/archive/
+/training/
+/scripts/
+/docs/*
+!/docs/img/
+/packaging/deploy.py
+/packaging/deploy.example.toml
+/packaging/make_icons.py
+/tests/test_deploy.py
+/tests/test_benchmark_stacking.py
