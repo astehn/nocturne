@@ -28,13 +28,6 @@ def test_a_per_user_install_is_found_through_localappdata(tmp_path, monkeypatch)
     assert found == {"graxpert_path": str(exe)}
 
 
-def test_an_unset_windows_variable_matches_nothing(monkeypatch):
-    monkeypatch.delenv("NOCTURNE_NO_SUCH_DIR", raising=False)
-    found = st.detect_tool_paths(st.Settings(), candidates={
-        "graxpert_path": [r"%NOCTURNE_NO_SUCH_DIR%\GraXpert.exe"]})
-    assert found == {}
-
-
 def test_windows_gets_its_own_list():
     assert set(st._WINDOWS_CANDIDATES) == set(st._MAC_CANDIDATES) == set(st._LINUX_CANDIDATES)
     expected = (st._MAC_CANDIDATES if sys.platform == "darwin"

@@ -158,3 +158,33 @@ def test_a_failed_fits_write_leaves_the_old_file_and_no_scrap(tmp_path, monkeypa
         save_fits(AstroImage(np.zeros((8, 8, 3), np.float32), is_linear=True), str(out))
     assert out.read_bytes() == before
     assert sorted(p.name for p in tmp_path.iterdir()) == ["master.fits"]
+
+
+def test_a_master_is_readable_like_any_new_file(tmp_path):
+    """mkstemp makes 0600; a master is shared with other accounts or a NAS."""
+    import os
+    import sys
+    import numpy as np
+    import pytest
+    if sys.platform == "win32":
+        pytest.skip("Unix permission bits")
+    from nocturne.core.export import save_fits
+    from nocturne.core.image import AstroImage
+    out = tmp_path / "m.fits"
+    save_fits(AstroImage(np.ones((4, 4, 3), np.float32), is_linear=True), str(out))
+    umask = os.umask(0); os.umask(umask)
+    assert (out.stat().st_mode & 0o777) == (0o666 & ~umask)
+
+
+def test_a_partial_left_by_a_killed_write_is_swept_next_time(tmp_path):
+    import os
+    import time
+    import numpy as np
+    from nocturne.core import export
+    from nocturne.core.image import AstroImage
+    stale = tmp_path / (export._PARTIAL_PREFIX + "old.fits"); stale.write_bytes(b"x")
+    old = time.time() - export._PARTIAL_STALE_S - 60
+    os.utime(stale, (old, old))
+    fresh = tmp_path / (export._PARTIAL_PREFIX + "busy.fits"); fresh.write_bytes(b"x")   # another write, now
+    export.save_fits(AstroImage(np.ones((4, 4, 3), np.float32), is_linear=True), str(tmp_path / "m.fits"))
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(["m.fits", fresh.name])
