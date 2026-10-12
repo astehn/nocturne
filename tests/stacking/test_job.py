@@ -125,6 +125,43 @@ def test_main_missing_file_emits_error_event():
     assert events[0]["event"] == "error"
 
 
+def test_main_closes_the_options_file_before_stacking(tmp_path, monkeypatch):
+    """The options file is the parent's temp file and the parent deletes it when
+    the child exits. Held open for the whole stack, Windows refuses that delete
+    whenever the child outlives the process the parent waited on (the venv
+    launcher, a cancelled tree): measured on the Windows VM 2026-10-12, a
+    nocturne_job_*.json left in %TEMP% with WinError 32."""
+    import builtins
+    import os
+    import nocturne.stacking.job as job
+    path = tmp_path / "opts.json"
+    path.write_text("{}", encoding="utf-8")
+    opened = []
+    real_open = builtins.open
+
+    def tracking_open(*a, **k):
+        f = real_open(*a, **k)
+        opened.append(f)
+        return f
+
+    seen = {}
+
+    def fake_run_job(text, out=None):
+        seen["closed"] = all(f.closed for f in opened)
+        try:
+            os.remove(path)          # what the parent's cleanup does
+            seen["deleted"] = True
+        except OSError:
+            seen["deleted"] = False
+        return 0
+
+    monkeypatch.setattr(job, "open", tracking_open, raising=False)
+    monkeypatch.setattr(job, "run_job", fake_run_job)
+    assert job.main(["prog", "--stack-job", str(path)], out=io.StringIO()) == 0
+    assert opened, "main must read the options through open()"
+    assert seen == {"closed": True, "deleted": True}
+
+
 def test_emit_flushes_without_waiting_for_eof():
     """Flushing is the single constraint this module exists to honour — a buffered
     stdout would deliver an hour of progress all at once at exit, the exact hang
