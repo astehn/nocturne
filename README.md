@@ -146,7 +146,7 @@ The open-source projects doing the real heavy lifting: **PySide6 / Qt** (interfa
 
 Created and directed by **Andreas Stehn** — chief orchestrator & ideas department. Code wrangled in collaboration with **Claude (Anthropic)**.
 
-Test data from the community is hugely appreciated and credited in-app as **Photon Donors** ⭐ — see the [data request](docs/announcement.md). Donated data is used **only** to test and improve Nocturne.
+Test data from the community is hugely appreciated and credited in-app as **Photon Donors** ⭐ — see [Send a stack](https://nocturneastro.com/send-a-stack.html). Donated data is used **only** to test and improve Nocturne.
 
 ## License
 
