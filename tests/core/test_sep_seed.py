@@ -22,8 +22,11 @@ def _stars(img):
     import sep
     bkg = sep.Background(img)
     sub = img - bkg.back()
-    obj = sep.extract(sub, 5.0, err=bkg.globalrms)
-    return len(obj), np.round(np.sort(obj["x"]), 6)
+    obj = sep.extract(sub, 3.0, err=bkg.globalrms)
+    # Exact, not rounded: on Windows the unseeded deblender kept the count and
+    # moved positions and fluxes in the last bits (7 of 7 repeat calls).
+    order = np.lexsort((obj["y"], obj["x"]))
+    return len(obj), np.concatenate([obj["x"][order], obj["y"][order], obj["flux"][order]])
 
 
 def test_the_same_frame_gives_the_same_stars_on_one_thread():
