@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 from astropy.io import fits
 
+from tests.local_zone import pin_local_zone
 from nocturne.core.tasks import Cancelled
 from nocturne.settings import Settings
 from nocturne.stacking.capture_time import from_filename, read_capture_time
@@ -19,11 +20,7 @@ from nocturne.ui.stack_dialog import ADD_FOLDER_TEXT, StackDialog
 
 @pytest.fixture(autouse=True)
 def stockholm(monkeypatch):
-    monkeypatch.setenv("TZ", "Europe/Stockholm")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
+    pin_local_zone(monkeypatch, "Europe/Stockholm")
 
 
 def _seestar_folder(root, name, day, n=6, start=0):
@@ -287,7 +284,7 @@ def test_a_capture_folder_under_a_real_rejected_says_what_it_holds(qtbot, tmp_pa
     up = tmp_path / "rejected" / "old_M8_sub"
     up.mkdir(parents=True)
     (up / "Light_X_10.0s_LP_20260801-223000.fit").write_bytes(b"x")
-    (tmp_path / "rejected" / MANIFEST_NAME).write_text('{"version": 1, "moved": []}')
+    (tmp_path / "rejected" / MANIFEST_NAME).write_text('{"version": 1, "moved": []}', encoding="utf-8")
     d = _graded(qtbot, a)
     d.add_folder(str(up))
     text = d.status.text()
@@ -304,7 +301,7 @@ def test_a_damaged_rejected_record_is_shown_not_hidden_as_no_subs(qtbot, tmp_pat
     b = _seestar_folder(tmp_path, "b", "20260926")
     b_paths = sorted(str(p) for p in b.iterdir())
     move_to_rejected(str(b), b_paths, b_paths)
-    (b / "rejected" / ".nocturne-moved.json").write_text("{not json")
+    (b / "rejected" / ".nocturne-moved.json").write_text("{not json", encoding="utf-8")
     d = _graded(qtbot, a)
     d.add_folder(str(b))
     assert not d._busy

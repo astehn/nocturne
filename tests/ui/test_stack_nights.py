@@ -3,7 +3,6 @@ A): a chip per night in the verdict band; unticking one takes that night out
 of the stack and out of every count, and ticking it back returns it with its
 own verdicts and his own ticks inside it."""
 import os
-import time
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
@@ -12,6 +11,7 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import QApplication, QCheckBox
 
+from tests.local_zone import pin_local_zone
 from nocturne.settings import Settings
 from nocturne.stacking.grade import REASON_NOT_RAW, FrameStats, judge
 from nocturne.stacking.verdict import NO_NIGHT_HEADLINE
@@ -27,11 +27,7 @@ EVE_26 = datetime(2026, 9, 26, 20, 0, tzinfo=timezone.utc)
 
 @pytest.fixture(autouse=True)
 def stockholm(monkeypatch):
-    monkeypatch.setenv("TZ", "Europe/Stockholm")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
+    pin_local_zone(monkeypatch, "Europe/Stockholm")
 
 
 def _frames(fwhms, start, tag, step=2):

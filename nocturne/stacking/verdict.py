@@ -16,6 +16,7 @@ from datetime import datetime, tzinfo
 from statistics import median
 from typing import Iterable, Sequence
 
+from .capture_time import to_local
 from .grade import (JUDGE_MIN, MIN_MEANINGFUL_EXCESS, STACK_MIN, FrameStats,  # noqa: F401
                     is_master)
 # JUDGE_MIN and STACK_MIN are re-exported from here (`verdict.JUDGE_MIN` etc.)
@@ -189,7 +190,7 @@ def _timed(frames) -> list:
 
 
 def _clock(dt: datetime, tz: tzinfo | None) -> str:
-    return f"{dt.astimezone(tz):%H:%M}"
+    return f"{(to_local(dt) if tz is None else dt.astimezone(tz)):%H:%M}"
 
 
 def trend_ratios(stats) -> dict[str, tuple[float, float]]:
