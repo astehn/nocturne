@@ -46,16 +46,28 @@ function Invoke-Native {
 function Invoke-Selftest {
     # Returns @{ Code = <exit code>; Output = <lines> }. See the header for why
     # the redirect is the whole mechanism.
+    #
+    # Under a throwaway USERPROFILE: every launch of the app, a self test
+    # included, opens ~\.nocturne\session.log and rotates the previous one
+    # away, and the build machine may be somebody's own -- a build must not cost
+    # them the log a support report would carry. Tool detection is unaffected:
+    # the installs it looks for live under LOCALAPPDATA and ProgramFiles.
     param([string]$Exe, [string]$Flag)
     $out = [IO.Path]::GetTempFileName()
     $err = [IO.Path]::GetTempFileName()
+    $home_ = Join-Path ([IO.Path]::GetTempPath()) ("nocturne_selftest_" + [Guid]::NewGuid().ToString("N"))
+    New-Item -ItemType Directory -Path $home_ | Out-Null
+    $saved = $env:USERPROFILE
     try {
+        $env:USERPROFILE = $home_
         $p = Start-Process -FilePath $Exe -ArgumentList $Flag -Wait -PassThru -NoNewWindow `
             -RedirectStandardOutput $out -RedirectStandardError $err
         $lines = @(Get-Content $out) + @(Get-Content $err)
         return @{ Code = $p.ExitCode; Output = $lines }
     } finally {
+        $env:USERPROFILE = $saved
         Remove-Item $out, $err -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force $home_ -ErrorAction SilentlyContinue
     }
 }
 
@@ -125,6 +137,16 @@ $codecs = Invoke-Selftest $Exe "--check-codecs"
 $codecs.Output | ForEach-Object { Write-Output "  codecs   $_" }
 if ($codecs.Code -ne 0) {
     Fail "the build cannot decode a compressed TIFF -- star separation and opening a user's TIFF would fail for every user"
+}
+
+# External tools as the BUILT app sees them. Blocking only on exit 2, which
+# means something checkable here failed: StarNet2 is installed and the split did
+# not work (the subprocess, or the bundle reading back its LZW+predictor TIFF),
+# or sep is not seeded. A tool this machine does not have is not a defect.
+$tools = Invoke-Selftest $Exe "--check-tools"
+$tools.Output | ForEach-Object { Write-Output "  tools    $_" }
+if ($tools.Code -ne 0) {
+    Fail "the build's tool check failed (exit $($tools.Code)) -- see above"
 }
 
 # bsdtar ships with Windows 10 and later and writes a zip when the name ends in
