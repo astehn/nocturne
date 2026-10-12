@@ -12,18 +12,16 @@
 # SmartScreen warns on first launch. Revisit when somebody actually asks.
 #
 # THE SELF TESTS AND THE GUI SUBSYSTEM. Nocturne.exe is built windowed
-# (console=False), so started from a terminal it has no console of its own and
-# a plain `Nocturne.exe --check-codecs` prints nothing -- cmd and PowerShell do
-# not even wait for it. Its output is still there when stdout is REDIRECTED: a
-# GUI-subsystem process inherits the handles it is given, and Python builds
-# sys.stdout from them. So every self test below runs through Invoke-Selftest,
-# which redirects to a file, waits, and reads the exit code. By hand:
+# (console=False, PE subsystem 2), so it has no console of its own: typed at an
+# interactive prompt, `Nocturne.exe --check-codecs` returns at once and its
+# output goes nowhere. The output is still there when stdout is REDIRECTED -- a
+# GUI-subsystem process inherits the handles it is given and Python builds
+# sys.stdout from them, as the --stack-job child's JSON protocol relies on. So
+# every self test below runs through Invoke-Selftest, which redirects to a file,
+# waits, and reads the exit code. By hand:
 #
 #     Start-Process dist\Nocturne\Nocturne.exe --check-codecs -Wait -NoNewWindow `
 #         -RedirectStandardOutput out.txt; Get-Content out.txt
-#
-# or from cmd:  dist\Nocturne\Nocturne.exe --check-codecs > out.txt 2>&1 & type out.txt
-# (a redirected launch from cmd waits for the process too).
 param([string]$Ref = "")
 
 $ErrorActionPreference = "Stop"
