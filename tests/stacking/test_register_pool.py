@@ -227,3 +227,30 @@ def test_the_pool_uses_the_gc_initializer():
         assert pool._initializer is register_pool._pool_init
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
+
+
+def test_a_pool_that_dies_mid_run_falls_back_on_the_same_path(monkeypatch, force_pool):
+    """The mid-run fallback dropped `gas`, so a Ha/OIII registration whose pool
+    died (a worker killed, a frozen bundle's spawn failing — likelier on Windows,
+    where every worker is spawned) silently re-registered on the luminance of a
+    debayered frame instead of the Ha plane, with 3-channel stats."""
+    class DyingPool:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def map(self, fn, paths):
+            raise RuntimeError("A process in the process pool was terminated abruptly")
+
+    calls = []
+
+    def fake_serial(paths, ref_path, on_progress, check_cancel, gas=False):
+        calls.append(gas)
+        return []
+
+    monkeypatch.setattr(register_pool, "_make_pool", lambda *a, **k: DyingPool())
+    monkeypatch.setattr(register_pool, "_serial", fake_serial)
+    register_pool.register_frames(["a", "b", "c"], "ref", workers=2, gas=True)
+    assert calls == [True]

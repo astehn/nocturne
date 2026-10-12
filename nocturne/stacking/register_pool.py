@@ -191,5 +191,5 @@ def register_frames(paths, ref_path: str, workers: int, *,
         if isinstance(exc, Cancelled):
             raise
         # A pool that dies mid-run (the bundle case) must not lose the stack.
-        return _serial(paths, ref_path, on_progress, check_cancel)
+        return _serial(paths, ref_path, on_progress, check_cancel, gas)
     return out
