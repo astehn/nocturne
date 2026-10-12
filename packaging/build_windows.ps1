@@ -1,15 +1,17 @@
-# Build the Windows release: a zip of the PyInstaller directory.
+# Build the Windows release: an Inno Setup installer of the PyInstaller directory.
 #
-#     powershell -NoProfile -ExecutionPolicy Bypass -File packaging\build_windows.ps1 [git-ref]
+#     powershell -NoProfile -ExecutionPolicy Bypass -File packaging\build_windows.ps1 [git-ref] [-Iscc <path>]
 #
 # Runs ON a Windows machine, in a checkout of this repo with a .venv beside it.
 # The twin of build_linux.sh and deliberately the same shape: no knowledge of
 # SSH, deploy.py or the website, so a GitHub Actions runner could run exactly
 # this file. Glue belongs in the caller.
 #
-# Zip rather than an installer, for the same reason the Linux build is a tarball
-# and not an AppImage: nothing extra to install or debug remotely. Unsigned, so
-# SmartScreen warns on first launch. Revisit when somebody actually asks.
+# An installer and no zip (owner's call, 2026-10-12): per-user, no admin, a
+# Start menu entry, an uninstaller, .nocturne double-click. packaging\nocturne.iss
+# says what it writes. Needs Inno Setup 6 on the build host (ISCC.exe, found in
+# its default per-user or Program Files location, or passed as -Iscc). Unsigned,
+# so SmartScreen warns on first launch.
 #
 # THE SELF TESTS AND THE GUI SUBSYSTEM. Nocturne.exe is built windowed
 # (console=False, PE subsystem 2), so it has no console of its own: typed at an
@@ -22,7 +24,7 @@
 #
 #     Start-Process dist\Nocturne\Nocturne.exe --check-codecs -Wait -NoNewWindow `
 #         -RedirectStandardOutput out.txt; Get-Content out.txt
-param([string]$Ref = "")
+param([string]$Ref = "", [string]$Iscc = "")
 
 $ErrorActionPreference = "Stop"
 $Repo = Split-Path -Parent $PSScriptRoot
@@ -130,7 +132,7 @@ if ($net.Code -ne 0 -and $net.Code -ne 1) {
 # BLOCKING. imagecodecs imports its codecs dynamically, so a bundle can carry
 # the package and none of its decoders; every macOS and Linux build from
 # v0.35.0 to v0.39.0 did, and star separation failed for every user without
-# RC-Astro. The codecs are in the zip or they are not.
+# RC-Astro. The codecs are in the bundle or they are not.
 $codecs = Invoke-Selftest $Exe "--check-codecs"
 $codecs.Output | ForEach-Object { Write-Output "  codecs   $_" }
 if ($codecs.Code -ne 0) {
@@ -147,16 +149,24 @@ if ($tools.Code -ne 0) {
     Fail "the build's tool check failed (exit $($tools.Code)) -- see above"
 }
 
-# bsdtar ships with Windows 10 and later and writes a zip when the name ends in
-# .zip (-a). Compress-Archive takes many minutes over a bundle this size.
-$Zip = Join-Path $Repo "dist\$Name.zip"
-Push-Location (Join-Path $Repo "dist")
-try {
-    Invoke-Native tar.exe @("-a", "-c", "-f", "$Name.zip", "Nocturne")
-} finally {
-    Pop-Location
+# The installer, only after every gate above has passed.
+if (-not $Iscc) {
+    $Iscc = @(
+        (Join-Path $env:LOCALAPPDATA "Programs\Inno Setup 6\ISCC.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
+        (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
+    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 }
-$size = [math]::Round((Get-Item $Zip).Length / 1MB, 1)
-$sha = (Get-FileHash -Algorithm SHA256 $Zip).Hash.ToLower()
-Write-Output "  artifact dist\$Name.zip  ($size MB)"
+if (-not $Iscc -or -not (Test-Path $Iscc)) { Fail "Inno Setup 6 not found (ISCC.exe); install it or pass -Iscc" }
+# VERSIONINFO wants four numbers; "0.51.1-test" -> 0.51.1.0.
+$nums = @([regex]::Matches($Version, "\d+") | Select-Object -First 4 | ForEach-Object { $_.Value })
+while ($nums.Count -lt 4) { $nums += "0" }
+$VersionNum = $nums -join "."
+Invoke-Native $Iscc @("/Q", "/DAppVersion=$Version", "/DAppVersionNum=$VersionNum", "packaging\nocturne.iss")
+
+$Setup = Join-Path $Repo "dist\$Name-setup.exe"
+if (-not (Test-Path $Setup)) { Fail "no installer at dist\$Name-setup.exe" }
+$size = [math]::Round((Get-Item $Setup).Length / 1MB, 1)
+$sha = (Get-FileHash -Algorithm SHA256 $Setup).Hash.ToLower()
+Write-Output "  artifact dist\$Name-setup.exe  ($size MB)"
 Write-Output "  sha256   $sha"

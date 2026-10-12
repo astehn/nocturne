@@ -120,7 +120,8 @@ a = Analysis(
 # prune list, the named assets, the excludes, each with a scar behind it — and a
 # second spec per OS would be a copy of all of it, free to drift. Only the
 # packaging tail differs: macOS wants a .app BUNDLE, Linux and Windows want the
-# COLLECT directory, which build_linux.sh / build_windows.ps1 archive.
+# COLLECT directory, which build_linux.sh tars and build_windows.ps1 packs
+# into an installer (nocturne.iss).
 _MAC = sys.platform == "darwin"
 _WIN = sys.platform == "win32"
 
