@@ -1,3 +1,8 @@
+import sys
+
+from tests.fake_tool import fake_tool
+
+
 
 
 def test_the_astap_preflight_agrees_with_settings(tmp_path):
@@ -13,13 +18,17 @@ def test_the_astap_preflight_agrees_with_settings(tmp_path):
     from nocturne.settings import is_tool
     from nocturne.stacking.mosaic import check_astap
 
-    # A macOS-style bundle: a directory whose executable lives inside it.
-    app = tmp_path / "ASTAP.app"
-    macos = app / "Contents" / "MacOS"
-    macos.mkdir(parents=True)
-    exe = macos / "ASTAP"
-    exe.write_text("#!/bin/sh\n")
-    exe.chmod(0o755)
+    if sys.platform == "win32":
+        # No bundles on Windows; the same agreement must hold for its .exe.
+        app = fake_tool(tmp_path / "astap" / "astap.exe")
+    else:
+        # A macOS-style bundle: a directory whose executable lives inside it.
+        app = tmp_path / "ASTAP.app"
+        macos = app / "Contents" / "MacOS"
+        macos.mkdir(parents=True)
+        exe = macos / "ASTAP"
+        exe.write_text("#!/bin/sh\n", encoding="utf-8")
+        exe.chmod(0o755)
 
     assert is_tool(str(app)) is True, "the fixture is not a valid bundle"
     check_astap(str(app))          # must NOT raise
@@ -35,7 +44,7 @@ def test_the_astap_preflight_still_refuses_what_it_should(tmp_path):
         with pytest.raises(ValueError, match="no runnable solver"):
             check_astap(bad)
     doc = tmp_path / "notes.md"          # a file, but not executable
-    doc.write_text("not a solver")
+    doc.write_text("not a solver", encoding="utf-8")
     with pytest.raises(ValueError, match="no runnable solver"):
         check_astap(str(doc))
 
@@ -44,6 +53,6 @@ def test_the_solver_is_built_from_the_resolved_binary():
     """Even past the check, ASTAP(bundle_path) would exec a directory — errno
     13. Every other caller in the app resolves first; this one did not."""
     from pathlib import Path
-    src = (Path(__file__).parents[2] / "nocturne" / "stacking" / "mosaic.py").read_text()
+    src = (Path(__file__).parents[2] / "nocturne" / "stacking" / "mosaic.py").read_text(encoding="utf-8")
     body = src.split("def _astap_solver")[1].split("\ndef ")[0]
     assert "ASTAP(resolve_binary(" in body, "the solver is built from an unresolved path"

@@ -2,7 +2,30 @@ from __future__ import annotations
 
 import os
 import signal
+import subprocess
 import threading
+
+_WINDOWS = os.name == "nt"
+
+
+def child_process_kwargs() -> dict:
+    """Popen keywords for an external tool, so `kill_process` can take down the
+    tool AND anything it spawned.
+
+    POSIX: its own session, so the whole group can be signalled. Windows has no
+    sessions; the tree is killed by pid instead (see kill_process). There, a
+    console tool started from the windowed app would also pop up a console
+    window of its own for every run, so it is started without one.
+    """
+    if _WINDOWS:
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
+                                 | subprocess.CREATE_NO_WINDOW}
+    return {"start_new_session": True}
+
+
+def no_window_kwargs() -> dict:
+    """For a short helper run (a --help probe): no console window on Windows."""
+    return {"creationflags": subprocess.CREATE_NO_WINDOW} if _WINDOWS else {}
 
 
 class Cancelled(BaseException):
@@ -33,6 +56,9 @@ def kill_process(proc) -> None:
     pid <= 1 is refused for the same reason: group 1 is init's, never ours.
     """
     pid = getattr(proc, "pid", None)
+    if _WINDOWS:
+        _kill_tree_windows(proc, pid)
+        return
     try:
         if not isinstance(pid, int) or pid <= 1:
             raise ValueError(f"not a process this app spawned: pid={pid!r}")
@@ -47,6 +73,29 @@ def kill_process(proc) -> None:
             proc.terminate()
         except Exception:
             pass
+
+
+def _kill_tree_windows(proc, pid) -> None:
+    """taskkill /T: the tool and every process it started — GraXpert's
+    multiprocessing helpers, the stacker's workers. Popen.terminate alone ends
+    only the direct child and leaves the rest running on. Never raises.
+
+    Only a real Popen is ever taskkilled. Windows has no process groups to
+    check a pid against, and a test fake carrying `pid = 4242` is exactly what
+    once SIGTERMed a real process group on the Linux laptop (see kill_process);
+    here it would /F /T a real process TREE."""
+    try:
+        if (not isinstance(proc, subprocess.Popen) or not isinstance(pid, int)
+                or pid <= 4 or pid == os.getpid()):
+            raise ValueError(f"not a process this app spawned: pid={pid!r}")
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                       capture_output=True, timeout=15, **no_window_kwargs())
+    except Exception:
+        pass
+    try:
+        proc.terminate()      # already gone after taskkill: harmless
+    except Exception:
+        pass
 
 
 class CancelToken:

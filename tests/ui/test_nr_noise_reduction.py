@@ -22,7 +22,7 @@ STRETCHED = {"space": "stretched", "inputs": 3, "tile": 256}
 
 def _deliver(tray, stem, **meta):
     shutil.copy(FIXTURE, tray / f"{stem}.onnx")
-    (tray / f"{stem}.json").write_text(json.dumps({**STRETCHED, **meta}))
+    (tray / f"{stem}.json").write_text(json.dumps({**STRETCHED, **meta}), encoding="utf-8")
 
 
 @pytest.fixture

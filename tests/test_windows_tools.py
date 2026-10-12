@@ -1,0 +1,55 @@
+"""Finding the tools on Windows (2026-10-12)."""
+import os
+import sys
+
+import pytest
+
+from nocturne import settings as st
+
+windows_only = pytest.mark.skipif(sys.platform != "win32", reason="Windows paths and PATHEXT")
+
+
+@windows_only
+def test_a_document_is_not_a_tool_on_windows(tmp_path):
+    # Windows calls every existing file executable; the extension decides.
+    doc = tmp_path / "GraXpert.md"; doc.write_text("not a program", encoding="utf-8")
+    exe = tmp_path / "GraXpert.exe"; exe.write_bytes(b"MZ")
+    assert not st.is_tool(str(doc))
+    assert st.is_tool(str(exe))
+
+
+@windows_only
+def test_a_per_user_install_is_found_through_localappdata(tmp_path, monkeypatch):
+    exe = tmp_path / "Programs" / "GraXpert" / "GraXpert.exe"
+    exe.parent.mkdir(parents=True); exe.write_bytes(b"MZ")
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    found = st.detect_tool_paths(st.Settings(), candidates={
+        "graxpert_path": [r"%LOCALAPPDATA%\Programs\GraXpert\GraXpert.exe"]})
+    assert found == {"graxpert_path": str(exe)}
+
+
+def test_windows_gets_its_own_list():
+    assert set(st._WINDOWS_CANDIDATES) == set(st._MAC_CANDIDATES) == set(st._LINUX_CANDIDATES)
+    expected = (st._MAC_CANDIDATES if sys.platform == "darwin"
+                else st._WINDOWS_CANDIDATES if sys.platform == "win32" else st._LINUX_CANDIDATES)
+    assert st.TOOL_CANDIDATES is expected
+
+
+@windows_only
+def test_stacking_reads_the_real_memory_on_windows():
+    import subprocess
+    from nocturne.stacking import parallel
+    out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                          "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"],
+                         capture_output=True, text=True, encoding="utf-8").stdout.strip()
+    assert parallel._total_ram_bytes() == int(out)       # not the 8 GB guess
+
+
+@windows_only
+def test_stacking_counts_physical_cores_on_windows():
+    import subprocess
+    from nocturne.stacking import parallel
+    out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                          "(Get-CimInstance Win32_Processor | Measure-Object NumberOfCores -Sum).Sum"],
+                         capture_output=True, text=True, encoding="utf-8").stdout.strip()
+    assert parallel._performance_cores() == int(out)      # not half the logical count

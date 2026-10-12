@@ -1,5 +1,9 @@
 import os
 import stat
+import sys
+
+import pytest
+
 
 from nocturne.settings import Settings, resolve_binary, graxpert_valid
 
@@ -9,7 +13,7 @@ def _make_app(tmp_path, app_name="GraXpert", exe_name="GraXpert"):
     macos = app / "Contents" / "MacOS"
     macos.mkdir(parents=True)
     exe = macos / exe_name
-    exe.write_text("#!/bin/sh\n")
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
     exe.chmod(exe.stat().st_mode | stat.S_IEXEC)
     return str(app), str(exe)
 
@@ -26,10 +30,12 @@ def test_resolves_app_with_different_exe_name(tmp_path):
 
 def test_plain_path_passes_through(tmp_path):
     f = tmp_path / "rc-astro"
-    f.write_text("x")
+    f.write_text("x", encoding="utf-8")
     assert resolve_binary(str(f)) == str(f)
 
 
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="a macOS .app bundle; its inner binary has no extension Windows can run")
 def test_graxpert_valid_accepts_app_bundle(tmp_path):
     app, _ = _make_app(tmp_path)
     assert graxpert_valid(Settings(graxpert_path=app)) is True

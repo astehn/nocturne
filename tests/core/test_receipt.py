@@ -4,6 +4,7 @@ The 2026-09-01 feature audit's first P0: "Optional tools are not a problem by
 themselves. The problem is when the output differs materially and the user
 cannot see which engine actually ran."
 """
+from tests.fake_tool import fake_tool
 from nocturne.core.receipt import (BUILT_IN, EngineNote, engine_for, notes_for,
                                    render_lines)
 from nocturne.settings import Settings
@@ -12,8 +13,7 @@ from nocturne.settings import Settings
 def _configured(tmp_path, **tools):
     """Settings whose named tools point at a real executable."""
     exe = tmp_path / "tool"
-    exe.write_text("#!/bin/sh\n")
-    exe.chmod(0o755)
+    exe = fake_tool(exe, "#!/bin/sh\n")
     return Settings(**{k: str(exe) for k in tools})
 
 
@@ -68,7 +68,7 @@ def test_the_named_fallbacks_correspond_to_real_code_paths():
     from pathlib import Path
     from nocturne.core.receipt import _FALLBACKS, _REQUIRED
     steps = Path(__file__).parents[2] / "nocturne" / "steps"
-    src = {f.stem: f.read_text() for f in steps.glob("*.py")}
+    src = {f.stem: f.read_text(encoding="utf-8") for f in steps.glob("*.py")}
     joined = "\n".join(src.values())
     # every fallback-bearing stage reaches a branch that runs without the tool
     assert "if rc is not None" in joined or "if self._rc is not None" in joined \
@@ -87,7 +87,7 @@ def test_every_engine_choosing_stage_the_factory_makes_is_covered():
     import re
     from pathlib import Path
     from nocturne.core.receipt import _PREFERS
-    src = (Path(__file__).parents[2] / "nocturne" / "steps" / "factory.py").read_text()
+    src = (Path(__file__).parents[2] / "nocturne" / "steps" / "factory.py").read_text(encoding="utf-8")
     chooses = set()
     for m in re.finditer(r'if stage_id == "([a-z_]+)":(.*?)(?=\n    if stage_id|\n    raise)',
                          src, re.S):
@@ -125,7 +125,7 @@ def test_it_is_pure():
     """core/ holds no Qt — and a receipt that needed a running app could not be
     rendered into a saved project or a test."""
     from pathlib import Path
-    src = (Path(__file__).parents[2] / "nocturne" / "core" / "receipt.py").read_text()
+    src = (Path(__file__).parents[2] / "nocturne" / "core" / "receipt.py").read_text(encoding="utf-8")
     assert "PySide6" not in src
 
 

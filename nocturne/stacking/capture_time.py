@@ -10,7 +10,25 @@ from __future__ import annotations
 
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
+
+# The zone "local" means everywhere a capture time is shown or grouped into a
+# night. None is this computer's own, which is all the app ever uses. Tests pin
+# a zone here: the POSIX way (TZ + time.tzset) does not exist on Windows.
+LOCAL_ZONE: tzinfo | None = None
+
+
+def to_local(dt: datetime) -> datetime:
+    """An aware time in the local zone."""
+    return dt.astimezone(LOCAL_ZONE)
+
+
+def attach_local(naive: datetime) -> datetime:
+    """A naive wall-clock time read as local. `naive.astimezone(zone)` would
+    read it as the COMPUTER's time and convert, hence the replace."""
+    if LOCAL_ZONE is None:
+        return naive.astimezone()
+    return naive.replace(tzinfo=LOCAL_ZONE)
 
 # ..._LP_20260921-223009.fit — the Seestar's local capture stamp, last before
 # the extension.
@@ -41,7 +59,7 @@ def from_filename(path: str) -> datetime | None:
         naive = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S")
     except ValueError:
         return None
-    return naive.astimezone()      # attach the machine's local zone
+    return attach_local(naive)
 
 
 def read_capture_time(path: str) -> datetime | None:
@@ -64,7 +82,7 @@ def time_label(dt: datetime | None) -> str:
     """"21 · 22:30" — day of the month and local time, as the mockup draws it."""
     if dt is None:
         return "—"
-    local = dt.astimezone()
+    local = to_local(dt)
     return f"{local.day} · {local:%H:%M}"
 
 
@@ -72,5 +90,5 @@ def full_label(dt: datetime | None) -> str:
     """"21 Sep 2026 22:30:09" for the preview header and tooltip."""
     if dt is None:
         return ""
-    local = dt.astimezone()
+    local = to_local(dt)
     return f"{local.day} {local:%b %Y %H:%M:%S}"

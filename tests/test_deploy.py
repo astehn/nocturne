@@ -25,19 +25,19 @@ def test_next_minor_bumps_minor_zeroes_patch():
 
 def test_set_version_files_writes_both(tmp_path):
     (tmp_path / "pyproject.toml").write_text(
-        'name = "nocturne"\nversion = "0.3.0"\ndescription = "x"\n')
+        'name = "nocturne"\nversion = "0.3.0"\ndescription = "x"\n', encoding="utf-8")
     (tmp_path / "nocturne").mkdir()
-    (tmp_path / "nocturne" / "__init__.py").write_text('__version__ = "0.3.0"\n')
+    (tmp_path / "nocturne" / "__init__.py").write_text('__version__ = "0.3.0"\n', encoding="utf-8")
     deploy.set_version_files(tmp_path, "0.4.0")
-    assert 'version = "0.4.0"' in (tmp_path / "pyproject.toml").read_text()
-    assert '__version__ = "0.4.0"' in (tmp_path / "nocturne" / "__init__.py").read_text()
-    assert '0.3.0' not in (tmp_path / "pyproject.toml").read_text()   # replaced, not appended
+    assert 'version = "0.4.0"' in (tmp_path / "pyproject.toml").read_text(encoding="utf-8")
+    assert '__version__ = "0.4.0"' in (tmp_path / "nocturne" / "__init__.py").read_text(encoding="utf-8")
+    assert '0.3.0' not in (tmp_path / "pyproject.toml").read_text(encoding="utf-8")   # replaced, not appended
 
 
 def test_set_version_files_raises_if_no_version_line(tmp_path):
-    (tmp_path / "pyproject.toml").write_text('name = "nocturne"\n')  # no version line
+    (tmp_path / "pyproject.toml").write_text('name = "nocturne"\n', encoding="utf-8")  # no version line
     (tmp_path / "nocturne").mkdir()
-    (tmp_path / "nocturne" / "__init__.py").write_text('__version__ = "0.3.0"\n')
+    (tmp_path / "nocturne" / "__init__.py").write_text('__version__ = "0.3.0"\n', encoding="utf-8")
     with pytest.raises(ValueError):
         deploy.set_version_files(tmp_path, "0.4.0")
 
@@ -56,7 +56,7 @@ dir_mode = "755"
 file_mode = "644"
 include = ["*.html", "styles.css", "main.js", "img/"]
 exclude = ["img/_originals/", "config*.php", "db/", "uploads/", "*.fits", "*.fit"]
-''')
+''', encoding="utf-8")
     return p
 
 
@@ -73,7 +73,7 @@ def test_load_config_reads_all_fields(tmp_path):
 
 def test_load_config_missing_key_raises(tmp_path):
     p = tmp_path / "bad.toml"
-    p.write_text('[website]\nssh_host = "x"\n')
+    p.write_text('[website]\nssh_host = "x"\n', encoding="utf-8")
     with pytest.raises(ValueError):
         deploy.load_config(p)
 
@@ -142,8 +142,8 @@ def test_build_rsync_cmd_is_safe(tmp_path):
     site = tmp_path / "site"
     (site / "img" / "_originals").mkdir(parents=True)
     for f in ("index.html", "styles.css", "main.js", "config.php"):
-        (site / f).write_text("x")
-    (site / "img" / "shot.jpg").write_text("x")
+        (site / f).write_text("x", encoding="utf-8")
+    (site / "img" / "shot.jpg").write_text("x", encoding="utf-8")
     cmd = deploy.build_rsync_cmd(_cfg(tmp_path), site)
     assert not any(a.startswith("--del") for a in cmd)   # no --delete / --delete-after / --del
     assert "--rsync-path=sudo rsync" in cmd
@@ -171,7 +171,7 @@ dir_mode = "755"
 file_mode = "644"
 include = ["*.html"]
 exclude = ["img/_originals/"]
-''')  # missing db/, uploads/, config*.php
+''', encoding="utf-8")  # missing db/, uploads/, config*.php
     with pytest.raises(ValueError):
         deploy.build_rsync_cmd(deploy.load_config(p), tmp_path)
 
@@ -288,9 +288,9 @@ dir_mode = "755"
 file_mode = "644"
 include = ["*.php"]
 exclude = ["config*.php", "db/", "uploads/", "*.fits", "*.fit"]
-''')
+''', encoding="utf-8")
     site = tmp_path / "site"; site.mkdir()
-    (site / "config.php").write_text("secret")
+    (site / "config.php").write_text("secret", encoding="utf-8")
     cmd = deploy.build_rsync_cmd(deploy.load_config(p), site)
     assert "--exclude=config*.php" in cmd
 
@@ -326,24 +326,24 @@ class RecordingRunner:
 
 def test_prepend_file_inserts_before_anchor(tmp_path):
     f = tmp_path / "CHANGELOG.md"
-    f.write_text("# Changelog\n\npreamble\n\n## [0.3.0] — 2026-07-23\nold\n")
+    f.write_text("# Changelog\n\npreamble\n\n## [0.3.0] — 2026-07-23\nold\n", encoding="utf-8")
     deploy.prepend_file(f, "## [0.4.0] — 2026-07-25\nnew", anchor="## [")
-    text = f.read_text()
+    text = f.read_text(encoding="utf-8")
     assert text.index("[0.4.0]") < text.index("[0.3.0]")
     assert "preamble" in text
 
 
 def test_dry_run_prints_plan_and_does_not_mutate(tmp_path, capsys, monkeypatch):
     # minimal fake repo tree
-    (tmp_path / "pyproject.toml").write_text('version = "0.3.0"\n')
+    (tmp_path / "pyproject.toml").write_text('version = "0.3.0"\n', encoding="utf-8")
     (tmp_path / "nocturne").mkdir()
-    (tmp_path / "nocturne" / "__init__.py").write_text('__version__ = "0.3.0"\n')
-    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## [0.3.0] — 2026-07-23\nx\n")
+    (tmp_path / "nocturne" / "__init__.py").write_text('__version__ = "0.3.0"\n', encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## [0.3.0] — 2026-07-23\nx\n", encoding="utf-8")
     site = tmp_path / "site"; site.mkdir()
-    (site / "changelog.html").write_text('<div class="wrap prose">\n<article class="release">old</article>\n</div>')
+    (site / "changelog.html").write_text('<div class="wrap prose">\n<article class="release">old</article>\n</div>', encoding="utf-8")
     cfg = _write_config(tmp_path)
     notes = tmp_path / "notes.json"
-    notes.write_text(json.dumps({"headline": "h", "added": ["X"], "changed": [], "fixed": []}))
+    notes.write_text(json.dumps({"headline": "h", "added": ["X"], "changed": [], "fixed": []}), encoding="utf-8")
     monkeypatch.setattr(deploy, "ROOT", tmp_path)
     monkeypatch.setattr(deploy, "SITE", site)
     monkeypatch.setattr(deploy, "preflight", lambda c, run: None)
@@ -354,7 +354,7 @@ def test_dry_run_prints_plan_and_does_not_mutate(tmp_path, capsys, monkeypatch):
     assert "0.4.0" in out
     assert "rsync" in out and "gh release create" in out   # remote plan printed
     # nothing actually changed:
-    assert 'version = "0.3.0"' in (tmp_path / "pyproject.toml").read_text()
+    assert 'version = "0.3.0"' in (tmp_path / "pyproject.toml").read_text(encoding="utf-8")
 
 
 def test_preflight_aborts_when_not_on_main(tmp_path):
@@ -407,10 +407,10 @@ def test_remote_release_order_and_commands(tmp_path):
 
 def test_build_failure_rolls_back_version(tmp_path, monkeypatch):
     import subprocess as sp
-    (tmp_path / "pyproject.toml").write_text('version = "0.3.0"\n')
+    (tmp_path / "pyproject.toml").write_text('version = "0.3.0"\n', encoding="utf-8")
     (tmp_path / "nocturne").mkdir()
-    (tmp_path / "nocturne" / "__init__.py").write_text('__version__ = "0.3.0"\n')
-    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## [0.3.0] — 2026-07-23\nx\n")
+    (tmp_path / "nocturne" / "__init__.py").write_text('__version__ = "0.3.0"\n', encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## [0.3.0] — 2026-07-23\nx\n", encoding="utf-8")
     sp.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     sp.run(["git", "add", "-A"], cwd=tmp_path, check=True)
     sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"],
@@ -421,12 +421,12 @@ def test_build_failure_rolls_back_version(tmp_path, monkeypatch):
                         lambda run=None: (_ for _ in ()).throw(SystemExit("boom")))
     cfg = _write_config(tmp_path)
     notes = tmp_path / "n.json"
-    notes.write_text('{"headline":"h","added":["X"],"changed":[],"fixed":[]}')
+    notes.write_text('{"headline":"h","added":["X"],"changed":[],"fixed":[]}', encoding="utf-8")
     with pytest.raises(SystemExit):
         deploy.main(["--config", str(cfg), "--version", "0.4.0", "--notes-json", str(notes)])
-    assert '0.3.0' in (tmp_path / "pyproject.toml").read_text()          # bump rolled back
-    assert '0.4.0' not in (tmp_path / "pyproject.toml").read_text()
-    assert '0.3.0' in (tmp_path / "nocturne" / "__init__.py").read_text()
+    assert '0.3.0' in (tmp_path / "pyproject.toml").read_text(encoding="utf-8")          # bump rolled back
+    assert '0.4.0' not in (tmp_path / "pyproject.toml").read_text(encoding="utf-8")
+    assert '0.3.0' in (tmp_path / "nocturne" / "__init__.py").read_text(encoding="utf-8")
 
 
 def _cfg_with_download(tmp_path):
@@ -443,7 +443,7 @@ file_mode = "644"
 include = ["*.html"]
 exclude = ["config*.php", "db/", "uploads/", "*.fits", "*.fit"]
 download_path = "/var/www/nocturne/download/Nocturne.zip"
-''')
+''', encoding="utf-8")
     return deploy.load_config(p)
 
 
@@ -498,7 +498,7 @@ file_mode = "644"
 include = ["*.html"]
 exclude = ["config*.php", "db/", "uploads/", "*.fits", "*.fit"]
 download_path = "/srv/other/App.zip"
-''')
+''', encoding="utf-8")
     with pytest.raises(ValueError):
         deploy.load_config(p)
 
@@ -632,7 +632,7 @@ file_mode = "644"
 include = ["*.html"]
 exclude = ["config*.php", "db/", "uploads/", "*.fits", "*.fit"]
 samples_path = "/somewhere/else"
-''')
+''', encoding="utf-8")
     with pytest.raises(ValueError, match="samples_path"):
         load_config(cfg)
 
@@ -757,7 +757,7 @@ def _linux_config(tmp_path):
     are about where two artifacts land.
     """
     cfg = _write_config(tmp_path)
-    with open(cfg, "a") as f:
+    with open(cfg, "a", encoding="utf-8") as f:
         f.write('download_path = "/var/www/nocturne/download/Nocturne.zip"\n'
                 '\n[linux]\nssh_host = "builder@10.0.0.9"\n'
                 'repo_path = "/home/builder/nocturne"\n')

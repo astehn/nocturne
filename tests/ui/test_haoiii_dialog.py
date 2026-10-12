@@ -20,8 +20,8 @@ def _stats(path, score, included=True):
 
 
 def test_grading_fills_table(qtbot, tmp_path):
-    (tmp_path / "a.fit").write_text("x")
-    (tmp_path / "b.fit").write_text("x")
+    (tmp_path / "a.fit").write_text("x", encoding="utf-8")
+    (tmp_path / "b.fit").write_text("x", encoding="utf-8")
     dlg = HaOIIIDialog(Settings())
     qtbot.addWidget(dlg)
     dlg._grade_runner = lambda paths, on_progress=None, **kw: [
@@ -35,7 +35,7 @@ def test_grading_fills_table(qtbot, tmp_path):
 
 def test_extract_hands_off_master(qtbot, tmp_path):
     for name in ("low.fit", "mid.fit", "high.fit"):
-        (tmp_path / name).write_text("x")
+        (tmp_path / name).write_text("x", encoding="utf-8")
     low, mid, high = (str(tmp_path / n) for n in ("low.fit", "mid.fit", "high.fit"))
     captured, got = {}, {}
     dlg = HaOIIIDialog(Settings(), on_master=lambda img: got.setdefault("img", img))

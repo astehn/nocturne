@@ -1,4 +1,8 @@
+import sys
 import threading
+
+import pytest
+
 from nocturne.core.tasks import CancelToken, Cancelled, set_ambient, clear_ambient, current
 
 def test_check_raises_after_cancel():
@@ -44,6 +48,14 @@ def test_bind_after_cancel_kills_immediately(monkeypatch):
     assert killed["p"] is p
 
 
+# Process groups are POSIX. Windows kills a tree with taskkill /T instead, and
+# its own refusals (our pid, system pids, anything not our Popen) are in
+# tests/core/test_windows_processes.py.
+_POSIX_GROUPS = pytest.mark.skipif(sys.platform == "win32",
+                                   reason="POSIX process groups; Windows has none")
+
+
+@_POSIX_GROUPS
 def test_kill_process_never_signals_its_own_process_group(monkeypatch):
     """The one that cost a Linux afternoon.
 
@@ -75,6 +87,7 @@ def test_kill_process_never_signals_its_own_process_group(monkeypatch):
     assert proc.terminated, "it must still fall back to terminating the process"
 
 
+@_POSIX_GROUPS
 def test_kill_process_refuses_init_and_nonsense_pids(monkeypatch):
     """pid 1 is init's group, and a fake often carries 0 or None. None of those
     is a child of ours, and all of them are catastrophic to signal as a group."""
@@ -94,6 +107,7 @@ def test_kill_process_refuses_init_and_nonsense_pids(monkeypatch):
         assert proc.terminated
 
 
+@_POSIX_GROUPS
 def test_a_real_child_in_its_own_session_is_still_group_killed(monkeypatch):
     """The guard must not disarm the feature: a genuine child leads its own
     group, and cancelling a stack has to take its whole tree down."""

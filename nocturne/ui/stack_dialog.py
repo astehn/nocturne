@@ -501,7 +501,9 @@ class StackDialog(QDialog):
         if not folder:
             return ""      # never a path relative to wherever the app was started
         # "~/Astro" is a folder to the person typing it, not to save_fits.
-        return os.path.join(os.path.expanduser(folder), name)
+        # normpath: on Windows it expands to "C:\Users\me/Astro", and the path
+        # the status line quotes back should be written one way.
+        return os.path.join(os.path.normpath(os.path.expanduser(folder)), name)
 
     def _on_name_typed(self, _text: str) -> None:
         self._name_is_manual = True

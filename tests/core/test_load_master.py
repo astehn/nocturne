@@ -36,6 +36,6 @@ def test_load_master_rejects_mono_fits(tmp_path):
 
 def test_load_master_unsupported_extension(tmp_path):
     p = tmp_path / "m.jpg"
-    p.write_text("x")
+    p.write_text("x", encoding="utf-8")
     with pytest.raises(ValueError):
         load_master(str(p))

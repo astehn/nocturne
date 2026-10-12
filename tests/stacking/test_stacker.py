@@ -156,7 +156,7 @@ def test_progress_numbers_the_phases_so_a_refilling_bar_reads_as_progress(tmp_pa
 def test_run_stack_reports_unreadable(tmp_path):
     paths = _make_subs(tmp_path)
     bad = tmp_path / "bad.fit"
-    bad.write_text("not a fits file")
+    bad.write_text("not a fits file", encoding="utf-8")
     opts = StackOptions("average", 2.5, paths + [str(bad)], str(tmp_path / "m.fits"))
     result = run_stack(opts)
     assert any(str(bad) == p for p, _ in result.rejected)

@@ -58,8 +58,11 @@ REJECTED_DIR = "rejected"
 MANIFEST_NAME = ".nocturne-moved.json"
 _VERSION = 1
 
+# Windows has no libc to load by name (CDLL(None) raises TypeError there), and
+# needs none: its own rename already refuses to replace an existing file.
+_WINDOWS = os.name == "nt"
 try:
-    _libc = ctypes.CDLL(None, use_errno=True)
+    _libc = None if _WINDOWS else ctypes.CDLL(None, use_errno=True)
 except OSError:                                   # no libc to load from: exotic platform
     _libc = None
 
@@ -300,6 +303,15 @@ def _native_no_replace_rename(src: str, dst: str, dest: str) -> bool:
     so the caller should fall back. Raises FileExistsError for a genuine
     collision (`dest` names the destination folder in the message), or the
     underlying OSError for anything else."""
+    if _WINDOWS:
+        # MoveFileEx without MOVEFILE_REPLACE_EXISTING: atomic, and it fails
+        # on an existing destination instead of replacing it.
+        try:
+            os.rename(src, dst)
+        except FileExistsError:
+            raise FileExistsError(errno.EEXIST,
+                                  f"a file with this name appeared in {dest}", dst) from None
+        return True
     if _libc is None:
         return False
     s, d = os.fsencode(src), os.fsencode(dst)

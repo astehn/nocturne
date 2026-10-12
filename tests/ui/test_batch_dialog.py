@@ -11,7 +11,7 @@ from nocturne.ui.batch_dialog import BatchDialog  # noqa: E402
 
 def test_batch_dialog_runs_with_fake_runner(qtbot, tmp_path):
     (tmp_path / "r.json").write_text(
-        '{"version":1,"app":"' + __VER__ + '","steps":[{"stage":"stretch","option":0.5}]}')
+        '{"version":1,"app":"' + __VER__ + '","steps":[{"stage":"stretch","option":0.5}]}', encoding="utf-8")
     (tmp_path / "in").mkdir()
     (tmp_path / "in" / "a.fits").write_bytes(b"")   # an empty folder is refused now
     (tmp_path / "out").mkdir()
@@ -45,7 +45,7 @@ def test_batch_dialog_requires_recipe_and_output(qtbot):
 
 def _ready(dlg, tmp_path):
     (tmp_path / "r.json").write_text(
-        '{"version":1,"app":"' + __VER__ + '","steps":[{"stage":"stretch","option":0.5}]}')
+        '{"version":1,"app":"' + __VER__ + '","steps":[{"stage":"stretch","option":0.5}]}', encoding="utf-8")
     (tmp_path / "in").mkdir(exist_ok=True)
     (tmp_path / "out").mkdir(exist_ok=True)
     # A run needs something to run on: an empty input folder is now refused
@@ -224,7 +224,7 @@ def _write_recipe(tmp_path, steps):
     # pre-1.0 version is refused rather than replayed, so a fixture without it
     # is testing the refusal, not the feature.
     from nocturne import __version__
-    p.write_text(json.dumps({"version": 1, "app": __version__, "steps": steps}))
+    p.write_text(json.dumps({"version": 1, "app": __version__, "steps": steps}), encoding="utf-8")
     return str(p)
 
 
@@ -308,7 +308,7 @@ def test_clearing_a_bad_path_clears_the_complaint(qtbot, tmp_path):
 def test_a_good_recipe_still_reports_its_plan(qtbot, tmp_path):
     """The new branch must not shadow the working one."""
     r = tmp_path / "r.json"
-    r.write_text('{"version":1,"app":"' + __VER__ + '","steps":[{"stage":"stretch","option":0.5}]}')
+    r.write_text('{"version":1,"app":"' + __VER__ + '","steps":[{"stage":"stretch","option":0.5}]}', encoding="utf-8")
     dlg = BatchDialog(Settings())
     qtbot.addWidget(dlg)
     dlg.recipe_edit.setText(str(r))

@@ -7,7 +7,7 @@ import numpy as np
 from astropy.io import fits
 
 from ..core.image import AstroImage
-from ..core.tasks import Cancelled, current
+from ..core.tasks import Cancelled, child_process_kwargs, current
 from ..core import sessionlog
 
 
@@ -50,7 +50,7 @@ def run_cli(args: list[str], cancel=None, on_line=None) -> None:
     start = time.monotonic()
     if on_line is None:
         proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                text=True, start_new_session=True)
+                                text=True, errors="replace", **child_process_kwargs())
         if token is not None:
             token.bind_process(proc)
         out, err = proc.communicate()         # returns when the child exits (incl. after a kill)
@@ -60,7 +60,8 @@ def run_cli(args: list[str], cancel=None, on_line=None) -> None:
         # anyway. The merged text becomes ToolError's stdout so a failure still
         # carries everything the tool said.
         proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, bufsize=1, start_new_session=True)
+                                text=True, errors="replace", bufsize=1,
+                                **child_process_kwargs())
         if token is not None:
             token.bind_process(proc)
         lines = []

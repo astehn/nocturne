@@ -575,7 +575,7 @@ def test_the_main_window_no_longer_carries_its_own_painting():
     cheap guard against someone re-inlining the canvas painting and quietly
     restoring the two contradictory legends."""
     from pathlib import Path
-    src = (Path(__file__).parents[2] / "nocturne" / "ui" / "main_window.py").read_text()
+    src = (Path(__file__).parents[2] / "nocturne" / "ui" / "main_window.py").read_text(encoding="utf-8")
     assert "paint_clipping(rgb)" in src
     assert "_CLIP_MARK_ON" not in src and "_CLIP_HIGHLIGHT" not in src
 

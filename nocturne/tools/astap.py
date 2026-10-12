@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..core.image import AstroImage
-from ..core.tasks import Cancelled, current, kill_process
+from ..core.tasks import Cancelled, child_process_kwargs, current, kill_process
 from .base import ToolError
 
 # Whether projection (core/catalog, core/annotate) must flip y when turning a
@@ -70,7 +70,8 @@ def _run_astap(args: list[str], cwd: str, timeout: float = SOLVE_TIMEOUT_S) -> i
     token = current()
     start = time.monotonic()
     proc = subprocess.Popen(args, cwd=cwd, stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE, text=True, start_new_session=True)
+                            stderr=subprocess.PIPE, text=True, errors="replace",
+                            **child_process_kwargs())
     if token is not None:
         token.bind_process(proc)          # a later cancel() kills the group
     try:
@@ -81,7 +82,7 @@ def _run_astap(args: list[str], cwd: str, timeout: float = SOLVE_TIMEOUT_S) -> i
         out, err = proc.communicate()
         timed_out = True
     try:                          # stash ASTAP's own words so a failure explains itself
-        with open(os.path.join(cwd, _OUT_FILE), "w") as f:
+        with open(os.path.join(cwd, _OUT_FILE), "w", encoding="utf-8") as f:
             f.write((out or "") + "\n" + (err or ""))
     except OSError:
         pass
@@ -228,7 +229,7 @@ class ASTAP:
         from astropy.io import fits
         header = fits.Header()
         try:
-            with open(path, "r", errors="ignore") as f:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 for line in f:
                     if "=" not in line:
                         continue
@@ -248,7 +249,8 @@ class ASTAP:
     def _output(tmp: str) -> str:
         """Last of ASTAP's own stdout/stderr, for surfacing why a solve failed."""
         try:
-            with open(os.path.join(tmp, _OUT_FILE)) as f:
+            with open(os.path.join(tmp, _OUT_FILE), encoding="utf-8",
+                      errors="replace") as f:
                 return f.read().strip()[-400:]
         except OSError:
             return ""
@@ -270,7 +272,7 @@ class ASTAP:
         else — so a stray comment can't sink an otherwise-valid solution."""
         from astropy.io import fits
         try:
-            with open(wcs_path, "r", errors="ignore") as f:
+            with open(wcs_path, "r", encoding="utf-8", errors="ignore") as f:
                 raw = f.read()
         except OSError:
             return None

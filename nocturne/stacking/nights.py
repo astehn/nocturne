@@ -19,6 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
+from .capture_time import to_local
+
 # A night turns over at this local hour — mid-day, as far from any
 # observing as a clock gets.
 NIGHT_TURNS_AT = 12
@@ -31,7 +33,7 @@ def night_of(dt: datetime | None) -> date | None:
     """The date of the evening a capture time belongs to; None for no time."""
     if dt is None:
         return None
-    return (dt.astimezone() - timedelta(hours=NIGHT_TURNS_AT)).date()
+    return (to_local(dt) - timedelta(hours=NIGHT_TURNS_AT)).date()
 
 
 def night_key(s) -> date | None:

@@ -12,8 +12,9 @@ from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QThreadPool
 from PySide6.QtGui import QColor, QHelpEvent, QMouseEvent
 from PySide6.QtWidgets import QApplication, QToolTip
 
+from tests.local_zone import pin_local_zone
 from nocturne.settings import Settings
-from nocturne.stacking.capture_time import full_label
+from nocturne.stacking.capture_time import full_label, to_local
 from nocturne.stacking.grade import REASON_MEASURE, FrameStats, judge
 from nocturne.ui import theme
 from nocturne.ui.frame_browser import (COL_FWHM, SHOW_ALL, SHOW_KEPT,
@@ -461,7 +462,7 @@ def test_on_a_short_screen_the_chart_folds_before_the_verdict(qtbot, monkeypatch
 
 
 def _clock(s):
-    return f"{s.captured.astimezone():%H:%M}"
+    return f"{to_local(s.captured):%H:%M}"
 
 
 def test_the_axes_name_clock_times_and_two_fwhm_values(qtbot):
@@ -571,18 +572,13 @@ def test_2500_frames_paint_quickly(qtbot):
 
 # --- where one night ends and the next begins (spec 2026-09-28 §9.5) ----------
 
-import time as _time  # noqa: E402
 
 from nocturne.stacking.nights import night_key  # noqa: E402
 
 
 @pytest.fixture
 def stockholm(monkeypatch):
-    monkeypatch.setenv("TZ", "Europe/Stockholm")
-    _time.tzset()
-    yield
-    monkeypatch.undo()
-    _time.tzset()
+    pin_local_zone(monkeypatch, "Europe/Stockholm")
 
 
 def _nights(first=6, second=6, later=5 * 24 * 60):

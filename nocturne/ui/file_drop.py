@@ -33,6 +33,9 @@ def dropped_file(mime) -> tuple[str, str] | None:
     urls = mime.urls()
     if len(urls) != 1 or not urls[0].isLocalFile():
         return None
-    path = urls[0].toLocalFile()
+    # A file URL's path has forward slashes on Windows too ("C:/Users/..."); the
+    # same file chosen in Open would be "C:\Users\...", and Recent would list
+    # it twice. normpath is a no-op on a POSIX path from a URL.
+    path = os.path.normpath(urls[0].toLocalFile())
     kind = file_kind(path)
     return (kind, path) if kind else None

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import tifffile
 from astropy.io import fits
@@ -128,6 +130,30 @@ def camera_cards(meta: dict) -> dict:
     return cards
 
 
+_PARTIAL_PREFIX = ".nocturne-partial-"
+# Older than this, a partial master is a leftover: a stack killed during its
+# write (Cancel is a SIGTERM / taskkill /F, so no cleanup runs). A write still
+# in progress is seconds old — a 33 MP drizzle master takes ~1 s.
+_PARTIAL_STALE_S = 600
+
+
+def _sweep_stale_partials(folder: str) -> None:
+    import time
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    now = time.time()
+    for name in names:
+        if name.startswith(_PARTIAL_PREFIX) and name.endswith(".fits"):
+            full = os.path.join(folder, name)
+            try:
+                if now - os.path.getmtime(full) > _PARTIAL_STALE_S:
+                    os.remove(full)
+            except OSError:
+                pass
+
+
 def save_fits(img: AstroImage, path: str, header: dict | None = None) -> None:
     # 32-bit float FITS; color stored channels-first (3, H, W).
     data = img.data.astype(np.float32)
@@ -137,4 +163,26 @@ def save_fits(img: AstroImage, path: str, header: dict | None = None) -> None:
     if header:
         for key, value in header.items():
             hdu.header[key] = value
-    hdu.writeto(path, overwrite=True)
+    # Written beside the target, then swapped in: a stack cancelled (or a crash)
+    # during the ~1 s write of a 100 MB master would otherwise leave a truncated
+    # file under the final name — one that opens as a broken picture, or
+    # replaces a good master the user already had (2026-10-12).
+    import tempfile
+    folder = os.path.dirname(os.path.abspath(path))
+    _sweep_stale_partials(folder)
+    fd, tmp = tempfile.mkstemp(prefix=_PARTIAL_PREFIX, suffix=".fits", dir=folder)
+    os.close(fd)
+    try:
+        hdu.writeto(tmp, overwrite=True)
+        # mkstemp makes the file owner-only (0600); a master is shared — with
+        # another account, a NAS — so give it the mode a plain new file gets.
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(tmp, 0o666 & ~umask)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise

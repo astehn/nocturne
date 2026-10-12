@@ -67,7 +67,7 @@ def _contract(img: np.ndarray, s: float) -> np.ndarray:
 def _model(tmp_path, stem="tile-noise", meta=None) -> nr_models.NRModel:
     shutil.copy(FIXTURE, tmp_path / f"{stem}.onnx")
     (tmp_path / f"{stem}.json").write_text(json.dumps(
-        meta if meta is not None else {"space": "stretched", "inputs": 3, "tile": 256}))
+        meta if meta is not None else {"space": "stretched", "inputs": 3, "tile": 256}), encoding="utf-8")
     [m] = [m for m in nr_models.discover([str(tmp_path)]) if m.path.endswith(f"{stem}.onnx")]
     return m
 
@@ -90,7 +90,7 @@ def _drop(d: pathlib.Path, stem: str, meta) -> None:
     d.mkdir(parents=True, exist_ok=True)
     (d / f"{stem}.onnx").write_bytes(b"not read by discovery")
     if meta is not None:
-        (d / f"{stem}.json").write_text(meta if isinstance(meta, str) else json.dumps(meta))
+        (d / f"{stem}.json").write_text(meta if isinstance(meta, str) else json.dumps(meta), encoding="utf-8")
 
 
 STRETCHED = {"space": "stretched", "inputs": 3, "tile": 256}
@@ -132,7 +132,7 @@ def test_anything_but_a_three_input_stretched_model_is_ignored(tmp_path, meta):
 
 
 def test_json_without_its_onnx_is_ignored(tmp_path):
-    (tmp_path / "ghost.json").write_text(json.dumps(STRETCHED))
+    (tmp_path / "ghost.json").write_text(json.dumps(STRETCHED), encoding="utf-8")
     assert nr_models.discover([str(tmp_path)]) == []
 
 

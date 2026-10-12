@@ -5,7 +5,9 @@ export was an Activity line, so the user had to leave the app to find it. The
 line lives in the pinned description box, because Export scrolls ~400 px at
 1280x800 and a "done" line below the fold would not be seen.
 """
+import os
 import re
+import sys
 
 import pytest
 
@@ -91,6 +93,13 @@ def test_a_new_image_clears_it(qtbot, tmp_path, monkeypatch):
 
 def test_a_name_is_text_not_markup(qtbot, tmp_path, monkeypatch):
     win = _at_export(qtbot, tmp_path)
+    if sys.platform == "win32":
+        # "<" and ">" cannot be in a Windows file name; an entity can, and must
+        # be shown as typed, not decoded.
+        _export(win, monkeypatch, tmp_path / "a&lt;b&gt;c.tiff")
+        assert "a&lt;b&gt;c.tiff" in _desc(win).replace("&amp;", "&")
+        assert "&amp;lt;b&amp;gt;" in win._panel.desc_box.text()
+        return
     _export(win, monkeypatch, tmp_path / "a<b>c.tiff")
     assert "a<b>c.tiff" in _desc(win).replace("&lt;", "<").replace("&gt;", ">")
     assert "&lt;b&gt;" in win._panel.desc_box.text()
@@ -128,13 +137,14 @@ def test_a_long_name_stays_on_one_line_at_1280x800(qtbot, tmp_path, monkeypatch)
         app.setStyleSheet(before)
 
 
-@pytest.mark.parametrize("platform", ["darwin", "linux"])
+@pytest.mark.parametrize("platform", ["darwin", "linux", "win32"])
 def test_reveal_uses_the_platforms_own_file_manager(qtbot, tmp_path, monkeypatch, platform):
     import subprocess
     import sys
     from PySide6.QtGui import QDesktopServices
     win = _window(qtbot, tmp_path)
-    target = tmp_path / "pic.tiff"
+    target = tmp_path / "my pics, M 31" / "pic.tiff"
+    target.parent.mkdir()
     target.write_bytes(b"x")
     calls = []
     monkeypatch.setattr(sys, "platform", platform)
@@ -144,5 +154,10 @@ def test_reveal_uses_the_platforms_own_file_manager(qtbot, tmp_path, monkeypatch
     win._reveal_in_file_manager(str(target))
     if platform == "darwin":
         assert calls == [("popen", ["open", "-R", str(target)])]
+    elif platform == "win32":
+        # One string: Explorer parses its own command line, and "/select,<path>"
+        # must survive spaces and commas in the path.
+        assert calls == [("popen", f'explorer /select,"{os.path.normpath(str(target))}"')]
     else:
-        assert calls == [("url", str(tmp_path))]
+        # A URL's local path has forward slashes even on Windows.
+        assert calls == [("url", target.parent.as_posix())]

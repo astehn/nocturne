@@ -39,7 +39,7 @@ def test_about_html_lists_a_donor_when_present(tmp_path):
         "creator": {"name": "X", "role": "Y"}, "ai": "Z",
         "built_with": [{"name": "NumPy", "what": "n"}],
         "works_with": [], "photon_donors": ["Jane Nebula"],
-    }))
+    }), encoding="utf-8")
     html = about_html(load_contributors(str(p)))
     assert "Jane Nebula" in html
     assert "Be the first" not in html

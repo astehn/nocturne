@@ -40,18 +40,18 @@ def test_the_licences_travel_with_the_fonts():
     licences = list(FONT_DIR.glob("OFL-*.txt"))
     assert len(licences) == len(PLATE_FAMILIES)
     for lic in licences:
-        assert "SIL OPEN FONT LICENSE" in lic.read_text().upper()
+        assert "SIL OPEN FONT LICENSE" in lic.read_text(encoding="utf-8").upper()
 
 
 def test_the_packaging_spec_carries_the_assets_directory():
-    spec = (ROOT / "packaging" / "nocturne.spec").read_text()
+    spec = (ROOT / "packaging" / "nocturne.spec").read_text(encoding="utf-8")
     assert 'ASSETS, "nocturne/assets"' in spec, \
         "fonts live under assets/; if that sweep goes, name the font dir explicitly"
 
 
 def test_startup_loads_the_fonts_before_a_window_exists():
     """A plate rendered before the families register silently substitutes."""
-    src = (ROOT / "nocturne" / "__main__.py").read_text()
+    src = (ROOT / "nocturne" / "__main__.py").read_text(encoding="utf-8")
     assert "load_bundled_fonts()" in src
     body = src.split("def main()")[1]
     assert body.index("QApplication(sys.argv)") < body.index("load_bundled_fonts()"), \

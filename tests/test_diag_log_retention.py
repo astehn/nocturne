@@ -19,7 +19,7 @@ pytestmark = pytest.mark.skipif(not SITE.is_dir(), reason="site/ is local-only")
 
 def test_the_sweep_clears_the_diagnostic_log():
     """Without this, the page promises an expiry that never happens."""
-    php = (SITE / "cleanup.php").read_text()
+    php = (SITE / "cleanup.php").read_text(encoding="utf-8")
     assert re.search(r"UPDATE reports SET diag_log = NULL", php), \
         "cleanup.php never clears diag_log"
     assert "RETENTION_DAYS" in php.split("diag_log = NULL")[1][:400], \
@@ -30,7 +30,7 @@ def test_the_privacy_page_states_BOTH_clocks():
     """The attachment expires at 28 days; the log expires at 28 days OR when
     the report is deleted, whichever is sooner. A reader will assume one clock
     unless told, and these are related but not identical."""
-    prose = (SITE / "_src" / "privacy.html").read_text()
+    prose = (SITE / "_src" / "privacy.html").read_text(encoding="utf-8")
     assert "whichever comes first" in prose, "the two clocks are not distinguished"
     assert "28 days" in prose
 
@@ -40,13 +40,13 @@ def test_the_privacy_page_does_not_still_claim_the_app_sends_nothing():
     transmits to the server". True of the web form, and FALSE since Nocturne
     posts the report itself. Andreas on the last version of this: "we are now
     actively lying in several places on the website"."""
-    prose = (SITE / "_src" / "privacy.html").read_text()
+    prose = (SITE / "_src" / "privacy.html").read_text(encoding="utf-8")
     assert "your browser never transmits" not in prose
 
 
 def test_the_page_says_the_web_form_sends_no_log():
     """The asymmetry is deliberate and a reader should not have to infer it."""
-    prose = (SITE / "_src" / "privacy.html").read_text()
+    prose = (SITE / "_src" / "privacy.html").read_text(encoding="utf-8")
     assert "Reporting from the support page sends" in prose
 
 
@@ -58,7 +58,7 @@ def test_the_generated_pages_match_their_sources():
         # Whitespace-collapsed: the phrase wraps across lines in the built
         # page, and a literal match failed on the line break rather than on
         # anything real.
-        built = re.sub(r"\s+", " ", (SITE / name).read_text())
+        built = re.sub(r"\s+", " ", (SITE / name).read_text(encoding="utf-8"))
         assert "diagnostic log" in built, f"{name} was not rebuilt"
 
 
@@ -88,7 +88,7 @@ def _code_only(text: str) -> str:
 
 def _session_cell() -> str:
     """The Session column's markup — the branch that renders a stored log."""
-    src = ADMIN.read_text()
+    src = ADMIN.read_text(encoding="utf-8")
     start = src.index("if (!empty($r['diag_log']))")
     return _code_only(src[start:src.index("from the website", start)])
 
@@ -109,7 +109,7 @@ def test_the_reader_moves_the_log_as_TEXT_never_as_MARKUP():
     however machine-generated it looks. h() escapes it once into the hidden
     node; reading it back with innerHTML would undo exactly that and execute
     whatever a reporter chose to send."""
-    src = ADMIN.read_text()
+    src = ADMIN.read_text(encoding="utf-8")
     reader = _code_only(src[src.index("id=\"logbox\""):])
     assert "innerHTML" not in reader, "the reader assigns markup, not text"
     assert "pre.textContent = src.textContent" in reader

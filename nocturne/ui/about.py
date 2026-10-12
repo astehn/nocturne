@@ -27,7 +27,7 @@ def load_contributors(path: str | None = None) -> dict:
     the About page never crashes."""
     p = Path(path) if path else _DATA
     try:
-        data = json.loads(p.read_text())
+        data = json.loads(p.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 — missing/corrupt file must never crash About
         return dict(_FALLBACK)
     for key, val in _FALLBACK.items():

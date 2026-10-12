@@ -68,7 +68,7 @@ def test_the_about_dialog_says_beta():
 
 def test_the_readme_says_beta_before_the_fold():
     """Someone arriving from GitHub decides what this is in the first screen."""
-    readme = (Path(nocturne.__file__).resolve().parent.parent / "README.md").read_text()
+    readme = (Path(nocturne.__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
     head = readme[:1200]
     assert "beta" in head.lower(), "README does not mention beta in its opening"
 

@@ -188,9 +188,9 @@ def test_every_path_that_makes_a_stretch_records_the_version():
     reopened picture would differ from the one that was saved."""
     import pathlib
     root = pathlib.Path(__file__).resolve().parent.parent.parent
-    panels = (root / "nocturne/ui/step_panels.py").read_text()
+    panels = (root / "nocturne/ui/step_panels.py").read_text(encoding="utf-8")
     assert "w.commit_option = lambda: new_stretch_option(" in panels
-    mw = (root / "nocturne/ui/main_window.py").read_text()
+    mw = (root / "nocturne/ui/main_window.py").read_text(encoding="utf-8")
     assert "option = new_stretch_option(amount)" in mw
     from nocturne.core.auto_enhance import build_auto_plan
     from nocturne.settings import Settings

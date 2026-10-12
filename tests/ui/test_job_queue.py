@@ -11,6 +11,8 @@ thread rather than calling its callbacks from the main thread.
 """
 import json
 import os
+import subprocess
+import sys
 import threading
 import time
 
@@ -146,7 +148,9 @@ def test_a_bad_line_costs_one_line_not_the_job(qtbot, monkeypatch, bad):
 
 def test_the_child_leads_its_own_process_group(qtbot, monkeypatch):
     """Without `start_new_session=True`, `os.getpgid(child)` is Nocturne's OWN
-    process group — so cancelling a stack SIGTERMs the app itself."""
+    process group — so cancelling a stack SIGTERMs the app itself. Windows has
+    no sessions: there the child gets its own process group (taskkill /T takes
+    its tree) and no console window."""
     import nocturne.ui.job_queue as jq
 
     captured = {}
@@ -158,9 +162,14 @@ def test_the_child_leads_its_own_process_group(qtbot, monkeypatch):
     monkeypatch.setattr(jq.subprocess, "Popen", fake_popen)
     q = JobQueue()
     q.enqueue(_job("A"))
-    assert captured.get("start_new_session") is True, (
-        "the child must lead its own process group: kill_process does "
-        "os.killpg(os.getpgid(pid)), which without this kills Nocturne")
+    if sys.platform == "win32":
+        flags = captured.get("creationflags", 0)
+        assert flags & subprocess.CREATE_NEW_PROCESS_GROUP
+        assert flags & subprocess.CREATE_NO_WINDOW, "a console would flash up per stack"
+    else:
+        assert captured.get("start_new_session") is True, (
+            "the child must lead its own process group: kill_process does "
+            "os.killpg(os.getpgid(pid)), which without this kills Nocturne")
     _settle(qtbot, q)
 
 

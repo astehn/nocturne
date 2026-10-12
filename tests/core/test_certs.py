@@ -59,13 +59,22 @@ def test_a_missing_certifi_is_survivable(monkeypatch):
 def test_ca_path_is_usable_sees_a_missing_bundle(monkeypatch):
     """The check the packaged app could not do for itself: from source the build
     machine's path exists, so a bundle that only works here looks healthy."""
-    assert ca_path_is_usable()          # this machine has Homebrew's store
-    monkeypatch.setenv("SSL_CERT_FILE", "/nonexistent/cert.pem")
-    monkeypatch.setenv("SSL_CERT_DIR", "/nonexistent/certs")
     import importlib
     import ssl
+
+    import certifi
+    # The precondition is the bundle the app itself points at (configure_ssl),
+    # not this machine's own OpenSSL layout: Homebrew's store exists on the
+    # build Mac, and on Windows Python has no default CA file at all (it reads
+    # the system store), so "the default path exists" was a fact about one
+    # machine.
+    monkeypatch.setenv("SSL_CERT_FILE", certifi.where())
     importlib.reload(ssl)               # verify paths are read at import
     try:
+        assert ca_path_is_usable()
+        monkeypatch.setenv("SSL_CERT_FILE", "/nonexistent/cert.pem")
+        monkeypatch.setenv("SSL_CERT_DIR", "/nonexistent/certs")
+        importlib.reload(ssl)
         assert not ca_path_is_usable()
     finally:
         monkeypatch.undo()
@@ -118,7 +127,7 @@ def test_certifi_is_a_real_dependency_not_an_accident():
     """It arrives transitively today via other packages. That is not a promise —
     a dependency dropping it would silently reintroduce the bug in the next
     build, and nothing would notice until a user's app went quiet."""
-    deps = (ROOT / "pyproject.toml").read_text()
+    deps = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert "certifi" in deps.split("[project.optional-dependencies]")[0], (
         "certifi is not a declared runtime dependency")
 
@@ -126,7 +135,7 @@ def test_certifi_is_a_real_dependency_not_an_accident():
 def test_the_bundle_collects_certifi():
     """The dependency alone is not enough — PyInstaller has to be told to carry
     cacert.pem, or the .app ships libssl with nothing to verify against."""
-    spec = (ROOT / "packaging" / "nocturne.spec").read_text()
+    spec = (ROOT / "packaging" / "nocturne.spec").read_text(encoding="utf-8")
     assert "certifi" in spec, "the spec does not collect certifi"
 
 
@@ -134,7 +143,7 @@ def test_startup_configures_ssl_before_anything_can_connect():
     """Order matters and cannot be asserted at runtime: OpenSSL reads the
     variable when a context is built, so a call placed after the first request
     fixes nothing while looking correct."""
-    src = (ROOT / "nocturne" / "__main__.py").read_text()
+    src = (ROOT / "nocturne" / "__main__.py").read_text(encoding="utf-8")
     assert "configure_ssl()" in src, "startup never configures SSL"
     body = src.split("def main()")[1]
     assert body.index("configure_ssl()") < body.index("QApplication(sys.argv)"), (

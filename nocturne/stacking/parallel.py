@@ -111,14 +111,69 @@ def _performance_cores() -> int:
         n = _sysctl_int(key)
         if n and n > 0:
             return n
+    if os.name == "nt":
+        n = _windows_physical_cores()
+        if n:
+            return n
     return max(1, (os.cpu_count() or 2) // 2)
 
 
+def _windows_physical_cores() -> int | None:
+    """Physical cores from GetLogicalProcessorInformationEx. Halving the logical
+    count assumes hyperthreading; a VM or a CPU without it then gets half its
+    cores — the 4-core test VM was planned as 2, the 2-core one as 1
+    (2026-10-12)."""
+    try:
+        k32 = ctypes.windll.kernel32
+        size = ctypes.c_uint32(0)
+        k32.GetLogicalProcessorInformationEx(0, None, ctypes.byref(size))  # RelationProcessorCore
+        if not size.value:
+            return None
+        buf = ctypes.create_string_buffer(size.value)
+        if not k32.GetLogicalProcessorInformationEx(0, buf, ctypes.byref(size)):
+            return None
+        count, offset = 0, 0
+        while offset < size.value:
+            # Each record: DWORD Relationship, DWORD Size, then the payload.
+            rec_size = ctypes.c_uint32.from_buffer_copy(buf.raw[offset + 4:offset + 8]).value
+            if rec_size == 0:
+                break
+            count += 1
+            offset += rec_size
+        return count or None
+    except Exception:
+        return None
+
+
 def _total_ram_bytes() -> int:
+    if os.name == "nt":
+        ram = _windows_total_ram()
+        if ram:
+            return ram
     try:
         return int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
     except (ValueError, OSError, AttributeError):
         return 8 * 1024 ** 3       # assume a modest machine rather than a huge one
+
+
+def _windows_total_ram() -> int | None:
+    """Physical memory through GlobalMemoryStatusEx. Windows has no sysconf, so
+    without this every Windows machine was planned as an 8 GB one: too many
+    workers on a small laptop, too few on a large desktop."""
+    class _MemStatus(ctypes.Structure):
+        _fields_ = [("dwLength", ctypes.c_uint32), ("dwMemoryLoad", ctypes.c_uint32),
+                    ("ullTotalPhys", ctypes.c_uint64), ("ullAvailPhys", ctypes.c_uint64),
+                    ("ullTotalPageFile", ctypes.c_uint64), ("ullAvailPageFile", ctypes.c_uint64),
+                    ("ullTotalVirtual", ctypes.c_uint64), ("ullAvailVirtual", ctypes.c_uint64),
+                    ("ullAvailExtendedVirtual", ctypes.c_uint64)]
+    try:
+        st = _MemStatus()
+        st.dwLength = ctypes.sizeof(_MemStatus)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+            return None
+        return int(st.ullTotalPhys) or None
+    except Exception:
+        return None
 
 
 @dataclass(frozen=True)

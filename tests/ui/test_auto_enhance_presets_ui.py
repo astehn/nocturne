@@ -1,12 +1,19 @@
 """Auto Enhance presets in the window: the toolbar menu, the busy label, the
 log lines, and failures shown in the warning channel."""
+import sys
 import pytest
 
 pytest.importorskip("PySide6")
 from PySide6.QtGui import QAction  # noqa: E402
 from PySide6.QtWidgets import QMenu, QToolBar, QToolButton, QWidget  # noqa: E402
 
+from tests.fake_tool import fake_tool
 from tests.ui.test_main_window import _crop, _make_fits, _window  # noqa: E402
+
+
+# Any real program will do as a stand-in tool path; /bin/echo does not exist
+# on Windows, where is_tool also wants an extension.
+_RUNNABLE = sys.executable
 
 
 def _spy_presets(win, monkeypatch):
@@ -197,7 +204,7 @@ def test_several_failures_are_named_together(qtbot, tmp_path, monkeypatch):
 
 def test_a_colour_fallback_message_reaches_the_summary(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
-    win.settings.astap_path = "/bin/echo"   # photometric planned; the solve cannot work
+    win.settings.astap_path = _RUNNABLE   # photometric planned; the solve cannot work
     win.open_fits(_make_fits(tmp_path))
     _crop(win)
     win._auto_enhance()
@@ -339,8 +346,7 @@ def test_the_left_out_sentence_is_the_plan_that_ran(qtbot, tmp_path, monkeypatch
     """Settings can change while the chain runs (minutes, with external tools);
     the summary describes the plan that was built, not the settings now."""
     exe = tmp_path / "graxpert"
-    exe.write_text("#!/bin/sh\n")
-    exe.chmod(0o755)
+    exe = fake_tool(exe, "#!/bin/sh\n")
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     _crop(win)

@@ -112,7 +112,7 @@ class Settings:
 def load_settings(path: str) -> Settings:
     if not os.path.exists(path):
         return Settings()
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     # A settings file carrying the caption keys was written by a build that
     # shipped the caption band, so that user's shares already look like Data.
@@ -170,7 +170,7 @@ def load_settings(path: str) -> Settings:
 
 
 def save_settings(s: Settings, path: str) -> None:
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(asdict(s), f, indent=2)
 
 
@@ -281,8 +281,31 @@ _LINUX_CANDIDATES: dict[str, list[str]] = {
                      "which:starnet2"],
 }
 
+# Windows, added 2026-10-12. Paths use %VARS% (expanded per machine) because
+# the per-user installers write under the user's own AppData. GraXpert and
+# StarNet2 are where Andreas' Windows installs put them; ASTAP is its
+# installer's default. RC-Astro's Windows CLI location is NOT yet verified on a
+# real install — PATH is the reliable route until it is.
+_WINDOWS_CANDIDATES: dict[str, list[str]] = {
+    "graxpert_path": [r"%LOCALAPPDATA%\Programs\GraXpert\GraXpert.exe",
+                      r"%ProgramFiles%\GraXpert\GraXpert.exe",
+                      "which:GraXpert"],
+    "rcastro_path": [r"%ProgramFiles%\RC-Astro\CLI\rc-astro.exe",
+                     r"%LOCALAPPDATA%\Programs\RC-Astro\CLI\rc-astro.exe",
+                     "which:rc-astro"],
+    "astap_path": [r"%ProgramFiles%\astap\astap.exe",
+                   r"%ProgramFiles(x86)%\astap\astap.exe",
+                   r"C:\astap\astap.exe",
+                   "which:astap"],
+    "starnet_path": [r"%ProgramFiles%\StarNet2\bin\starnet2.exe",
+                     r"%ProgramFiles%\StarNet2\starnet2.exe",
+                     r"%LOCALAPPDATA%\Programs\StarNet2\bin\starnet2.exe",
+                     "which:starnet2"],
+}
+
 TOOL_CANDIDATES: dict[str, list[str]] = (
-    _MAC_CANDIDATES if sys.platform == "darwin" else _LINUX_CANDIDATES)
+    _MAC_CANDIDATES if sys.platform == "darwin"
+    else _WINDOWS_CANDIDATES if sys.platform == "win32" else _LINUX_CANDIDATES)
 
 
 def detect_tool_paths(s: Settings, candidates: dict | None = None,
@@ -321,7 +344,9 @@ def detect_tool_paths(s: Settings, candidates: dict | None = None,
                     found[field_name] = hit
                     break
                 continue
-            path = os.path.expanduser(raw)
+            path = os.path.expandvars(os.path.expanduser(raw))
+            if "%" in path:
+                continue                  # an unset %VAR% (on another OS): no such place
             if "*" in path:
                 # AppImages carry their version in the filename, so the only way
                 # to name one is a pattern. Newest-looking last, so sorted()[-1]
@@ -377,6 +402,12 @@ def is_tool(path: str) -> bool:
     if not path:
         return False
     resolved = resolve_binary(path)
+    if sys.platform == "win32":
+        # Windows reports every existing file as executable (os.access X_OK),
+        # so the markdown file the check above exists to refuse would pass.
+        # What Windows can run is decided by the extension.
+        exts = {e.lower() for e in os.environ.get("PATHEXT", ".EXE;.BAT;.CMD;.COM").split(";") if e}
+        return os.path.isfile(resolved) and os.path.splitext(resolved)[1].lower() in exts
     return os.path.isfile(resolved) and os.access(resolved, os.X_OK)
 
 

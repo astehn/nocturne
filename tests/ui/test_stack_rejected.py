@@ -5,6 +5,7 @@ inside tmp_path — never a real capture folder — and checks bytes and mtimes,
 not just names.
 """
 import os
+import sys
 
 import numpy as np
 import pytest
@@ -319,6 +320,7 @@ def test_a_name_already_in_rejected_stops_everything(qtbot, tmp_path):
 
 
 @pytest.mark.skipif(AS_ROOT, reason="root ignores permissions")
+@pytest.mark.skipif(sys.platform == "win32", reason="chmod cannot lock a folder on Windows")
 def test_a_read_only_folder_moves_nothing_and_says_why(qtbot, tmp_path):
     """Review Focus 1."""
     folder, _paths = _folder(tmp_path)
@@ -337,7 +339,7 @@ def test_a_read_only_folder_moves_nothing_and_says_why(qtbot, tmp_path):
 def test_a_damaged_record_is_reported_and_nothing_moves(qtbot, tmp_path):
     folder, _paths = _folder(tmp_path)
     (folder / "rejected").mkdir()
-    (folder / "rejected" / MANIFEST_NAME).write_text("{ not json")
+    (folder / "rejected" / MANIFEST_NAME).write_text("{ not json", encoding="utf-8")
     before = tree(tmp_path)
     d, _ = _graded(qtbot, folder)
     assert "damaged" in d.verdict_strip.message.text()
@@ -447,7 +449,7 @@ def test_a_known_damaged_record_refuses_before_asking(qtbot, tmp_path):
     said yes to a move that cannot happen."""
     folder, _paths = _folder(tmp_path)
     (folder / "rejected").mkdir()
-    (folder / "rejected" / MANIFEST_NAME).write_text("{ not json")
+    (folder / "rejected" / MANIFEST_NAME).write_text("{ not json", encoding="utf-8")
     before = tree(tmp_path)
     d, asked = _graded(qtbot, folder)
     d.verdict_strip.move_btn.click()
@@ -462,7 +464,7 @@ def test_the_damaged_message_clears_once_the_record_is_fixed(qtbot, tmp_path):
     fires — without its own fix the complaint sat there forever."""
     folder, _paths = _folder(tmp_path)
     (folder / "rejected").mkdir()
-    (folder / "rejected" / MANIFEST_NAME).write_text("{ not json")
+    (folder / "rejected" / MANIFEST_NAME).write_text("{ not json", encoding="utf-8")
     d, _ = _graded(qtbot, folder)
     assert "damaged" in d.verdict_strip.message.text()
     os.unlink(folder / "rejected" / MANIFEST_NAME)

@@ -31,7 +31,7 @@ def test_recent_projects_are_listed_and_open(qtbot, tmp_path):
     paths = []
     for name in ("M 31.nocturne", "NGC 7000.nocturne"):
         p = tmp_path / name
-        p.write_text("x")
+        p.write_text("x", encoding="utf-8")
         paths.append(str(p))
     gone = str(tmp_path / "moved away.nocturne")
     opened = []
@@ -57,7 +57,7 @@ def test_at_most_six_are_shown_and_the_list_follows_the_settings(qtbot, tmp_path
     files = []
     for i in range(8):
         p = tmp_path / f"p{i}.nocturne"
-        p.write_text("x")
+        p.write_text("x", encoding="utf-8")
         files.append(str(p))
     source = {"list": files[:2]}
     w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: source["list"])
@@ -75,7 +75,7 @@ def test_the_buttons_stay_put_whatever_the_list_holds(qtbot, tmp_path):
     files = []
     for i in range(4):
         p = tmp_path / f"p{i}.nocturne"
-        p.write_text("x")
+        p.write_text("x", encoding="utf-8")
         files.append(str(p))
     source = {"list": files[:1]}
     w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: source["list"])
@@ -92,7 +92,7 @@ def test_the_buttons_stay_put_whatever_the_list_holds(qtbot, tmp_path):
 
 def test_a_list_rebuilt_while_work_runs_starts_locked(qtbot, tmp_path):
     p = tmp_path / "a.nocturne"
-    p.write_text("x")
+    p.write_text("x", encoding="utf-8")
     state = {"busy": False}
     w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: [str(p)],
                       locked=lambda: state["busy"])
@@ -106,7 +106,7 @@ def test_a_list_rebuilt_while_work_runs_starts_locked(qtbot, tmp_path):
 def test_the_recent_list_unlocks_when_work_ends(qtbot, tmp_path):
     from tests.ui.test_main_window import _window
     p = tmp_path / "a.nocturne"
-    p.write_text("x")
+    p.write_text("x", encoding="utf-8")
     win = _window(qtbot, tmp_path)
     win.settings.recent_projects = [str(p)]
     win.show()                                  # the start page on screen
@@ -122,7 +122,7 @@ def test_a_list_built_locked_while_hidden_is_live_when_shown(qtbot, tmp_path):
     """Hidden, it is not rebuilt when work ends — showing it rebuilds it."""
     from tests.ui.test_main_window import _window
     p = tmp_path / "a.nocturne"
-    p.write_text("x")
+    p.write_text("x", encoding="utf-8")
     win = _window(qtbot, tmp_path)
     win.settings.recent_projects = [str(p)]
     win._set_busy(True)

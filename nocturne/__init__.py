@@ -34,3 +34,12 @@ def app_title() -> str:
     """"Nocturne 0.17.0 (beta)" — the window bar's base, shared so the title
     and the About dialog can never disagree about what is running."""
     return f"{APP_NAME} {version_label()}"
+
+
+# Windows only: sep's star detection is not repeatable there without this
+# (see core/sep_seed.py). Here, so every process — the app, the stack job and
+# each of its pool workers — has it before its first star is found.
+import os as _os
+if _os.name == "nt":
+    from .core import sep_seed as _sep_seed
+    _sep_seed.install()

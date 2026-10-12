@@ -5,11 +5,11 @@ carries DATE-OBS 2026-09-21T20:19:21.392456 (read 2026-09-27). Two hours apart
 is CEST: the header is UTC, the name is local. Pinned to a zone so the test
 means the same thing on any machine.
 """
-import time
 from datetime import datetime, timezone
 
 import pytest
 
+from tests.local_zone import pin_local_zone
 from nocturne.stacking.capture_time import (
     from_date_obs, from_filename, full_label, read_capture_time, time_label,
 )
@@ -21,11 +21,7 @@ REAL_DATE_OBS = "2026-09-21T20:19:21.392456"
 
 @pytest.fixture
 def stockholm(monkeypatch):
-    monkeypatch.setenv("TZ", "Europe/Stockholm")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
+    pin_local_zone(monkeypatch, "Europe/Stockholm")
 
 
 def test_the_header_is_read_as_utc_and_shown_in_local_time(stockholm):

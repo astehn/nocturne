@@ -1,5 +1,6 @@
 """The "SHO-style (gold and blue)" palette (spec 2026-10-08, D1-D6), and the
 guard that adding it left the three old palettes' pixels exactly where they were."""
+import sys
 import dataclasses
 import hashlib
 import os
@@ -38,6 +39,16 @@ _OLD_VARIANTS = [
     dict(protect_background=0.8, oxygen_strength=0.5, highlight_recover=1.2),
 ]
 
+# Byte-exact hashes are a fact about the float maths of the machine that took
+# them (macOS). On Windows every one of the 24 old-palette renders differs, by
+# at most 5e-6 (a third of one 16-bit level) — last-bit differences in the
+# transcendental functions behind the colour conversions, numpy 2.5.0 vs 2.5.4
+# and a different libm (measured 2026-10-12). The guard is kept where it means
+# something rather than loosened everywhere.
+_PINNED_HERE = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="hashes pinned on macOS; Windows float32 differs by <=5e-6 (libm/numpy ulps)")
+
 # sha256 of render(...).data, captured at 9e1c6ae (v0.49.0) BEFORE this palette
 # existed. Stored projects and recipes replay through exactly this path.
 _OLD_HASHES = {
@@ -69,6 +80,7 @@ _OLD_HASHES = {
 
 
 @pytest.mark.filterwarnings("ignore:Conversion from CIE-LAB")
+@_PINNED_HERE
 def test_old_palettes_render_byte_identically_to_before_this_palette():
     img = _old_fixture()
     for pal, (i, v), stars in itertools.product(OLD_PALETTES, enumerate(_OLD_VARIANTS), (True, False)):
@@ -734,6 +746,7 @@ def _lab_side(out, eps=1e-3):
     return np.sign(lab[..., 2]), np.hypot(lab[..., 1], lab[..., 2]) > eps
 
 
+@_PINNED_HERE
 def test_100_percent_gold_and_blue_is_the_approved_default_look(monkeypatch):
     assert palette_defaults(GOLD_BLUE).gold_strength == 1.0
     assert palette_defaults(GOLD_BLUE).blue_strength == 1.0

@@ -23,7 +23,7 @@ ODIN = {"space": "stretched", "inputs": 3, "tile": 256, "id": "v20.0", "name": "
 @pytest.fixture
 def tray(tmp_path, monkeypatch):
     shutil.copy(FIXTURE, tmp_path / "v20.0.onnx")
-    (tmp_path / "v20.0.json").write_text(json.dumps(ODIN))
+    (tmp_path / "v20.0.json").write_text(json.dumps(ODIN), encoding="utf-8")
     monkeypatch.setattr(nr_models, "TRAY_DIR", str(tmp_path))
     return tmp_path
 

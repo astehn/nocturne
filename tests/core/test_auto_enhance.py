@@ -1,5 +1,6 @@
 import numpy as np
 
+from tests.fake_tool import fake_tool
 from nocturne.core.auto_enhance import AUTO_LEVELS, build_auto_plan, detect_data_type, run_auto_plan
 from nocturne.core.image import AstroImage
 from nocturne.settings import Settings
@@ -67,8 +68,7 @@ def test_plan_can_omit_crop():
 
 def test_plan_shape_with_graxpert(tmp_path):
     graxpert = tmp_path / "graxpert"
-    graxpert.write_text("#!/bin/sh\n")
-    graxpert.chmod(0o755)
+    graxpert = fake_tool(graxpert, "#!/bin/sh\n")
     settings = Settings(graxpert_path=str(graxpert))
     plan = build_auto_plan(_broadband_stack(), settings)
     s = _stages(plan)
@@ -78,8 +78,7 @@ def test_plan_shape_with_graxpert(tmp_path):
 
 def test_plan_uses_photometric_color_when_astap_available(tmp_path):
     astap = tmp_path / "astap"
-    astap.write_text("#!/bin/sh\n")
-    astap.chmod(0o755)
+    astap = fake_tool(astap, "#!/bin/sh\n")
     settings = Settings(astap_path=str(astap))
     plan = build_auto_plan(_broadband_stack(), settings)
     options = dict(plan)
@@ -96,8 +95,7 @@ def test_plan_uses_photometric_color_for_dualband_data_too(tmp_path):
     # The dual-band/narrowband branch is gone -- LP-filter data goes through
     # the exact same photometric-color path as everything else.
     astap = tmp_path / "astap"
-    astap.write_text("#!/bin/sh\n")
-    astap.chmod(0o755)
+    astap = fake_tool(astap, "#!/bin/sh\n")
     settings = Settings(astap_path=str(astap))
     plan = build_auto_plan(_dualband_stack(), settings)
     options = dict(plan)
@@ -115,8 +113,7 @@ def test_no_graxpert_still_produces_a_plan():
 
 def test_graxpert_available_adds_background_stage(tmp_path):
     graxpert = tmp_path / "graxpert"
-    graxpert.write_text("#!/bin/sh\n")
-    graxpert.chmod(0o755)
+    graxpert = fake_tool(graxpert, "#!/bin/sh\n")
     settings = Settings(graxpert_path=str(graxpert))
     plan = build_auto_plan(_broadband_stack(), settings)
     s = _stages(plan)
@@ -126,11 +123,9 @@ def test_graxpert_available_adds_background_stage(tmp_path):
 
 def test_denoise_engine_prefers_rcastro_over_graxpert(tmp_path):
     rcastro = tmp_path / "rcastro"
-    rcastro.write_text("#!/bin/sh\n")
-    rcastro.chmod(0o755)
+    rcastro = fake_tool(rcastro, "#!/bin/sh\n")
     graxpert = tmp_path / "graxpert"
-    graxpert.write_text("#!/bin/sh\n")
-    graxpert.chmod(0o755)
+    graxpert = fake_tool(graxpert, "#!/bin/sh\n")
     settings = Settings(rcastro_path=str(rcastro), graxpert_path=str(graxpert))
     plan = build_auto_plan(_broadband_stack(), settings)
     noise_option = dict(plan)["noise_sharpen"]
@@ -141,8 +136,7 @@ def test_denoise_engine_never_falls_back_to_graxpert(tmp_path):
     # A GraXpert denoise took 668 s of a 746 s run (study 2026-10-11): the
     # built-in denoise, explicitly, instead.
     graxpert = tmp_path / "graxpert"
-    graxpert.write_text("#!/bin/sh\n")
-    graxpert.chmod(0o755)
+    graxpert = fake_tool(graxpert, "#!/bin/sh\n")
     settings = Settings(graxpert_path=str(graxpert))
     plan = build_auto_plan(_broadband_stack(), settings)
     noise_option = dict(plan)["noise_sharpen"]

@@ -59,7 +59,8 @@ def _natural(s: str):
 def _read(onnx_path: str, shipped: bool) -> NRModel | None:
     stem = os.path.basename(onnx_path)[:-len(".onnx")]
     try:
-        with open(os.path.join(os.path.dirname(onnx_path), stem + ".json")) as fh:
+        with open(os.path.join(os.path.dirname(onnx_path), stem + ".json"),
+                  encoding="utf-8") as fh:
             meta = json.load(fh)
     except (OSError, ValueError):
         return None          # no JSON = an older linear model; bad JSON = not offered

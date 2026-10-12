@@ -1,5 +1,6 @@
 import pytest
 import os
+import sys
 import numpy as np
 from nocturne.core.image import AstroImage
 from nocturne.tools.astap import ASTAP, SolveResult, hint_from_metadata
@@ -28,7 +29,7 @@ def test_solve_parses_wcs_on_success():
     def fake_runner(args, cwd):
         # ASTAP writes <base>.wcs next to the input; find the -o base.
         base = args[args.index("-o") + 1]
-        with open(base + ".wcs", "w") as f:
+        with open(base + ".wcs", "w", encoding="utf-8") as f:
             f.write(_WCS_TEXT)
         return 0
     res = ASTAP("/x/astap").solve(_img(), fov_deg=2.0, runner=fake_runner)
@@ -52,7 +53,7 @@ def test_solve_passes_fov_and_hint_flags():
     def fake_runner(args, cwd):
         seen["args"] = args
         base = args[args.index("-o") + 1]
-        open(base + ".wcs", "w").write(_WCS_TEXT)
+        open(base + ".wcs", "w", encoding="utf-8").write(_WCS_TEXT)
         return 0
     ASTAP("/x/astap").solve(_img(), fov_deg=2.0, ra_hours=20.98, dec_deg=44.3, runner=fake_runner)
     a = seen["args"]
@@ -93,7 +94,7 @@ _MESSY_WCS = (
 
 def _write(tmp_path, text, name="solve.wcs"):
     p = tmp_path / name
-    p.write_text(text)
+    p.write_text(text, encoding="utf-8")
     return str(p)
 
 
@@ -132,7 +133,7 @@ def test_solve_with_header_pointing_omits_radec_flags():
     seen = {}
     def fake_runner(args, cwd):
         seen["args"] = args
-        open(args[args.index("-o") + 1] + ".wcs", "w").write(_WCS_TEXT)
+        open(args[args.index("-o") + 1] + ".wcs", "w", encoding="utf-8").write(_WCS_TEXT)
         return 0
     ASTAP("/x/astap").solve(_img(), fov_deg=2.0, ra_hours=20.98, dec_deg=44.3,
                             header_cards={"OBJCTRA": "20 59 15", "FOCALLEN": 160.0},
@@ -145,7 +146,7 @@ def test_solve_with_header_pointing_omits_radec_flags():
 def test_solve_failure_captures_astap_message(tmp_path):
     def fake_runner(args, cwd):
         import os
-        with open(os.path.join(cwd, "_astap_out.txt"), "w") as f:
+        with open(os.path.join(cwd, "_astap_out.txt"), "w", encoding="utf-8") as f:
             f.write("no star database found for this field of view\n")
         return 1                                            # no .wcs written
     res = ASTAP("/x/astap").solve(_img(), runner=fake_runner)
@@ -165,7 +166,7 @@ def test_solve_reads_solution_from_ini_when_no_wcs():
     # ASTAP wrote its .ini solution (KEY=value) but no .wcs — must still be read.
     def fake_runner(args, cwd):
         base = args[args.index("-o") + 1]
-        open(base + ".ini", "w").write(_INI)
+        open(base + ".ini", "w", encoding="utf-8").write(_INI)
         return 0
     res = ASTAP("/x/astap").solve(_img(), runner=fake_runner)
     assert res.solved is True
@@ -194,7 +195,7 @@ def test_solve_reads_solution_from_updated_input_header():
 def test_solve_failure_message_lists_produced_files():
     def fake_runner(args, cwd):
         import os
-        open(os.path.join(cwd, "solve.001"), "w").write("junk")   # not a solution
+        open(os.path.join(cwd, "solve.001"), "w", encoding="utf-8").write("junk")   # not a solution
         return 1
     res = ASTAP("/x/astap").solve(_img(), runner=fake_runner)
     assert res.solved is False
@@ -209,7 +210,7 @@ def test_solve_surfaces_swallowed_parse_error(monkeypatch):
 
     def fake_runner(args, cwd):
         base = args[args.index("-o") + 1]
-        with open(base + ".wcs", "w") as f:
+        with open(base + ".wcs", "w", encoding="utf-8") as f:
             f.write(_WCS_TEXT)
         return 0
 
@@ -267,7 +268,8 @@ def test_solve_is_cancellable_and_binds_the_process(tmp_path):
         with pytest.raises(Cancelled):
             # cwd must be a tmp dir, never ".": _run_astap writes _astap_out.txt
             # into cwd, so "." dropped a stray file in the repo root on every run
-            _run_astap(["/bin/sleep", "5"], cwd=str(tmp_path), timeout=30)
+            _run_astap([sys.executable, "-c", "import time; time.sleep(5)"],
+                       cwd=str(tmp_path), timeout=30)
     finally:
         clear_ambient()
     assert bound, "the solver process must be bound to the cancel token"
@@ -280,7 +282,8 @@ def test_solve_times_out_rather_than_hanging_forever(tmp_path):
     from nocturne.tools.base import ToolError
 
     with pytest.raises(ToolError) as e:
-        _run_astap(["/bin/sleep", "10"], cwd=str(tmp_path), timeout=0.5)
+        _run_astap([sys.executable, "-c", "import time; time.sleep(10)"],
+                   cwd=str(tmp_path), timeout=0.5)
     assert "did not finish" in str(e.value) or "0 s" in str(e.value)
 
 

@@ -35,7 +35,7 @@ def test_run_batch_writes_outputs_and_reports_failure(tmp_path):
     good = tmp_path / "a.fits"
     _fits(good)
     bad = tmp_path / "b.fits"
-    bad.write_text("not fits")
+    bad.write_text("not fits", encoding="utf-8")
     outdir = tmp_path / "out"
     outdir.mkdir()
     r = Recipe(steps=[{"stage": "stretch", "option": 0.5}])
@@ -230,7 +230,7 @@ def test_source_collision_on_a_case_insensitive_filesystem(tmp_path):
     # macOS APFS is case-insensitive by default: m42.FITS and m42.fits are ONE
     # file there, so realpath's case-sensitive compare is not enough on its own.
     probe = tmp_path / "CaseProbe"
-    probe.write_text("x")
+    probe.write_text("x", encoding="utf-8")
     insensitive = (tmp_path / "caseprobe").exists()
     src = tmp_path / "m42.FITS"
     _fits(src)

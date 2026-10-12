@@ -1,4 +1,5 @@
 import os
+from tests.fake_tool import fake_tool
 import pytest
 
 pytest.importorskip("PySide6")
@@ -33,8 +34,8 @@ def _stats2(path, score, included=True, reason="", warning="", exposure=20.0):
 
 
 def test_grading_fills_table(qtbot, tmp_path):
-    (tmp_path / "a.fit").write_text("x")
-    (tmp_path / "b.fit").write_text("x")
+    (tmp_path / "a.fit").write_text("x", encoding="utf-8")
+    (tmp_path / "b.fit").write_text("x", encoding="utf-8")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
     dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
@@ -48,7 +49,7 @@ def test_grading_fills_table(qtbot, tmp_path):
 
 def test_stack_calls_handoff_best_first(qtbot, tmp_path):
     for name in ("low.fit", "mid.fit", "high.fit"):
-        (tmp_path / name).write_text("x")
+        (tmp_path / name).write_text("x", encoding="utf-8")
     low, mid, high = (str(tmp_path / n) for n in ("low.fit", "mid.fit", "high.fit"))
     captured = {}
     got = {}
@@ -106,7 +107,7 @@ def test_dialog_closes_on_success(qtbot):
 def test_second_run_ignored_while_busy(qtbot, tmp_path):
     import threading
     for name in ("a.fit", "b.fit", "c.fit"):
-        (tmp_path / name).write_text("x")
+        (tmp_path / name).write_text("x", encoding="utf-8")
     paths = [str(tmp_path / n) for n in ("a.fit", "b.fit", "c.fit")]
     started, release, calls = threading.Event(), threading.Event(), []
     dlg = StackDialog(Settings())
@@ -142,7 +143,7 @@ def test_verdict_column_shows_reasons_and_warnings(qtbot, tmp_path):
     # manually pre-set reason/warning strings.
     names = ["a.fit", "b.fit", "c.fit"] + [f"f{i}.fit" for i in range(7)]
     for name in names:
-        (tmp_path / name).write_text("x")
+        (tmp_path / name).write_text("x", encoding="utf-8")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
     stats = [
@@ -167,7 +168,7 @@ def test_status_line_speaks_minutes_of_light(qtbot, tmp_path):
     # rejected by real gating (low star count -> clouds), not by a manually
     # pre-set included/reason pair.
     for i in range(5):
-        (tmp_path / f"f{i}.fit").write_text("x")
+        (tmp_path / f"f{i}.fit").write_text("x", encoding="utf-8")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
     stats = [FrameStats(str(tmp_path / "f0.fit"), 10, 2.4, 0.02, 0.5, True, exposure=20.0)]
@@ -189,7 +190,7 @@ def test_ticking_nothing_reads_zero_minutes_not_one(qtbot, tmp_path):
     read as zero minutes, exactly as the verdict's own _minutes() already
     does."""
     for i in range(5):
-        (tmp_path / f"f{i}.fit").write_text("x")
+        (tmp_path / f"f{i}.fit").write_text("x", encoding="utf-8")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
     stats = [FrameStats(str(tmp_path / f"f{i}.fit"), 800, 2.4, 0.02, 0.5, True, exposure=20.0)
@@ -205,7 +206,7 @@ def test_ticking_nothing_reads_zero_minutes_not_one(qtbot, tmp_path):
 
 def test_strictness_rejudges_without_remeasuring(qtbot, tmp_path):
     for i in range(6):
-        (tmp_path / f"f{i}.fit").write_text("x")
+        (tmp_path / f"f{i}.fit").write_text("x", encoding="utf-8")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
     calls = []
@@ -250,7 +251,7 @@ def test_on_graded_rejudges_with_current_strictness(qtbot, tmp_path):
 
 def test_manual_override_survives_rejudge(qtbot, tmp_path):
     for i in range(6):
-        (tmp_path / f"f{i}.fit").write_text("x")
+        (tmp_path / f"f{i}.fit").write_text("x", encoding="utf-8")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
     dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
@@ -269,7 +270,7 @@ def test_manual_override_survives_rejudge(qtbot, tmp_path):
 
 def test_output_filename_derived_from_selection(qtbot, tmp_path):
     for i in range(3):
-        (tmp_path / f"f{i}.fit").write_text("x")
+        (tmp_path / f"f{i}.fit").write_text("x", encoding="utf-8")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
     stats = [_stats2(str(tmp_path / f"f{i}.fit"), 0.5, exposure=20.0)
@@ -287,7 +288,7 @@ def test_output_filename_derived_from_selection(qtbot, tmp_path):
 
 def test_user_edited_output_is_never_overwritten(qtbot, tmp_path):
     for i in range(3):
-        (tmp_path / f"f{i}.fit").write_text("x")
+        (tmp_path / f"f{i}.fit").write_text("x", encoding="utf-8")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
     dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
@@ -304,7 +305,7 @@ def test_user_edited_output_is_never_overwritten(qtbot, tmp_path):
 def test_row_selection_requests_preview_and_caches(qtbot, tmp_path):
     import numpy as np
     for i in range(2):
-        (tmp_path / f"f{i}.fit").write_text("x")
+        (tmp_path / f"f{i}.fit").write_text("x", encoding="utf-8")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
     dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
@@ -333,7 +334,7 @@ def test_row_selection_requests_preview_and_caches(qtbot, tmp_path):
 def test_regrade_resyncs_preview_to_new_row_data(qtbot, tmp_path):
     import numpy as np
     for i in range(2):
-        (tmp_path / f"f{i}.fit").write_text("x")
+        (tmp_path / f"f{i}.fit").write_text("x", encoding="utf-8")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
     dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
@@ -358,7 +359,7 @@ def test_regrade_resyncs_preview_to_new_row_data(qtbot, tmp_path):
     other_dir = tmp_path / "other"
     other_dir.mkdir()
     for i in range(2):
-        (other_dir / f"g{i}.fit").write_text("x")
+        (other_dir / f"g{i}.fit").write_text("x", encoding="utf-8")
     dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
         _stats2(str(other_dir / f"g{i}.fit"), 0.5) for i in range(2)
     ]
@@ -374,7 +375,7 @@ def test_preview_cache_is_lru_of_four(qtbot, tmp_path):
     paths = []
     for i in range(6):
         p = tmp_path / f"f{i}.fit"
-        p.write_text("x")
+        p.write_text("x", encoding="utf-8")
         paths.append(str(p))
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
@@ -413,7 +414,7 @@ def test_preview_cache_lru_access_order_not_fifo(qtbot, tmp_path):
     paths = []
     for i in range(6):
         p = tmp_path / f"f{i}.fit"
-        p.write_text("x")
+        p.write_text("x", encoding="utf-8")
         paths.append(str(p))
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
@@ -541,7 +542,7 @@ def test_cancel_button_stops_a_grade(qtbot, tmp_path):
     import time
     from nocturne.core.tasks import current
 
-    (tmp_path / "a.fit").write_text("x")
+    (tmp_path / "a.fit").write_text("x", encoding="utf-8")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
 
@@ -565,7 +566,7 @@ def test_cancel_button_stops_a_grade(qtbot, tmp_path):
 
 def test_cells_carry_tooltips(qtbot, tmp_path):
     for i in range(3):
-        (tmp_path / f"f{i}.fit").write_text("x")
+        (tmp_path / f"f{i}.fit").write_text("x", encoding="utf-8")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
     dlg._grade_runner = lambda paths, on_progress=None, strictness="normal": [
@@ -586,7 +587,7 @@ def test_roundness_is_one_hover_away_and_survives_a_rejudge(qtbot, tmp_path):
     from nocturne.ui.stack_dialog import StackDialog
 
     for i in range(10):
-        (tmp_path / f"f{i}.fit").write_text("x")
+        (tmp_path / f"f{i}.fit").write_text("x", encoding="utf-8")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
     stats = [FrameStats(str(tmp_path / f"f{i}.fit"), 800, 2.4, 0.02, 0.9, True,
@@ -626,7 +627,7 @@ def test_framing_checkbox_reaches_the_stacker(qtbot, tmp_path):
                            opts.output_path)
 
     for name in ("a.fit", "b.fit", "c.fit"):
-        (tmp_path / name).write_text("x")
+        (tmp_path / name).write_text("x", encoding="utf-8")
     dlg = StackDialog(Settings())
     qtbot.addWidget(dlg)
     stats = [FrameStats(str(tmp_path / n), 800, 2.4, 0.02, 0.9, True, exposure=20.0)
@@ -671,9 +672,7 @@ def test_mosaic_option_is_offered_when_the_subs_span_several_pointings(qtbot, tm
     paths += [_sub_with_pointing(tmp_path, f"b{i}.fit", 10.0, 43.0) for i in range(3)]
 
     settings = Settings()
-    settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("#!/bin/sh\n")
-    (tmp_path / "astap").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
+    settings.astap_path = str(fake_tool(tmp_path / "astap"))   # a real tool is EXECUTABLE, not merely present
 
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
@@ -723,9 +722,8 @@ def test_stacking_with_mosaic_checked_runs_the_mosaic_path(qtbot, tmp_path):
     paths += [_sub_with_pointing(tmp_path, f"b{i}.fit", 10.0, 43.0) for i in range(3)]
 
     settings = Settings()
-    settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("#!/bin/sh\n")
-    (tmp_path / "astap").chmod(0o755)
+    astap = fake_tool(tmp_path / "astap")
+    settings.astap_path = str(astap)
 
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
@@ -744,7 +742,7 @@ def test_stacking_with_mosaic_checked_runs_the_mosaic_path(qtbot, tmp_path):
 
     dlg.run()
     qtbot.waitUntil(lambda: "opts" in seen, timeout=3000)
-    assert seen["opts"].astap_path == str(tmp_path / "astap")
+    assert seen["opts"].astap_path == str(astap)
     assert len(seen["opts"].include) == 6
 
 
@@ -766,9 +764,7 @@ def test_a_mosaic_is_named_a_mosaic(qtbot, tmp_path):
     """M31_302x10s_50min.fits does not say the one thing that makes this file
     different from every other master in the folder."""
     settings = Settings()
-    settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("#!/bin/sh\n")
-    (tmp_path / "astap").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
+    settings.astap_path = str(fake_tool(tmp_path / "astap"))   # a real tool is EXECUTABLE, not merely present
 
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
@@ -790,9 +786,7 @@ def test_a_mosaic_is_named_a_mosaic(qtbot, tmp_path):
 
 def test_turning_the_mosaic_option_off_takes_the_word_back_out(qtbot, tmp_path):
     settings = Settings()
-    settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("#!/bin/sh\n")
-    (tmp_path / "astap").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
+    settings.astap_path = str(fake_tool(tmp_path / "astap"))   # a real tool is EXECUTABLE, not merely present
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
     dlg.folder_edit.setText(str(tmp_path))
@@ -811,9 +805,7 @@ def test_a_hand_typed_output_name_is_never_overwritten(qtbot, tmp_path):
     """The mosaic rename must respect the existing rule: once the user edits the
     path, the dialog stops touching it."""
     settings = Settings()
-    settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("#!/bin/sh\n")
-    (tmp_path / "astap").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
+    settings.astap_path = str(fake_tool(tmp_path / "astap"))   # a real tool is EXECUTABLE, not merely present
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
     dlg.folder_edit.setText(str(tmp_path))
@@ -1326,7 +1318,7 @@ def test_clicking_background_button_calls_on_background_with_options(qtbot, tmp_
     one thing only a click actually exercises, and it's the only way a user
     reaches this feature."""
     for name in ("a.fit", "b.fit", "c.fit"):
-        (tmp_path / name).write_text("x")
+        (tmp_path / name).write_text("x", encoding="utf-8")
     a, b, c = (str(tmp_path / n) for n in ("a.fit", "b.fit", "c.fit"))
     got = {}
     dlg = StackDialog(Settings(),
@@ -1448,7 +1440,7 @@ def test_a_fresh_dialog_refuses_to_start_while_the_queue_is_busy(qtbot, tmp_path
     output path.
     """
     for name in ("a.fit", "b.fit", "c.fit"):
-        (tmp_path / name).write_text("x")
+        (tmp_path / name).write_text("x", encoding="utf-8")
     a, b, c = (str(tmp_path / n) for n in ("a.fit", "b.fit", "c.fit"))
     ran = {}
 
@@ -1478,7 +1470,7 @@ def test_a_fresh_dialog_runs_when_the_queue_is_free(qtbot, tmp_path):
     """The queue_busy guard must not become a blanket refusal: with nothing
     running, Stack must work exactly as it always has."""
     for name in ("a.fit", "b.fit", "c.fit"):
-        (tmp_path / name).write_text("x")
+        (tmp_path / name).write_text("x", encoding="utf-8")
     a, b, c = (str(tmp_path / n) for n in ("a.fit", "b.fit", "c.fit"))
     got = {}
 
@@ -1528,7 +1520,7 @@ def test_clicking_background_button_without_grading_refuses(qtbot):
 
 def test_clicking_background_button_with_too_few_frames_refuses(qtbot, tmp_path):
     for name in ("a.fit", "b.fit"):
-        (tmp_path / name).write_text("x")
+        (tmp_path / name).write_text("x", encoding="utf-8")
     a, b = (str(tmp_path / n) for n in ("a.fit", "b.fit"))
     got = {}
     dlg = StackDialog(Settings(),
@@ -1714,6 +1706,7 @@ def test_a_save_to_that_does_not_exist_is_refused_before_stacking(qtbot, tmp_pat
 
 def test_a_tilde_in_save_to_is_the_home_folder(qtbot, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))   # what "~" means on Windows
     (tmp_path / "Astro").mkdir()
     dlg, _ = _graded_ngc(qtbot, tmp_path / "Astro")
     dlg.save_to_edit.setText("~/Astro")
@@ -2055,9 +2048,7 @@ def test_the_pointing_scan_runs_off_the_gui_thread(qtbot, tmp_path, monkeypatch)
     paths = [_sub_with_pointing(tmp_path, f"a{i}.fit", 10.0, 41.0) for i in range(3)]
     paths += [_sub_with_pointing(tmp_path, f"b{i}.fit", 10.0, 43.0) for i in range(3)]
     settings = Settings()
-    settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("#!/bin/sh\n")
-    (tmp_path / "astap").chmod(0o755)
+    settings.astap_path = str(fake_tool(tmp_path / "astap"))
 
     threads = []
     real = sd.read_pointings

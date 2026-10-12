@@ -46,7 +46,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-qt>=4.4"]
+# tzdata: tests pin a time zone with ZoneInfo, which has no zone database on Windows.
+dev = ["pytest>=8.0", "pytest-qt>=4.4", "tzdata; sys_platform == 'win32'"]
 train = ["torch>=2.2", "onnx>=1.16", "onnxruntime>=1.18"]
 
 [build-system]

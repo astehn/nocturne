@@ -65,11 +65,17 @@ def run_job(text: str, out=None) -> int:
 
 
 def main(argv: list[str], out=None) -> int:
-    """`--stack-job <options.json>`; the path holds the serialised StackOptions."""
+    """`--stack-job <options.json>`; the path holds the serialised StackOptions.
+
+    Read and CLOSED before the stack starts: the file is the parent's temp file,
+    and on Windows an open file cannot be deleted, so holding it for the hours a
+    stack runs leaked it into %TEMP% whenever the parent's cleanup got there
+    first (measured on the Windows VM, 2026-10-12)."""
     try:
         path = argv[argv.index("--stack-job") + 1]
-        with open(path) as f:
-            return run_job(f.read(), out)
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        return run_job(text, out)
     except Exception as exc:                      # noqa: BLE001 - reported as data
         emit({"event": "error", "message": str(exc)}, out)
         return 1

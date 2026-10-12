@@ -3,11 +3,11 @@
 per folder. His original subs are what this moves: every folder here is
 built under tmp_path, and bytes and mtimes are checked, not just names."""
 import os
-import time
 
 import numpy as np
 import pytest
 
+from tests.local_zone import pin_local_zone
 from nocturne.settings import Settings
 from nocturne.stacking.capture_time import read_capture_time
 from nocturne.stacking.grade import FrameStats
@@ -19,11 +19,7 @@ from tests.ui.test_stack_rejected import tree
 
 @pytest.fixture(autouse=True)
 def stockholm(monkeypatch):
-    monkeypatch.setenv("TZ", "Europe/Stockholm")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
+    pin_local_zone(monkeypatch, "Europe/Stockholm")
 
 
 SOFT = ("223100", "223300")          # the second and fourth sub of each folder
@@ -177,7 +173,7 @@ def test_a_damaged_record_in_one_folder_stops_the_move_before_asking(qtbot, tmp_
     a, b = _two(tmp_path)
     d, asked = _dialog(qtbot, a, b)
     (b / "rejected").mkdir()
-    (b / "rejected" / MANIFEST_NAME).write_text("{not json")
+    (b / "rejected" / MANIFEST_NAME).write_text("{not json", encoding="utf-8")
     before = tree(tmp_path)
     d.verdict_strip.move_btn.click()
     assert asked == [] and tree(tmp_path) == before
@@ -190,7 +186,7 @@ def test_a_damaged_record_in_one_folder_still_lets_the_other_move_back(qtbot, tm
     d, _asked = _dialog(qtbot, a, b)
     d.verdict_strip.move_btn.click()
     manifest = a / "rejected" / MANIFEST_NAME
-    manifest.write_text("{not json")
+    manifest.write_text("{not json", encoding="utf-8")
     snap_a = tree(a)
     d.verdict_strip.back_btn.click()
     assert _rejected(b) == [] and tree(a) == snap_a
@@ -208,7 +204,7 @@ def test_a_damaged_record_does_not_swallow_another_folders_taken_report(qtbot, t
     a, b = _two(tmp_path)
     d, _asked = _dialog(qtbot, a, b)
     d.verdict_strip.move_btn.click()
-    (a / "rejected" / MANIFEST_NAME).write_text("{not json")
+    (a / "rejected" / MANIFEST_NAME).write_text("{not json", encoding="utf-8")
     taken_names = _rejected(b)
     assert taken_names        # b actually has something in rejected/ to test
     # A file with the same name is back in b already, by hand — move_back
@@ -298,7 +294,7 @@ def test_colliding_basenames_are_told_apart_on_the_way_back(qtbot, tmp_path):
     b = _seestar_folder(tmp_path / "d2", "M 31_sub", "20260926")
     d, _asked = _dialog(qtbot, a, b)
     d.verdict_strip.move_btn.click()
-    (b / "rejected" / MANIFEST_NAME).write_text("not json")      # damaged
+    (b / "rejected" / MANIFEST_NAME).write_text("not json", encoding="utf-8")      # damaged
     d.verdict_strip.back_btn.click()
     qtbot.waitUntil(lambda: not d._busy, timeout=3000)
     text = d.status.text()

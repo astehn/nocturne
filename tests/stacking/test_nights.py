@@ -1,12 +1,12 @@
 """Nights run noon to noon, local time (spec 2026-09-28 §9.1). Pinned to
 Stockholm, his zone, so the tests mean the same thing on any machine."""
 import os
-import time
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from nocturne.stacking.capture_time import from_date_obs, from_filename
+from tests.local_zone import pin_local_zone
+from nocturne.stacking.capture_time import attach_local, from_date_obs, from_filename
 from nocturne.stacking.grade import FrameStats
 from nocturne.stacking.nights import (NO_DATE_LABEL, night_label, night_of,
                                       split_nights)
@@ -14,11 +14,7 @@ from nocturne.stacking.nights import (NO_DATE_LABEL, night_label, night_of,
 
 @pytest.fixture(autouse=True)
 def stockholm(monkeypatch):
-    monkeypatch.setenv("TZ", "Europe/Stockholm")
-    time.tzset()
-    yield
-    monkeypatch.undo()
-    time.tzset()
+    pin_local_zone(monkeypatch, "Europe/Stockholm")
 
 
 def _frame(name, dt):
@@ -35,8 +31,8 @@ def test_a_session_past_midnight_is_one_night_named_after_its_evening():
 
 
 def test_noon_is_where_one_night_turns_into_the_next():
-    before = datetime(2026, 9, 27, 11, 59).astimezone()
-    at = datetime(2026, 9, 27, 12, 0).astimezone()
+    before = attach_local(datetime(2026, 9, 27, 11, 59))
+    at = attach_local(datetime(2026, 9, 27, 12, 0))
     assert night_of(before) == date(2026, 9, 26)
     assert night_of(at) == date(2026, 9, 27)
 

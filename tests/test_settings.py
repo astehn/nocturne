@@ -1,3 +1,8 @@
+import sys
+
+import pytest
+
+from tests.fake_tool import fake_tool
 from nocturne.settings import (
     Settings, load_settings, save_settings, graxpert_valid,
 )
@@ -23,18 +28,16 @@ def test_a_removed_field_left_over_in_an_old_file_is_ignored(tmp_path):
     import json
     p = tmp_path / "s.json"
     save_settings(Settings(graxpert_path="/x/graxpert"), str(p))
-    data = json.loads(p.read_text())
+    data = json.loads(p.read_text(encoding="utf-8"))
     data["apply_look"] = "B"
-    p.write_text(json.dumps(data))
+    p.write_text(json.dumps(data), encoding="utf-8")
     loaded = load_settings(str(p))
     assert loaded.graxpert_path == "/x/graxpert"
     assert not hasattr(loaded, "apply_look")
 
 
 def test_graxpert_valid(tmp_path):
-    f = tmp_path / "graxpert"
-    f.write_text("#!/bin/sh\n")
-    f.chmod(0o755)                 # executable: this test passed WITHOUT it, which was the bug
+    f = fake_tool(tmp_path / "graxpert")   # executable: this test passed WITHOUT it, which was the bug
     assert graxpert_valid(Settings(graxpert_path=str(f))) is True
     assert graxpert_valid(Settings(graxpert_path="/nope")) is False
 
@@ -62,7 +65,7 @@ def test_load_settings_defaults_base_dir_blank(tmp_path):
     import json
     from nocturne.settings import load_settings
     p = str(tmp_path / "s.json")
-    with open(p, "w") as f:
+    with open(p, "w", encoding="utf-8") as f:
         json.dump({"graxpert_path": "", "rcastro_path": ""}, f)   # no base_dir key
     assert load_settings(p).base_dir == ""
 
@@ -95,7 +98,7 @@ def test_astap_valid_checks_it_is_runnable(tmp_path):
     # a FILE, which is not the question anyone was asking.
     from nocturne.settings import Settings, astap_valid
     assert astap_valid(Settings(astap_path="")) is False
-    real = tmp_path / "astap"; real.write_text("x"); real.chmod(0o755)
+    real = fake_tool(tmp_path / "astap", "x")
     assert astap_valid(Settings(astap_path=str(real))) is True
     assert astap_valid(Settings(astap_path=str(tmp_path / "nope"))) is False
 
@@ -112,7 +115,7 @@ def test_help_expanded_absent_in_old_file_defaults_true(tmp_path):
     import json
     from nocturne.settings import load_settings
     p = tmp_path / "old.json"
-    p.write_text(json.dumps({"base_dir": "/x"}))              # pre-feature settings.json
+    p.write_text(json.dumps({"base_dir": "/x"}), encoding="utf-8")              # pre-feature settings.json
     assert load_settings(str(p)).help_expanded is True
 
 
@@ -128,7 +131,7 @@ def test_window_geometry_absent_in_old_file_defaults_blank(tmp_path):
     import json
     from nocturne.settings import load_settings
     p = tmp_path / "old.json"
-    p.write_text(json.dumps({"base_dir": "/x"}))              # pre-feature settings.json
+    p.write_text(json.dumps({"base_dir": "/x"}), encoding="utf-8")              # pre-feature settings.json
     assert load_settings(str(p)).window_geometry == ""
 
 
@@ -166,7 +169,7 @@ def test_recent_projects_absent_in_old_file_defaults_blank(tmp_path):
     import json
     from nocturne.settings import load_settings
     p = tmp_path / "old.json"
-    p.write_text(json.dumps({"base_dir": "/x"}))  # pre-feature settings.json
+    p.write_text(json.dumps({"base_dir": "/x"}), encoding="utf-8")  # pre-feature settings.json
     loaded = load_settings(str(p))
     assert loaded.recent_projects == []
     assert loaded.last_project_dir == ""
@@ -228,7 +231,7 @@ def test_annotation_settings_absent_in_old_file_defaults(tmp_path):
     import json
     from nocturne.settings import load_settings
     p = tmp_path / "old.json"
-    p.write_text(json.dumps({"base_dir": "/x"}))  # pre-feature settings.json
+    p.write_text(json.dumps({"base_dir": "/x"}), encoding="utf-8")  # pre-feature settings.json
     loaded = load_settings(str(p))
     assert loaded.annotation_layers == {
         "objects": True, "stars": True, "grid": False,
@@ -243,19 +246,32 @@ def test_annotation_settings_absent_in_old_file_defaults(tmp_path):
 # this is the other half — the tools install to predictable places, so in the
 # common case nobody should have to configure anything at all.
 
+# The name detection reports GraXpert by: the .app BUNDLE on macOS/Linux-shaped
+# layouts, the installer's .exe on Windows.
+_GX_FOUND = "GraXpert.exe" if sys.platform == "win32" else "GraXpert.app"
+
+
 def _fake_tools(tmp_path):
-    """A macOS-shaped layout: two .app bundles and one bare CLI binary."""
+    """A macOS-shaped layout: two .app bundles and one bare CLI binary. On
+    Windows, where a bundle cannot exist, the installers' .exe layout instead:
+    detection itself is the same code on every OS."""
+    if sys.platform == "win32":
+        gx = fake_tool(tmp_path / "GraXpert" / "GraXpert.exe")
+        astap = fake_tool(tmp_path / "astap" / "astap.exe")
+        rc = fake_tool(tmp_path / "RC-Astro" / "CLI" / "rc-astro.exe")
+        return {"graxpert_path": [str(gx)], "rcastro_path": [str(rc)],
+                "astap_path": [str(astap)]}
     gx = tmp_path / "GraXpert.app" / "Contents" / "MacOS"
     gx.mkdir(parents=True, exist_ok=True)
-    (gx / "GraXpert").write_text("#!/bin/sh\n")
+    (gx / "GraXpert").write_text("#!/bin/sh\n", encoding="utf-8")
     (gx / "GraXpert").chmod(0o755)
     astap = tmp_path / "ASTAP.app" / "Contents" / "MacOS"
     astap.mkdir(parents=True, exist_ok=True)
-    (astap / "ASTAP").write_text("#!/bin/sh\n")
+    (astap / "ASTAP").write_text("#!/bin/sh\n", encoding="utf-8")
     (astap / "ASTAP").chmod(0o755)
     rc = tmp_path / "RC-Astro" / "CLI"
     rc.mkdir(parents=True, exist_ok=True)
-    (rc / "rc-astro").write_text("#!/bin/sh\n")
+    (rc / "rc-astro").write_text("#!/bin/sh\n", encoding="utf-8")
     (rc / "rc-astro").chmod(0o755)
     return {
         "graxpert_path": [str(tmp_path / "GraXpert.app")],
@@ -270,7 +286,7 @@ def test_detects_each_tool_at_its_default_location(tmp_path):
     assert set(found) == {"graxpert_path", "rcastro_path", "astap_path"}
     # a .app is offered as the BUNDLE; resolve_binary already handles the rest,
     # which is why no user ever needed Show Package Contents
-    assert found["graxpert_path"].endswith("GraXpert.app")
+    assert found["graxpert_path"].endswith(_GX_FOUND)
 
 
 def test_detection_never_overwrites_a_configured_path(tmp_path):
@@ -301,7 +317,7 @@ def test_autoconfigure_writes_the_found_paths_to_disk(tmp_path):
     save_settings(Settings(), path)
     filled = autoconfigure_tools(path, candidates=_fake_tools(tmp_path))
     assert set(filled) == {"graxpert_path", "rcastro_path", "astap_path"}
-    assert load_settings(path).graxpert_path.endswith("GraXpert.app")
+    assert load_settings(path).graxpert_path.endswith(_GX_FOUND)
 
 
 def test_autoconfigure_is_a_no_op_when_everything_is_already_set(tmp_path):
@@ -341,7 +357,7 @@ def test_rescan_replaces_a_path_that_does_not_work(tmp_path):
     broken = Settings(graxpert_path="/nope/not/here/graxpert")
     assert "graxpert_path" not in detect_tool_paths(broken, candidates=_fake_tools(tmp_path))
     found = detect_tool_paths(broken, candidates=_fake_tools(tmp_path), replace_invalid=True)
-    assert found["graxpert_path"].endswith("GraXpert.app")
+    assert found["graxpert_path"].endswith(_GX_FOUND)
 
 
 def test_rescan_leaves_a_working_custom_path_alone(tmp_path):
@@ -352,10 +368,7 @@ def test_rescan_leaves_a_working_custom_path_alone(tmp_path):
     claiming to help.
     """
     from nocturne.settings import Settings, detect_tool_paths
-    mine = tmp_path / "custom" / "graxpert"
-    mine.parent.mkdir()
-    mine.write_text("#!/bin/sh\n")
-    mine.chmod(0o755)
+    mine = fake_tool(tmp_path / "custom" / "graxpert")
     found = detect_tool_paths(Settings(graxpert_path=str(mine)),
                               candidates=_fake_tools(tmp_path), replace_invalid=True)
     assert "graxpert_path" not in found
@@ -370,7 +383,7 @@ def test_a_data_file_is_not_a_tool(tmp_path):
     """The exact fumble he made, on all three tools."""
     from nocturne.settings import Settings, astap_valid, graxpert_valid, rcastro_valid
     doc = tmp_path / "APPLICATION_AUDIT.md"
-    doc.write_text("# not a program\n")
+    doc.write_text("# not a program\n", encoding="utf-8")
     assert not graxpert_valid(Settings(graxpert_path=str(doc)))
     assert not rcastro_valid(Settings(rcastro_path=str(doc)))
     assert not astap_valid(Settings(astap_path=str(doc)))
@@ -378,9 +391,7 @@ def test_a_data_file_is_not_a_tool(tmp_path):
 
 def test_an_executable_is_a_tool(tmp_path):
     from nocturne.settings import Settings, graxpert_valid
-    exe = tmp_path / "graxpert"
-    exe.write_text("#!/bin/sh\n")
-    exe.chmod(0o755)
+    exe = fake_tool(tmp_path / "graxpert")
     assert graxpert_valid(Settings(graxpert_path=str(exe)))
 
 
@@ -388,10 +399,10 @@ def test_rescan_repairs_a_path_pointing_at_a_data_file(tmp_path):
     """Rescan could not fix his markdown path, because it believed it was fine."""
     from nocturne.settings import Settings, detect_tool_paths
     doc = tmp_path / "APPLICATION_AUDIT.md"
-    doc.write_text("# not a program\n")
+    doc.write_text("# not a program\n", encoding="utf-8")
     found = detect_tool_paths(Settings(graxpert_path=str(doc)),
                               candidates=_fake_tools(tmp_path), replace_invalid=True)
-    assert found.get("graxpert_path", "").endswith("GraXpert.app")
+    assert found.get("graxpert_path", "").endswith(_GX_FOUND)
 
 
 # --- the title plate ------------------------------------------------------
@@ -411,7 +422,7 @@ def test_a_user_who_had_tuned_the_old_caption_lands_on_data(tmp_path):
     data = asdict(Settings(share_caption_colour="#ffcc00", share_band_opacity=0.8))
     for key in [k for k in data if k.startswith("plate_")]:
         del data[key]
-    p.write_text(json.dumps(data))
+    p.write_text(json.dumps(data), encoding="utf-8")
     s = load_settings(str(p))
     assert s.plate_preset == "Data"
     assert s.share_caption_colour == "#ffcc00"      # not thrown away
@@ -456,7 +467,7 @@ def test_a_settings_file_from_before_the_caption_existed_gets_scrim(tmp_path):
     import json
     from nocturne.settings import load_settings
     p = tmp_path / "old.json"
-    p.write_text(json.dumps({"graxpert_path": "/x/graxpert", "help_expanded": False}))
+    p.write_text(json.dumps({"graxpert_path": "/x/graxpert", "help_expanded": False}), encoding="utf-8")
     assert load_settings(str(p)).plate_preset == "Scrim"
 
 
@@ -475,12 +486,13 @@ def test_the_candidate_list_is_the_one_for_this_platform():
     """A macOS .app cannot exist on Linux and vice versa, so shipping one list
     would mean every user reading their own settings past someone else's paths.
     """
-    import sys
-    from nocturne.settings import TOOL_CANDIDATES, _LINUX_CANDIDATES, _MAC_CANDIDATES
-    expected = _MAC_CANDIDATES if sys.platform == "darwin" else _LINUX_CANDIDATES
+    from nocturne.settings import (TOOL_CANDIDATES, _LINUX_CANDIDATES, _MAC_CANDIDATES,
+                                   _WINDOWS_CANDIDATES)
+    expected = {"darwin": _MAC_CANDIDATES, "win32": _WINDOWS_CANDIDATES}.get(
+        sys.platform, _LINUX_CANDIDATES)
     assert TOOL_CANDIDATES is expected
-    assert set(_MAC_CANDIDATES) == set(_LINUX_CANDIDATES), \
-        "both platforms must cover the same three tools"
+    assert set(_MAC_CANDIDATES) == set(_LINUX_CANDIDATES) == set(_WINDOWS_CANDIDATES), \
+        "every platform must cover the same tools"
 
 
 def test_linux_finds_a_graxpert_unpacked_where_its_zip_puts_it(tmp_path, monkeypatch):
@@ -489,21 +501,20 @@ def test_linux_finds_a_graxpert_unpacked_where_its_zip_puts_it(tmp_path, monkeyp
     unpacked his to ~/Applications/GraXpert-linux, which the app now finds with
     nothing configured."""
     from nocturne.settings import Settings, detect_tool_paths
-    binary = tmp_path / "Applications" / "GraXpert-linux" / "GraXpert"
-    binary.parent.mkdir(parents=True)
-    binary.write_text("#!/bin/sh\n")
-    binary.chmod(0o755)
+    binary = fake_tool(tmp_path / "Applications" / "GraXpert-linux" / "GraXpert")
     found = detect_tool_paths(Settings(), {"graxpert_path": [str(binary)]})
     assert found == {"graxpert_path": str(binary)}
 
 
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="AppImage is a Linux format; on Windows only PATHEXT extensions are tools")
 def test_an_appimage_is_matched_by_pattern_newest_last(tmp_path):
     """AppImages carry their version in the filename, so a pattern is the only
     way to name one — and with two installed, the higher version must win."""
     from nocturne.settings import Settings, detect_tool_paths
     for name in ("GraXpert-3.0.2.AppImage", "GraXpert-3.1.0.AppImage"):
         f = tmp_path / name
-        f.write_text("#!/bin/sh\n")
+        f.write_text("#!/bin/sh\n", encoding="utf-8")
         f.chmod(0o755)
     found = detect_tool_paths(Settings(), {"graxpert_path": [str(tmp_path / "GraXpert*.AppImage")]})
     assert found["graxpert_path"].endswith("GraXpert-3.1.0.AppImage")
@@ -514,14 +525,8 @@ def test_a_tool_merely_on_PATH_is_found_but_only_as_a_last_resort(tmp_path, monk
     explicit locations, so a real install still beats a wrapper of the same name.
     """
     import nocturne.settings as st
-    real = tmp_path / "opt" / "astap" / "astap"
-    real.parent.mkdir(parents=True)
-    real.write_text("#!/bin/sh\n")
-    real.chmod(0o755)
-    on_path = tmp_path / "bin" / "astap"
-    on_path.parent.mkdir(parents=True)
-    on_path.write_text("#!/bin/sh\n")
-    on_path.chmod(0o755)
+    real = fake_tool(tmp_path / "opt" / "astap" / "astap")
+    on_path = fake_tool(tmp_path / "bin" / "astap")
     monkeypatch.setattr(st.shutil, "which", lambda name: str(on_path) if name == "astap" else None)
 
     # explicit location present -> it wins, because "which:" is listed after it
@@ -539,9 +544,7 @@ def test_path_lookup_never_overrides_a_configured_tool(tmp_path, monkeypatch):
     """The whole safety model of detect_tool_paths: someone whose tool lives
     somewhere unusual has already paid the cost of finding it."""
     import nocturne.settings as st
-    stray = tmp_path / "astap"
-    stray.write_text("#!/bin/sh\n")
-    stray.chmod(0o755)
+    stray = fake_tool(tmp_path / "astap")
     monkeypatch.setattr(st.shutil, "which", lambda name: str(stray))
     configured = st.Settings(astap_path="/somewhere/of/my/own/astap")
     assert st.detect_tool_paths(configured, {"astap_path": ["which:astap"]}) == {}
@@ -585,7 +588,7 @@ def test_frame_options_folded_defaults_folded_and_round_trips(tmp_path):
 def test_frame_options_folded_absent_in_old_file_is_folded(tmp_path):
     import json
     p = tmp_path / "s.json"
-    p.write_text(json.dumps({"graxpert_path": "/x"}))
+    p.write_text(json.dumps({"graxpert_path": "/x"}), encoding="utf-8")
     assert load_settings(str(p)).frame_options_folded is True
 
 
@@ -595,7 +598,7 @@ def test_the_calmer_stack_fields_round_trip_and_default_off(tmp_path):
     and read back once saved — which fails if load_settings misses one."""
     import json
     old = tmp_path / "old.json"
-    old.write_text(json.dumps({"graxpert_path": "/x"}))
+    old.write_text(json.dumps({"graxpert_path": "/x"}), encoding="utf-8")
     for field in ("stack_help_expanded", "quality_chart_folded"):
         assert getattr(Settings(), field) is False, field
         assert getattr(load_settings(str(old)), field) is False, field

@@ -43,7 +43,7 @@ def test_the_codec_check_fails_when_the_codec_module_is_missing(tmp_path):
         "sys.meta_path.insert(0, B())\n"
         f"sys.path.insert(0, {str(ROOT)!r})\n"
         "sys.argv = ['nocturne', '--check-codecs']\n"
-        "import runpy; runpy.run_module('nocturne', run_name='__main__')\n")
+        "import runpy; runpy.run_module('nocturne', run_name='__main__')\n", encoding="utf-8")
     r = subprocess.run([sys.executable, str(probe)], capture_output=True,
                        text=True, timeout=180)
     assert r.returncode == 2, r.stdout + r.stderr
@@ -53,7 +53,7 @@ def test_the_codec_check_fails_when_the_codec_module_is_missing(tmp_path):
 def test_the_check_returns_before_a_window_is_created():
     """It has to work headless on a build machine and in CI. Anything dispatched
     below `QApplication(sys.argv)` would try to open a display."""
-    src = (ROOT / "nocturne" / "__main__.py").read_text()
+    src = (ROOT / "nocturne" / "__main__.py").read_text(encoding="utf-8")
     body = src.split("def main()")[1]
     assert body.index('"--check-codecs" in sys.argv') < body.index("QApplication(sys.argv)")
 
@@ -79,7 +79,7 @@ def test_the_lzw_check_uses_the_predictor_starnet2_actually_writes():
 def test_the_probe_image_is_not_uniform():
     """A constant array survives a codec that silently falls back to raw bytes,
     so it cannot tell a working decoder from an absent one."""
-    src = (ROOT / "nocturne" / "__main__.py").read_text()
+    src = (ROOT / "nocturne" / "__main__.py").read_text(encoding="utf-8")
     body = src.split("def _check_codecs")[1].split("def ")[0]
     assert "np.arange" in body, "the probe image must vary across pixels"
 
@@ -92,7 +92,7 @@ def _third_party_imports():
     import sys
     names = set()
     for f in (ROOT / "nocturne").rglob("*.py"):
-        tree = ast.parse(f.read_text())
+        tree = ast.parse(f.read_text(encoding="utf-8"))
         for n in ast.walk(tree):
             if isinstance(n, ast.Import):
                 names |= {a.name.split(".")[0] for a in n.names}
@@ -124,7 +124,7 @@ def _risky(name):
     for f in d.rglob("*"):
         if f.suffix == ".py":
             dyn += len(_re.findall(r"importlib\.import_module\(|__import__\(",
-                                   f.read_text(errors="ignore")))
+                                   f.read_text(errors="ignore", encoding="utf-8")))
         elif f.suffix in (".so", ".pyd", ".dylib"):
             exts += 1
     return dyn > 0 and exts > 1
@@ -154,7 +154,7 @@ def test_every_dependency_that_can_ship_half_present_is_hooked_or_collected():
     hooked = {p.name[len("hook-"):-len(".py")].split(".")[0]
               for d in hook_dirs for p in d.glob("hook-*.py")}
 
-    spec = (ROOT / "packaging" / "nocturne.spec").read_text()
+    spec = (ROOT / "packaging" / "nocturne.spec").read_text(encoding="utf-8")
     named = set(re.findall(r'"([A-Za-z_][\w.]*)"', spec))
 
     unguarded = sorted(n for n in _third_party_imports()

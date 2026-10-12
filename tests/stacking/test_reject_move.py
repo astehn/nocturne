@@ -23,6 +23,11 @@ from nocturne.stacking.reject_move import (MANIFEST_NAME, REJECTED_DIR,
 NOW = datetime(2026, 9, 27, 21, 30, tzinfo=timezone.utc)
 LATER = datetime(2026, 9, 28, 21, 30, tzinfo=timezone.utc)
 AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+# chmod 0o555 does not make a FOLDER read-only on Windows (the attribute is
+# ignored on directories). The refusal itself is OS-neutral — any OSError from
+# the writes. An icacls deny was tried instead and did not stop mkdir from the
+# test VM's elevated SSH session (probe, 2026-10-12), so these stay POSIX.
+CHMOD_LOCKS_FOLDERS = sys.platform != "win32"
 
 
 def tree(root):
@@ -284,6 +289,8 @@ def test_case_variant_spellings_of_one_file_are_moved_once(night):
     assert read_manifest(folder) == []
 
 
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="NTFS keeps NFD and NFC as two different names; there is no alias to collapse")
 def test_nfd_and_nfc_spellings_of_one_file_are_moved_once(night):
     """The NFD/NFC pairing named in the ruling: macOS resolves both
     spellings of an accented name to the same file, the same way APFS
@@ -505,6 +512,7 @@ def test_a_name_that_appears_mid_way_is_never_overwritten(night, tmp_path, monke
 
 
 @pytest.mark.skipif(AS_ROOT, reason="root ignores permissions")
+@pytest.mark.skipif(not CHMOD_LOCKS_FOLDERS, reason="chmod cannot lock a folder on Windows")
 def test_a_read_only_folder_moves_nothing_and_says_so(night, tmp_path):
     folder, paths = night
     os.chmod(folder, 0o555)
@@ -516,6 +524,7 @@ def test_a_read_only_folder_moves_nothing_and_says_so(night, tmp_path):
 
 
 @pytest.mark.skipif(AS_ROOT, reason="root ignores permissions")
+@pytest.mark.skipif(not CHMOD_LOCKS_FOLDERS, reason="chmod cannot lock a folder on Windows")
 def test_a_read_only_rejected_folder_moves_nothing(night, tmp_path):
     folder, paths = night
     os.mkdir(rej(folder))
@@ -868,7 +877,7 @@ def test_a_record_that_is_a_link_is_not_trusted(night, tmp_path):
     os.mkdir(rej(folder))
     decoy = tmp_path / "decoy.json"
     decoy.write_text(json.dumps({"version": 1, "moved": [{"name": "Light_00.fit",
-                                                          "moved_at": "x"}]}))
+                                                          "moved_at": "x"}]}), encoding="utf-8")
     os.symlink(str(decoy), os.path.join(rej(folder), MANIFEST_NAME))
     _refused(tmp_path, lambda: move_back(folder), "damaged")
 
@@ -897,7 +906,7 @@ def test_folder_labels_name_the_folder_and_leave_file_names_alone(tmp_path):
     a text replace after the fact rewrote it (review 2026-09-29)."""
     folder = tmp_path / "d2" / "M 31"
     (folder / REJECTED_DIR).mkdir(parents=True)
-    (folder / REJECTED_DIR / MANIFEST_NAME).write_text("not json")    # damaged
+    (folder / REJECTED_DIR / MANIFEST_NAME).write_text("not json", encoding="utf-8")    # damaged
     with pytest.raises(rm.RejectMoveError) as plain:
         rm.move_back(str(folder))
     with rm.folder_labels({str(folder): "d2/M 31"}):

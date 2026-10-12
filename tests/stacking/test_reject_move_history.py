@@ -81,7 +81,7 @@ def test_the_history_reader_never_raises(night):
     """Chart-only: a damaged record is the safety path's business to report."""
     folder, paths = night
     rm.move_to_rejected(folder, paths[:1], paths, measured=_measured(paths[:1]))
-    with open(os.path.join(rej(folder), MANIFEST_NAME), "w") as fh:
+    with open(os.path.join(rej(folder), MANIFEST_NAME), "w", encoding="utf-8") as fh:
         fh.write("{not json")
     assert rm.read_moved_history(folder) == []
     assert rm.read_moved_history(os.path.join(folder, "nowhere")) == []
@@ -93,7 +93,7 @@ def test_junk_values_are_skipped_not_trusted(night):
     rec = _record(folder)
     rec["moved"][0]["measured"]["fwhm"] = "NaN"
     rec["moved"][1]["measured"] = ["not", "a", "dict"]
-    with open(os.path.join(rej(folder), MANIFEST_NAME), "w") as fh:
+    with open(os.path.join(rej(folder), MANIFEST_NAME), "w", encoding="utf-8") as fh:
         json.dump(rec, fh)
     assert [os.path.basename(h["path"]) for h in rm.read_moved_history(folder)] == [
         rec["moved"][2]["name"]]

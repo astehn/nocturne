@@ -22,7 +22,7 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (QHBoxLayout, QLabel, QPushButton, QSizePolicy,
                                QToolTip, QVBoxLayout, QWidget)
 
-from ..stacking.capture_time import full_label
+from ..stacking.capture_time import full_label, to_local
 from ..stacking.nights import night_key, night_label
 from . import theme
 
@@ -508,7 +508,7 @@ class QualityChart(QWidget):
             i = min(bisect.bisect_left(self._x, target), len(self._x) - 1)
             if i > 0 and abs(self._x[i - 1] - target) <= abs(self._x[i] - target):
                 i -= 1
-            text = f"{self._stats[self._rows[i]].captured.astimezone():%H:%M}"
+            text = f"{to_local(self._stats[self._rows[i]].captured):%H:%M}"
             w = fm.horizontalAdvance(text) + 4.0
             cx = self._px(i, r, avail)
             left = min(max(cx - w / 2, 0.0), self.width() - w)

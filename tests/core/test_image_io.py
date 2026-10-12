@@ -106,7 +106,7 @@ def test_non_finite_samples_do_not_poison_the_verdict(tmp_path):
 
 
 def test_a_file_that_is_not_a_tiff_raises(tmp_path):
-    p = tmp_path / "x.tif"; p.write_text("not a tiff")
+    p = tmp_path / "x.tif"; p.write_text("not a tiff", encoding="utf-8")
     with pytest.raises(Exception):
         load_tiff(str(p))
 
@@ -115,7 +115,7 @@ def test_core_stays_qt_free():
     """core/ imports no Qt, by rule. A reader is exactly the place that gets
     this wrong, because Qt has a perfectly good image loader."""
     import pathlib
-    src = pathlib.Path("nocturne/core/image_io.py").read_text()
+    src = pathlib.Path("nocturne/core/image_io.py").read_text(encoding="utf-8")
     assert "PySide6" not in src and "QtGui" not in src
 
 

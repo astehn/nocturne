@@ -9,6 +9,7 @@ wiped when a project closes and gone when the app exits, which is exactly when
 a support ticket gets written. The file is what a ticket can carry.
 """
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -26,8 +27,8 @@ ROOT = Path(__file__).parent.parent
 def session(tmp_path, monkeypatch):
     """A live session log in a temp home, and a reader for it."""
     monkeypatch.setattr(sessionlog, "_active", str(tmp_path / "session.log"))
-    (tmp_path / "session.log").write_text("")
-    return lambda: (tmp_path / "session.log").read_text()
+    (tmp_path / "session.log").write_text("", encoding="utf-8")
+    return lambda: (tmp_path / "session.log").read_text(encoding="utf-8")
 
 
 def _img(h=16, w=16):
@@ -69,18 +70,18 @@ def test_a_tool_run_is_recorded_with_its_exit_code_and_elapsed(session):
     """Recorded at run_cli's single convergence point, so a FAILING run is
     recorded too — that is the one a ticket is usually about."""
     from nocturne.tools.base import run_cli
-    run_cli(["/bin/echo", "hello"])
+    run_cli([sys.executable, "-c", "print('hello')"])   # /bin/echo: not on Windows
     text = session()
-    assert "/bin/echo" in text and "exit 0" in text
+    assert sys.executable in text and "exit 0" in text
 
 
 def test_a_FAILING_tool_run_is_recorded_before_the_error_is_raised(session):
-    """`false` exits 1, so run_cli raises ToolError. The log line must already
+    """A tool that exits 1 makes run_cli raise ToolError. The log line must already
     be written: a tool that fails is precisely what the reporter is reporting,
     and an exception must not take the record with it."""
     from nocturne.tools.base import ToolError, run_cli
     with pytest.raises(ToolError):
-        run_cli(["/usr/bin/false"])
+        run_cli([sys.executable, "-c", "raise SystemExit(1)"])
     assert "exit 1" in session()
 
 
@@ -173,7 +174,7 @@ def test_the_session_opens_BEFORE_the_window_is_built():
 
     Parsed, not grepped — see the test above for why."""
     import ast
-    tree = ast.parse((ROOT / "nocturne" / "__main__.py").read_text())
+    tree = ast.parse((ROOT / "nocturne" / "__main__.py").read_text(encoding="utf-8"))
     main = next(n for n in tree.body
                 if isinstance(n, ast.FunctionDef) and n.name == "main")
     starts, windows = [], []
