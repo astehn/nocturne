@@ -233,4 +233,16 @@ def test_collecting_imagecodecs_actually_brings_the_lzw_module():
     _datas, binaries, hidden = collect_all("imagecodecs")
     assert "imagecodecs._imcd" in hidden, \
         "collect_all no longer names the module that provides lzw_decode"
+    import sys
+    if sys.platform == "win32":
+        # The Windows wheel links its codecs into the .pyd files themselves and
+        # ships no DLLs (measured, imagecodecs 2026.10.10: 67 .pyd, 0 .dll), so
+        # there is nothing for collect_all to bring. Should a release start
+        # vendoring DLLs, this says so.
+        import glob, os
+        import imagecodecs
+        root = os.path.dirname(imagecodecs.__file__)
+        dlls = glob.glob(os.path.join(root, "**", "*.dll"), recursive=True)
+        assert len(binaries) >= len(dlls), "imagecodecs ships DLLs collect_all leaves behind"
+        return
     assert binaries, "collect_all brought no shared libraries for imagecodecs"

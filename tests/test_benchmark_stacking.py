@@ -56,6 +56,8 @@ def test_a_blurrier_master_measures_larger(tmp_path):
         f"blur did not register: {sharp['half_light_px']} -> {blurry['half_light_px']}")
 
 
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="the benchmark (a dev script, never shipped) samples `ps`, which Windows lacks")
 def test_the_memory_sampler_reports_a_real_peak_not_a_high_water_mark():
     """The first version used resource.getrusage, whose ru_maxrss never
     decreases for the life of the process — so in a five-session run every

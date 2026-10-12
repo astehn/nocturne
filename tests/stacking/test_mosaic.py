@@ -18,13 +18,17 @@ def test_the_astap_preflight_agrees_with_settings(tmp_path):
     from nocturne.settings import is_tool
     from nocturne.stacking.mosaic import check_astap
 
-    # A macOS-style bundle: a directory whose executable lives inside it.
-    app = tmp_path / "ASTAP.app"
-    macos = app / "Contents" / "MacOS"
-    macos.mkdir(parents=True)
-    exe = macos / "ASTAP"
-    exe.write_text("#!/bin/sh\n", encoding="utf-8")
-    exe.chmod(0o755)
+    if sys.platform == "win32":
+        # No bundles on Windows; the same agreement must hold for its .exe.
+        app = fake_tool(tmp_path / "astap" / "astap.exe")
+    else:
+        # A macOS-style bundle: a directory whose executable lives inside it.
+        app = tmp_path / "ASTAP.app"
+        macos = app / "Contents" / "MacOS"
+        macos.mkdir(parents=True)
+        exe = macos / "ASTAP"
+        exe.write_text("#!/bin/sh\n", encoding="utf-8")
+        exe.chmod(0o755)
 
     assert is_tool(str(app)) is True, "the fixture is not a valid bundle"
     check_astap(str(app))          # must NOT raise

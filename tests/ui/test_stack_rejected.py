@@ -5,6 +5,7 @@ inside tmp_path — never a real capture folder — and checks bytes and mtimes,
 not just names.
 """
 import os
+import sys
 
 import numpy as np
 import pytest
@@ -319,6 +320,7 @@ def test_a_name_already_in_rejected_stops_everything(qtbot, tmp_path):
 
 
 @pytest.mark.skipif(AS_ROOT, reason="root ignores permissions")
+@pytest.mark.skipif(sys.platform == "win32", reason="chmod cannot lock a folder on Windows")
 def test_a_read_only_folder_moves_nothing_and_says_why(qtbot, tmp_path):
     """Review Focus 1."""
     folder, _paths = _folder(tmp_path)
