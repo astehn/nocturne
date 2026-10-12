@@ -722,7 +722,8 @@ def test_stacking_with_mosaic_checked_runs_the_mosaic_path(qtbot, tmp_path):
     paths += [_sub_with_pointing(tmp_path, f"b{i}.fit", 10.0, 43.0) for i in range(3)]
 
     settings = Settings()
-    settings.astap_path = str(fake_tool(tmp_path / "astap"))
+    astap = fake_tool(tmp_path / "astap")
+    settings.astap_path = str(astap)
 
     dlg = StackDialog(settings)
     qtbot.addWidget(dlg)
@@ -741,7 +742,7 @@ def test_stacking_with_mosaic_checked_runs_the_mosaic_path(qtbot, tmp_path):
 
     dlg.run()
     qtbot.waitUntil(lambda: "opts" in seen, timeout=3000)
-    assert seen["opts"].astap_path == str(tmp_path / "astap")
+    assert seen["opts"].astap_path == str(astap)
     assert len(seen["opts"].include) == 6
 
 
@@ -1705,6 +1706,7 @@ def test_a_save_to_that_does_not_exist_is_refused_before_stacking(qtbot, tmp_pat
 
 def test_a_tilde_in_save_to_is_the_home_folder(qtbot, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))   # what "~" means on Windows
     (tmp_path / "Astro").mkdir()
     dlg, _ = _graded_ngc(qtbot, tmp_path / "Astro")
     dlg.save_to_edit.setText("~/Astro")
