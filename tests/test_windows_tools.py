@@ -40,3 +40,13 @@ def test_windows_gets_its_own_list():
     expected = (st._MAC_CANDIDATES if sys.platform == "darwin"
                 else st._WINDOWS_CANDIDATES if sys.platform == "win32" else st._LINUX_CANDIDATES)
     assert st.TOOL_CANDIDATES is expected
+
+
+@windows_only
+def test_stacking_reads_the_real_memory_on_windows():
+    import subprocess
+    from nocturne.stacking import parallel
+    out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                          "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"],
+                         capture_output=True, text=True, encoding="utf-8").stdout.strip()
+    assert parallel._total_ram_bytes() == int(out)       # not the 8 GB guess

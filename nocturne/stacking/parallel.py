@@ -115,10 +115,34 @@ def _performance_cores() -> int:
 
 
 def _total_ram_bytes() -> int:
+    if os.name == "nt":
+        ram = _windows_total_ram()
+        if ram:
+            return ram
     try:
         return int(os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES"))
     except (ValueError, OSError, AttributeError):
         return 8 * 1024 ** 3       # assume a modest machine rather than a huge one
+
+
+def _windows_total_ram() -> int | None:
+    """Physical memory through GlobalMemoryStatusEx. Windows has no sysconf, so
+    without this every Windows machine was planned as an 8 GB one: too many
+    workers on a small laptop, too few on a large desktop."""
+    class _MemStatus(ctypes.Structure):
+        _fields_ = [("dwLength", ctypes.c_uint32), ("dwMemoryLoad", ctypes.c_uint32),
+                    ("ullTotalPhys", ctypes.c_uint64), ("ullAvailPhys", ctypes.c_uint64),
+                    ("ullTotalPageFile", ctypes.c_uint64), ("ullAvailPageFile", ctypes.c_uint64),
+                    ("ullTotalVirtual", ctypes.c_uint64), ("ullAvailVirtual", ctypes.c_uint64),
+                    ("ullAvailExtendedVirtual", ctypes.c_uint64)]
+    try:
+        st = _MemStatus()
+        st.dwLength = ctypes.sizeof(_MemStatus)
+        if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+            return None
+        return int(st.ullTotalPhys) or None
+    except Exception:
+        return None
 
 
 @dataclass(frozen=True)
