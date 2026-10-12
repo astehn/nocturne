@@ -1,5 +1,6 @@
 import pytest
 import os
+import sys
 import numpy as np
 from nocturne.core.image import AstroImage
 from nocturne.tools.astap import ASTAP, SolveResult, hint_from_metadata
@@ -267,7 +268,8 @@ def test_solve_is_cancellable_and_binds_the_process(tmp_path):
         with pytest.raises(Cancelled):
             # cwd must be a tmp dir, never ".": _run_astap writes _astap_out.txt
             # into cwd, so "." dropped a stray file in the repo root on every run
-            _run_astap(["/bin/sleep", "5"], cwd=str(tmp_path), timeout=30)
+            _run_astap([sys.executable, "-c", "import time; time.sleep(5)"],
+                       cwd=str(tmp_path), timeout=30)
     finally:
         clear_ambient()
     assert bound, "the solver process must be bound to the cancel token"
@@ -280,7 +282,8 @@ def test_solve_times_out_rather_than_hanging_forever(tmp_path):
     from nocturne.tools.base import ToolError
 
     with pytest.raises(ToolError) as e:
-        _run_astap(["/bin/sleep", "10"], cwd=str(tmp_path), timeout=0.5)
+        _run_astap([sys.executable, "-c", "import time; time.sleep(10)"],
+                   cwd=str(tmp_path), timeout=0.5)
     assert "did not finish" in str(e.value) or "0 s" in str(e.value)
 
 

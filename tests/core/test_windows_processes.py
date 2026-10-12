@@ -61,6 +61,23 @@ def test_windows_never_taskkills_something_that_is_not_our_popen(monkeypatch):
     assert fake.terminated
 
 
+def _unstarted_popen(pid):
+    """A real Popen instance that started nothing, carrying `pid` — the shape a
+    wrong pid would arrive in."""
+    p = subprocess.Popen.__new__(subprocess.Popen)
+    p.pid = pid
+    return p
+
+
+@pytest.mark.parametrize("pid", ["ours", 0, 4, -1, None])
+def test_windows_never_taskkills_our_own_or_a_system_pid(monkeypatch, pid):
+    """The Windows twin of the POSIX own-group guard: /F /T on our pid would end
+    Nocturne and everything it started; pid 4 is the System process."""
+    calls = _record_runs(monkeypatch)
+    tasks.kill_process(_unstarted_popen(os.getpid() if pid == "ours" else pid))
+    assert calls == []
+
+
 @pytest.mark.skipif(os.name != "nt", reason="the real taskkill exists only on Windows")
 def test_taskkill_really_ends_a_child_and_its_grandchild():
     code = ("import subprocess, sys, time; "
