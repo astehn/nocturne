@@ -592,7 +592,7 @@ def test_a_solve_hands_the_plate_both_halves_directly(qtbot, tmp_path):
     assert (t.designation, t.common) == ("NGC 7000", "North America Nebula")
     # and the wiring exists at the call site, not only in the helper
     from pathlib import Path
-    src = (Path(__file__).parents[2] / "nocturne" / "ui" / "main_window.py").read_text()
+    src = (Path(__file__).parents[2] / "nocturne" / "ui" / "main_window.py").read_text(encoding="utf-8")
     assert "target_designation" in src and "identify_target_parts" in src, \
         "the solve does not write the pair; the plate is back to splitting a string"
 

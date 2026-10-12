@@ -75,7 +75,7 @@ def _supports_json(binary_path: str) -> bool:
         try:
             from ..core.tasks import no_window_kwargs
             proc = subprocess.run([binary_path, "--help"], capture_output=True,
-                                  text=True, timeout=30, **no_window_kwargs())
+                                  text=True, errors="replace", timeout=30, **no_window_kwargs())
             ok = "--json" in (proc.stdout or "") + (proc.stderr or "")
         except (OSError, subprocess.SubprocessError):
             ok = False

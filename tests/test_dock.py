@@ -100,7 +100,7 @@ def test_the_bundles_entry_point_leaves_the_dock():
     nothing.
     """
     entry = _entry_script()
-    tree = ast.parse(entry.read_text())
+    tree = ast.parse(entry.read_text(encoding="utf-8"))
     guard = [n for n in tree.body
              if isinstance(n, ast.If) and ast.unparse(n.test) == "__name__ == '__main__'"]
     assert guard, f"{entry.name} has no `if __name__ == \"__main__\"` block"
@@ -114,7 +114,7 @@ def test_the_bundles_entry_point_leaves_the_dock():
 def _entry_script() -> pathlib.Path:
     """The file the SPEC names. Not nocturne/__main__.py — see the test above."""
     root = pathlib.Path(__file__).resolve().parents[1]
-    spec = (root / "packaging" / "nocturne.spec").read_text()
+    spec = (root / "packaging" / "nocturne.spec").read_text(encoding="utf-8")
     m = re.search(r'SCRIPT\s*=\s*os\.path\.join\(SPECPATH,\s*"([^"]+)"\)', spec)
     assert m, "could not find the entry script in nocturne.spec"
     return root / "packaging" / m.group(1)
@@ -133,7 +133,7 @@ def test_the_entry_point_imports_the_gui_after_freeze_support():
     INSIDE the __main__ guard (module level runs in every worker), and it must
     come AFTER freeze_support() (which exits, so a worker never reaches it).
     """
-    tree = ast.parse(_entry_script().read_text())
+    tree = ast.parse(_entry_script().read_text(encoding="utf-8"))
 
     module_level = [n for n in tree.body if isinstance(n, ast.ImportFrom)
                     and n.module == "nocturne.__main__"]

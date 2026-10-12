@@ -16,7 +16,7 @@ ASSETS = ROOT / "nocturne" / "assets"
 
 def _spec_ns():
     """Run the spec's helpers without running PyInstaller."""
-    src = SPEC.read_text()
+    src = SPEC.read_text(encoding="utf-8")
     body = src[src.index("def _prune"):src.index("datas = _assets()")]
     ns = {"os": os, "ASSETS": str(ASSETS)}
     exec(body, ns)  # noqa: S102 — our own file, and the point is to test it
@@ -29,7 +29,7 @@ def test_the_assets_are_named_not_swept():
     not. Naming the files also makes a NEW asset a deliberate addition — the
     safer failure, since a missing one breaks loudly at startup while an
     unnoticed 150 MB one only makes the download slower."""
-    src = SPEC.read_text()
+    src = SPEC.read_text(encoding="utf-8")
     # Match the ASSIGNMENT, not the prose. The first version of this assertion
     # searched the whole file and tripped on the docstring explaining the very
     # sweep it was guarding against.
@@ -73,7 +73,7 @@ def test_a_collected_package_does_not_bring_its_coverage_report():
 
 def test_collected_packages_are_pruned_too():
     """Not only the assets — colour's 78 MB rides in via collect_all."""
-    src = SPEC.read_text()
+    src = SPEC.read_text(encoding="utf-8")
     assert re.search(r"datas \+= _prune\(d\)", src), \
         "collect_all output is unpruned; colour/htmlcov ships again"
 
@@ -82,7 +82,7 @@ def test_onnxruntime_stays_excluded():
     """Nothing in the app imports it since the pre-stretch denoiser went
     (2026-10-05). The exclude stays so a stray import cannot put 64 MB back
     into every download without anyone choosing to."""
-    src = SPEC.read_text()
+    src = SPEC.read_text(encoding="utf-8")
     excludes = src[src.index("excludes=["):]
     excludes = excludes[:excludes.index("]")]
     assert '"onnxruntime"' in excludes

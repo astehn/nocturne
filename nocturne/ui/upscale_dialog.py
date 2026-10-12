@@ -77,7 +77,7 @@ def _write(result, path: str, save) -> None:
     pooled export alike."""
     save(result, path)
     stem = os.path.splitext(path)[0]
-    with open(stem + ".txt", "w") as f:
+    with open(stem + ".txt", "w", encoding="utf-8") as f:
         f.write(upscale_provenance_text(result.metadata))
 
 

@@ -26,8 +26,8 @@ ROOT = Path(__file__).parent.parent
 def session(tmp_path, monkeypatch):
     """A live session log in a temp home, and a reader for it."""
     monkeypatch.setattr(sessionlog, "_active", str(tmp_path / "session.log"))
-    (tmp_path / "session.log").write_text("")
-    return lambda: (tmp_path / "session.log").read_text()
+    (tmp_path / "session.log").write_text("", encoding="utf-8")
+    return lambda: (tmp_path / "session.log").read_text(encoding="utf-8")
 
 
 def _img(h=16, w=16):
@@ -173,7 +173,7 @@ def test_the_session_opens_BEFORE_the_window_is_built():
 
     Parsed, not grepped — see the test above for why."""
     import ast
-    tree = ast.parse((ROOT / "nocturne" / "__main__.py").read_text())
+    tree = ast.parse((ROOT / "nocturne" / "__main__.py").read_text(encoding="utf-8"))
     main = next(n for n in tree.body
                 if isinstance(n, ast.FunctionDef) and n.name == "main")
     starts, windows = [], []

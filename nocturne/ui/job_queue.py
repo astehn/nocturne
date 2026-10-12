@@ -226,12 +226,13 @@ class JobQueue(QObject):
         """
         fd, path = tempfile.mkstemp(prefix="nocturne_job_", suffix=".json")
         try:
-            with os.fdopen(fd, "w") as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(json.dumps(dataclasses.asdict(job.options)))
             proc = subprocess.Popen(
                 job_command(path),
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1, **child_process_kwargs())
+                text=True, errors="replace", bufsize=1,
+                **child_process_kwargs())
         except BaseException:
             _discard(path)          # no reader will ever reach its cleanup
             raise

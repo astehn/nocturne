@@ -122,7 +122,7 @@ def test_rescan_button_fills_the_fields(qtbot, monkeypatch, tmp_path):
 
     gx = tmp_path / "GraXpert.app" / "Contents" / "MacOS"
     gx.mkdir(parents=True)
-    (gx / "GraXpert").write_text("#!/bin/sh\n")
+    (gx / "GraXpert").write_text("#!/bin/sh\n", encoding="utf-8")
     (gx / "GraXpert").chmod(0o755)   # a real tool is EXECUTABLE, not merely present
     monkeypatch.setattr(settings_dialog, "TOOL_CANDIDATES",
                         {"graxpert_path": [str(tmp_path / "GraXpert.app")],
@@ -246,7 +246,7 @@ def test_an_unanswered_question_shows_as_off_and_saves_as_a_real_answer(qtbot):
 
 def test_a_configured_starnet2_says_so_without_pressing_test(qtbot, tmp_path):
     exe = tmp_path / "starnet2"
-    exe.write_text("#!/bin/sh\n")
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
     exe.chmod(0o755)
     dlg = SettingsDialog(Settings(starnet_path=str(exe)))
     qtbot.addWidget(dlg)
@@ -264,7 +264,7 @@ def test_every_tool_path_field_has_a_status_on_open(qtbot, tmp_path):
     """The structural guard. A sixth tool added to the dialog without a status
     row repeats this silently — the field looks configured and says nothing."""
     exe = tmp_path / "t"
-    exe.write_text("#!/bin/sh\n")
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
     exe.chmod(0o755)
     dlg = SettingsDialog(Settings(graxpert_path=str(exe), rcastro_path=str(exe),
                                   starnet_path=str(exe), astap_path=str(exe)))
@@ -282,7 +282,7 @@ def test_typing_a_starnet2_path_updates_its_status_as_you_type(qtbot, tmp_path):
     then frozen — set the path, get no confirmation, which is the exact state
     the fix was supposed to end. Found by an adversarial review, not by me."""
     exe = tmp_path / "starnet2"
-    exe.write_text("#!/bin/sh\n")
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
     exe.chmod(0o755)
     dlg = SettingsDialog(Settings())
     qtbot.addWidget(dlg)
@@ -327,7 +327,7 @@ def test_rescan_handles_every_tool_the_detector_can_find(qtbot, tmp_path, monkey
     from nocturne.ui import settings_dialog as sd
 
     exe = tmp_path / "found"
-    exe.write_text("#!/bin/sh\n")
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
     exe.chmod(0o755)
     # Every field the detector knows about, all found at once — the case the
     # dialog has to survive.

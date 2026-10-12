@@ -460,7 +460,7 @@ class RecipeVersionError(ValueError):
 def save_recipe(recipe: Recipe, path: str) -> None:
     # `app` is the Nocturne that wrote it; `version` is the FILE SCHEMA and is
     # a different thing. See load_recipe for why the app version is recorded.
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump({"version": 1, "app": __version__, "steps": recipe.steps},
                   f, indent=2)
 
@@ -485,7 +485,7 @@ def load_recipe(path: str) -> Recipe:
     needing someone to remember. A recipe with no `app` field predates this and
     is refused for the same reason: it was written by an unknown older build.
     """
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     if RELEASE_STAGE:
         wrote = data.get("app")

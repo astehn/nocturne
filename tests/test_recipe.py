@@ -253,7 +253,7 @@ def test_every_enhancement_the_panel_offers_can_be_saved_in_a_recipe():
     import re
     from pathlib import Path
     from nocturne.ui.pipeline import ENHANCE_NAMES
-    src = (Path(__file__).parent.parent / "nocturne" / "ui" / "step_panels.py").read_text()
+    src = (Path(__file__).parent.parent / "nocturne" / "ui" / "step_panels.py").read_text(encoding="utf-8")
     # The triples are (attr, LABEL, OP) and it is the OP that must be
     # registered — "Boost Cyan (OIII)" is what the button says, "Boost Cyan" is
     # what the history records. Taking the label instead reported two false
@@ -280,7 +280,7 @@ def test_every_saveable_enhancement_can_actually_be_replayed():
     from nocturne.core.enhance import ENHANCE_OPS
     from nocturne.ui.pipeline import ENHANCE_NAMES
     from pathlib import Path
-    batch_src = (Path(__file__).parent.parent / "nocturne" / "batch.py").read_text()
+    batch_src = (Path(__file__).parent.parent / "nocturne" / "batch.py").read_text(encoding="utf-8")
     for name in ENHANCE_NAMES:
         replayable = name in ENHANCE_OPS or f'"{name}":' in batch_src
         assert replayable, f"{name!r} serialises into a recipe but batch cannot apply it"
@@ -290,7 +290,7 @@ def test_every_saveable_enhancement_can_actually_be_replayed():
 
 def _tool(tmp_path):
     exe = tmp_path / "tool"
-    exe.write_text("#!/bin/sh\n")
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
     exe.chmod(0o755)
     return str(exe)
 
@@ -447,7 +447,7 @@ def test_a_recipe_from_another_pre_1_0_build_is_refused(tmp_path):
 
     p = tmp_path / "old.json"
     p.write_text(json.dumps({"version": 1, "app": "0.29.0",
-                             "steps": [{"stage": "stretch", "option": 0.5}]}))
+                             "steps": [{"stage": "stretch", "option": 0.5}]}), encoding="utf-8")
     with pytest.raises(RecipeVersionError) as exc:
         load_recipe(str(p))
     msg = str(exc.value)
@@ -463,7 +463,7 @@ def test_a_recipe_with_no_app_field_is_refused_too(tmp_path):
     from nocturne.recipe import RecipeVersionError, load_recipe
 
     p = tmp_path / "ancient.json"
-    p.write_text(json.dumps({"version": 1, "steps": []}))
+    p.write_text(json.dumps({"version": 1, "steps": []}), encoding="utf-8")
     with pytest.raises(RecipeVersionError):
         load_recipe(str(p))
 
@@ -487,7 +487,7 @@ def test_the_strictness_lifts_itself_at_1_0(tmp_path, monkeypatch):
     import nocturne.recipe as r
 
     p = tmp_path / "old.json"
-    p.write_text(json.dumps({"version": 1, "app": "0.29.0", "steps": []}))
+    p.write_text(json.dumps({"version": 1, "app": "0.29.0", "steps": []}), encoding="utf-8")
     monkeypatch.setattr(r, "RELEASE_STAGE", "")
     assert r.load_recipe(str(p)).steps == []
 

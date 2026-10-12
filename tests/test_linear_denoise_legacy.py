@@ -260,7 +260,7 @@ def test_save_recipe_on_a_legacy_project_leaves_the_step_out_and_says_so(
         lambda _p, _t, text, *a, **k: warned.append(text) or QMessageBox.StandardButton.Save))
     win._save_recipe()
     assert len(warned) == 1 and "Linear Denoise" in warned[0], warned
-    with open(out) as fh:
+    with open(out, encoding="utf-8") as fh:
         stages = [s["stage"] for s in json.load(fh)["steps"]]
     assert stages == ["crop", "deconvolution", "stretch", "levels"]
 
@@ -286,7 +286,7 @@ def _recipe_file(tmp_path, steps, name="r.json"):
     in beta), carrying the step as the old build serialised it."""
     from nocturne import __version__
     p = tmp_path / name
-    p.write_text(json.dumps({"version": 1, "app": __version__, "steps": steps}))
+    p.write_text(json.dumps({"version": 1, "app": __version__, "steps": steps}), encoding="utf-8")
     return str(p)
 
 
@@ -345,7 +345,7 @@ def test_a_model_in_the_old_models_folder_changes_nothing(qtbot, tmp_path, monke
     models = home / ".nocturne" / "models"
     models.mkdir(parents=True)
     (models / "v10.onnx").write_bytes(b"not a real model")
-    (models / "v10.json").write_text("{}")
+    (models / "v10.json").write_text("{}", encoding="utf-8")
     monkeypatch.setenv("HOME", str(home))
     # Where the folder is still read, it was resolved at import: aim it here as
     # well, so this describes the app and not a test-suite override.

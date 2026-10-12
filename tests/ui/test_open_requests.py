@@ -51,9 +51,9 @@ def test_other_events_pass_through(qtbot):
 
 def test_the_command_line_names_the_file(tmp_path):
     f = tmp_path / "m 31.fits"
-    f.write_text("x")
+    f.write_text("x", encoding="utf-8")
     txt = tmp_path / "notes.txt"
-    txt.write_text("x")
+    txt.write_text("x", encoding="utf-8")
     assert path_from_argv(["nocturne", "--no-splash", str(txt), str(f)]) == str(f)
     assert path_from_argv(["nocturne", "--size", "1280x800"]) is None
     assert path_from_argv(["nocturne"]) is None
@@ -69,7 +69,7 @@ def test_an_image_request_opens_it(qtbot, tmp_path):
 def test_a_project_request_goes_through_the_project_door(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     p = tmp_path / "x.nocturne"
-    p.write_text("x")
+    p.write_text("x", encoding="utf-8")
     opened = []
     monkeypatch.setattr(win, "_open_project", lambda path=None: opened.append(path))
     win.open_requested(str(p))
@@ -79,7 +79,7 @@ def test_a_project_request_goes_through_the_project_door(qtbot, tmp_path, monkey
 def test_a_file_nocturne_cannot_open_is_said_plainly(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     p = tmp_path / "x.jpg"
-    p.write_text("x")
+    p.write_text("x", encoding="utf-8")
     warned = []
     win._show_warning = warned.append
     win.open_requested(str(p))
@@ -108,7 +108,7 @@ def test_a_request_while_working_or_under_a_tool_window_asks_to_try_again(qtbot,
 
 # --- the macOS package ---------------------------------------------------------
 def _spec():
-    return (pathlib.Path(__file__).resolve().parents[2] / "packaging" / "nocturne.spec").read_text()
+    return (pathlib.Path(__file__).resolve().parents[2] / "packaging" / "nocturne.spec").read_text(encoding="utf-8")
 
 
 def test_the_app_package_says_what_it_opens():

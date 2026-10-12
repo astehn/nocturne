@@ -58,5 +58,5 @@ def test_no_module_imports_the_busy_bar():
     import pathlib
     import re
     root = pathlib.Path(__file__).resolve().parents[2] / "nocturne"
-    hits = [p for p in root.rglob("*.py") if re.search(r"busy_bar|BusyBar", p.read_text())]
+    hits = [p for p in root.rglob("*.py") if re.search(r"busy_bar|BusyBar", p.read_text(encoding="utf-8"))]
     assert hits == []

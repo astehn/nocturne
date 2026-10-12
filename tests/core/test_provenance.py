@@ -32,7 +32,7 @@ def test_the_report_is_wired_to_the_real_settings():
     """The section is worthless if the dialog never passes settings — that is
     how a feature ships looking complete and reporting nothing."""
     from pathlib import Path
-    src = (Path(__file__).parents[2] / "nocturne" / "ui" / "main_window.py").read_text()
+    src = (Path(__file__).parents[2] / "nocturne" / "ui" / "main_window.py").read_text(encoding="utf-8")
     # Up to the blank line, not to the first ")" — the call spans three lines
     # and `self.project.entries()` closes a paren inside it, which truncated
     # the first version of this test to nothing.

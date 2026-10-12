@@ -175,7 +175,7 @@ def _blob(path, cy, shape=(64, 64)):
 def _subs(folder, n=6):
     folder.mkdir()
     for i in range(n):
-        (folder / f"s{i}.fit").write_text("x")
+        (folder / f"s{i}.fit").write_text("x", encoding="utf-8")
     return folder
 
 
@@ -489,9 +489,9 @@ def test_batch_run_dims_every_control(qtbot, hold, monkeypatch, tmp_path, fail):
     d = m.BatchDialog(Settings())
     qtbot.addWidget(d)
     d.show()
-    (tmp_path / "x.fits").write_text("x")
+    (tmp_path / "x.fits").write_text("x", encoding="utf-8")
     rp = tmp_path / "r.json"
-    rp.write_text("{}")
+    rp.write_text("{}", encoding="utf-8")
     d.recipe_edit.setText(str(rp))
     d.input_edit.setText(str(tmp_path))
     d.output_edit.setText(str(tmp_path / "out"))

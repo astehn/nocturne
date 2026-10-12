@@ -734,7 +734,7 @@ def test_haoiii_builds_both_from_one_reference():
     in-memory master must be derived from the SAME ref_meta, or they drift
     apart again the next time one of them gains a field."""
     from pathlib import Path
-    src = (Path(__file__).parents[2] / "nocturne" / "stacking" / "haoiii.py").read_text()
+    src = (Path(__file__).parents[2] / "nocturne" / "stacking" / "haoiii.py").read_text(encoding="utf-8")
     assert "metadata=master_metadata(ref_meta" in src, \
         "the in-memory master is hand-rolled again"
     assert "master_header(ref_meta" in src

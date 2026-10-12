@@ -68,7 +68,7 @@ def main(argv: list[str], out=None) -> int:
     """`--stack-job <options.json>`; the path holds the serialised StackOptions."""
     try:
         path = argv[argv.index("--stack-job") + 1]
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return run_job(f.read(), out)
     except Exception as exc:                      # noqa: BLE001 - reported as data
         emit({"event": "error", "message": str(exc)}, out)

@@ -87,8 +87,8 @@ def test_rc_astro_still_wins_when_both_are_installed(tmp_path):
     """The user paid for StarXTerminator and it is still the best. StarNet2 is
     the answer for everyone else, not a replacement for it."""
     from nocturne.tools.rcastro import RCAstro
-    rc = tmp_path / "rc-astro"; rc.write_text("#!/bin/sh\n"); rc.chmod(0o755)
-    sn = tmp_path / "starnet2"; sn.write_text("#!/bin/sh\n"); sn.chmod(0o755)
+    rc = tmp_path / "rc-astro"; rc.write_text("#!/bin/sh\n", encoding="utf-8"); rc.chmod(0o755)
+    sn = tmp_path / "starnet2"; sn.write_text("#!/bin/sh\n", encoding="utf-8"); sn.chmod(0o755)
     both = Settings(rcastro_path=str(rc), starnet_path=str(sn))
     assert isinstance(_splitter(both), RCAstro)
     assert isinstance(_splitter(Settings(starnet_path=str(sn))), StarNet)
@@ -217,7 +217,7 @@ def test_the_bundle_collects_the_codec_that_decodes_it():
     imagecodecs` succeeded anyway. Only collecting it explicitly brings
     `_imcd`, where lzw_decode lives."""
     from pathlib import Path
-    spec = (Path(__file__).parent.parent / "packaging" / "nocturne.spec").read_text()
+    spec = (Path(__file__).parent.parent / "packaging" / "nocturne.spec").read_text(encoding="utf-8")
     collected = spec.split("for pkg in (")[1].split(")")[0]
     assert "imagecodecs" in collected, \
         "the spec does not collect imagecodecs — star separation cannot work in the bundle"

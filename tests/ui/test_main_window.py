@@ -404,7 +404,7 @@ def test_save_recipe_writes_loadable_file(qtbot, tmp_path, monkeypatch):
 def test_open_bad_file_does_not_crash(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     bad = tmp_path / "bad.fits"
-    bad.write_text("not a fits file")
+    bad.write_text("not a fits file", encoding="utf-8")
     win.open_fits(str(bad))  # must not raise
     assert win.project is None
     assert "open" in win._warning.text().lower()
@@ -559,7 +559,7 @@ def test_settings_shows_where_each_tool_stands_without_pressing_test(qtbot, tmp_
     from nocturne.settings import Settings
     from nocturne.ui.settings_dialog import SettingsDialog
     gx = tmp_path / "graxpert"
-    gx.write_text("#!/bin/sh\n")
+    gx.write_text("#!/bin/sh\n", encoding="utf-8")
     gx.chmod(0o755)                      # a real tool is EXECUTABLE, not merely present
     dlg = SettingsDialog(Settings(graxpert_path=str(gx),
                                   rcastro_path=str(tmp_path / "gone" / "starx"),
@@ -579,7 +579,7 @@ def test_settings_status_follows_the_path_as_you_type(qtbot, tmp_path):
     from nocturne.settings import Settings
     from nocturne.ui.settings_dialog import SettingsDialog
     gx = tmp_path / "graxpert"
-    gx.write_text("#!/bin/sh\n")
+    gx.write_text("#!/bin/sh\n", encoding="utf-8")
     gx.chmod(0o755)
     dlg = SettingsDialog(Settings(), None)
     qtbot.addWidget(dlg)
@@ -712,7 +712,7 @@ def test_export_final_split_writes_two_tiffs(qtbot, tmp_path, monkeypatch):
     win.open_fits(_make_fits(tmp_path))
     # RC-Astro configured, so the split must go through IT (the free split
     # would also write two files — the log tag is what tells them apart).
-    rc_bin = tmp_path / "rc"; rc_bin.write_text("#!/bin/sh\n")
+    rc_bin = tmp_path / "rc"; rc_bin.write_text("#!/bin/sh\n", encoding="utf-8")
     rc_bin.chmod(0o755)   # a real tool is EXECUTABLE, not merely present
     win.settings = Settings(rcastro_path=str(rc_bin))
 
@@ -1426,7 +1426,7 @@ def test_local_contrast_preview_renders(qtbot, tmp_path):
 
 def _fake_rc_settings(tmp_path):
     from nocturne.settings import Settings
-    rc_bin = tmp_path / "rc"; rc_bin.write_text("#!/bin/sh\n")
+    rc_bin = tmp_path / "rc"; rc_bin.write_text("#!/bin/sh\n", encoding="utf-8")
     rc_bin.chmod(0o755)   # a real tool is EXECUTABLE, not merely present
     return Settings(rcastro_path=str(rc_bin))
 
@@ -1998,7 +1998,7 @@ def test_plate_solve_sets_target_and_overlay(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win.settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
+    (tmp_path / "astap").write_text("x", encoding="utf-8"); (tmp_path / "astap").chmod(0o755)
 
     # Fake a solve: a WCS centred on the frame + one catalogue object dead-centre.
     from astropy.wcs import WCS
@@ -2027,7 +2027,7 @@ def test_plate_solve_no_solution_leaves_no_overlay(qtbot, tmp_path, monkeypatch)
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win.settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
+    (tmp_path / "astap").write_text("x", encoding="utf-8"); (tmp_path / "astap").chmod(0o755)
 
     from nocturne.tools.astap import SolveResult
     monkeypatch.setattr(win, "_solve_current",
@@ -2042,7 +2042,7 @@ def test_plate_solve_toggles_overlay_off_when_cached(qtbot, tmp_path, monkeypatc
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win.settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
+    (tmp_path / "astap").write_text("x", encoding="utf-8"); (tmp_path / "astap").chmod(0o755)
 
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
@@ -2082,7 +2082,7 @@ def test_flip_invalidates_stale_solve_overlay(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win.settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
+    (tmp_path / "astap").write_text("x", encoding="utf-8"); (tmp_path / "astap").chmod(0o755)
 
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
@@ -2104,7 +2104,7 @@ def test_plate_solve_action_checked_state_tracks_overlay(qtbot, tmp_path, monkey
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win.settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
+    (tmp_path / "astap").write_text("x", encoding="utf-8"); (tmp_path / "astap").chmod(0o755)
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
     from nocturne.core.catalog import CatalogObject
@@ -2146,7 +2146,7 @@ def test_a_stale_solve_is_never_drawn_even_via_the_pill(qtbot, tmp_path, monkeyp
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win.settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
+    (tmp_path / "astap").write_text("x", encoding="utf-8"); (tmp_path / "astap").chmod(0o755)
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
     from nocturne.core.catalog import CatalogObject
@@ -2189,7 +2189,7 @@ def _solved_win(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win.settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
+    (tmp_path / "astap").write_text("x", encoding="utf-8"); (tmp_path / "astap").chmod(0o755)
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
     from nocturne.core.catalog import CatalogObject
@@ -2302,7 +2302,7 @@ def test_export_path_includes_named_stars_like_the_live_overlay(qtbot, tmp_path,
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win.settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
+    (tmp_path / "astap").write_text("x", encoding="utf-8"); (tmp_path / "astap").chmod(0o755)
 
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
@@ -2672,7 +2672,7 @@ def test_share_receives_the_annotated_frame_when_solved(qtbot, tmp_path, monkeyp
     and caption Share exists for. This was the user's first-named use case."""
     win = _stretched_window(qtbot, tmp_path)
     win.settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
+    (tmp_path / "astap").write_text("x", encoding="utf-8"); (tmp_path / "astap").chmod(0o755)
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
     from nocturne.core.catalog import CatalogObject
@@ -2709,7 +2709,7 @@ def test_share_gets_no_annotations_when_the_solve_is_stale(qtbot, tmp_path, monk
     into a shared image would publish labels in the wrong places."""
     win = _allow_geometry(_stretched_window(qtbot, tmp_path))
     win.settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
+    (tmp_path / "astap").write_text("x", encoding="utf-8"); (tmp_path / "astap").chmod(0o755)
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
     from nocturne.core.catalog import CatalogObject
@@ -3327,9 +3327,9 @@ def test_clear_cache_removes_only_snapshots(qtbot, tmp_path):
     import os
     win = _window(qtbot, tmp_path)
     os.makedirs(win._cache_dir, exist_ok=True)
-    open(os.path.join(win._cache_dir, "state_0.npy"), "w").close()
-    open(os.path.join(win._cache_dir, "state_9.npy"), "w").close()
-    open(os.path.join(win._cache_dir, "keep.txt"), "w").close()
+    open(os.path.join(win._cache_dir, "state_0.npy"), "w", encoding="utf-8").close()
+    open(os.path.join(win._cache_dir, "state_9.npy"), "w", encoding="utf-8").close()
+    open(os.path.join(win._cache_dir, "keep.txt"), "w", encoding="utf-8").close()
     win._clear_cache()
     left = sorted(os.listdir(win._cache_dir))
     assert left == ["keep.txt"]                      # snapshots gone, other files kept
@@ -3344,7 +3344,7 @@ def test_open_image_clears_stale_snapshots(qtbot, tmp_path):
     import os
     win = _window(qtbot, tmp_path)
     os.makedirs(win._cache_dir, exist_ok=True)
-    open(os.path.join(win._cache_dir, "state_9.npy"), "w").close()   # leftover from a longer prior session
+    open(os.path.join(win._cache_dir, "state_9.npy"), "w", encoding="utf-8").close()   # leftover from a longer prior session
     win.open_fits(_make_fits(tmp_path))
     assert not os.path.exists(os.path.join(win._cache_dir, "state_9.npy"))
 
@@ -3601,7 +3601,7 @@ def test_fov_hint_falls_back_to_the_instrument_profile():
 def _solved_with_objects(qtbot, tmp_path, monkeypatch, objects):
     win = _stretched_window(qtbot, tmp_path)
     win.settings.astap_path = str(tmp_path / "astap")
-    (tmp_path / "astap").write_text("x"); (tmp_path / "astap").chmod(0o755)
+    (tmp_path / "astap").write_text("x", encoding="utf-8"); (tmp_path / "astap").chmod(0o755)
     from astropy.wcs import WCS
     from nocturne.tools.astap import SolveResult
     wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [100.0, 0.0]
@@ -4101,7 +4101,7 @@ def test_plate_solve_is_greyed_out_without_astap(qtbot, tmp_path):
 def test_installing_astap_lights_the_button_up_without_a_restart(qtbot, tmp_path):
     from nocturne.settings import Settings
     fake = tmp_path / "astap"
-    fake.write_text("#!/bin/sh\n")
+    fake.write_text("#!/bin/sh\n", encoding="utf-8")
     fake.chmod(0o755)   # a real tool is EXECUTABLE, not merely present
     win = _window(qtbot, tmp_path)
     assert not win._solve_act.isEnabled()
@@ -5268,7 +5268,7 @@ def test_a_healthy_setup_says_nothing_on_the_toolbar(qtbot, tmp_path):
     1280px window, so that space is not free."""
     win = _window(qtbot, tmp_path)
     tool = tmp_path / "graxpert"
-    tool.write_text("#!/bin/sh\n")
+    tool.write_text("#!/bin/sh\n", encoding="utf-8")
     tool.chmod(0o755)
     win.settings.graxpert_path = str(tool)
     win.settings.rcastro_path = ""          # simply not owned

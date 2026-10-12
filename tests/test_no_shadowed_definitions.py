@@ -66,13 +66,13 @@ def test_the_guard_can_actually_see_a_duplicate(tmp_path):
     """Proves the detector works, so a green run means "none found" rather than
     "found nothing because it looks in the wrong place"."""
     p = tmp_path / "dupe.py"
-    p.write_text("def a():\n    pass\n\n\ndef a():\n    pass\n")
+    p.write_text("def a():\n    pass\n\n\ndef a():\n    pass\n", encoding="utf-8")
     assert _shadowed(p) == [("a", [1, 5])]
 
 
 def test_the_guard_ignores_a_single_definition(tmp_path):
     p = tmp_path / "fine.py"
-    p.write_text("def a():\n    pass\n\n\ndef b():\n    pass\n")
+    p.write_text("def a():\n    pass\n\n\ndef b():\n    pass\n", encoding="utf-8")
     assert _shadowed(p) == []
 
 

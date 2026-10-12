@@ -77,7 +77,7 @@ def test_the_two_memory_numbers_are_not_the_same_claim():
     interpreter pages of every worker (measured: 11 processes at ~1.16 GB each
     summing to 10.4 GB), so it is comparable between runs but is not what the
     machine needs. Reporting only one would mislead whichever was chosen."""
-    src = (ROOT / "scripts" / "benchmark_stacking.py").read_text()
+    src = (ROOT / "scripts" / "benchmark_stacking.py").read_text(encoding="utf-8")
     assert '"peak_rss_sum_mb"' in src and '"peak_rss_largest_mb"' in src
     # Check for USE, not for the word: the class docstring explains at length
     # why getrusage is wrong, and a bare substring search trips on that
@@ -89,7 +89,7 @@ def test_the_two_memory_numbers_are_not_the_same_claim():
 
 def test_the_corpus_is_valid_and_says_what_each_session_is_for():
     """A corpus of paths with no rationale becomes a list nobody prunes."""
-    data = json.loads((ROOT / "scripts" / "corpus.json").read_text())
+    data = json.loads((ROOT / "scripts" / "corpus.json").read_text(encoding="utf-8"))
     assert data["sessions"], "no sessions"
     for s in data["sessions"]:
         assert s["name"] and s["folder"]
@@ -110,7 +110,7 @@ def test_the_script_runs_and_reports_its_own_usage():
 def test_it_never_writes_to_the_session_folders():
     """The corpus points at the only copies of several nights. The script must
     write masters into --workdir and nowhere else."""
-    src = (ROOT / "scripts" / "benchmark_stacking.py").read_text()
+    src = (ROOT / "scripts" / "benchmark_stacking.py").read_text(encoding="utf-8")
     body = src.split("def run_session")[1].split("def load_corpus")[0]
     assert "os.path.join(workdir" in body
     assert "os.path.join(folder" not in body.split("output_path")[0].split("subs = ")[-1] \

@@ -175,7 +175,7 @@ def test_a_failed_read_leaves_the_picture_exactly_as_it_was(qtbot, tmp_path):
     win._async_enabled = True
     win._dirty = False                         # no unsaved-changes question
     bad = tmp_path / "bad.fits"
-    bad.write_text("not a fits file")
+    bad.write_text("not a fits file", encoding="utf-8")
     before = _state(win)
     win.open_any(str(bad))
     _idle(qtbot, win)
@@ -340,7 +340,7 @@ def test_a_failure_on_the_start_page_is_shown_on_the_start_page(qtbot, tmp_path,
     win._async_enabled = True
     page = win._welcome
     bad = tmp_path / "bad.fits"
-    bad.write_text("not a fits file")
+    bad.write_text("not a fits file", encoding="utf-8")
     _door_start_page(win, str(bad), monkeypatch)
     _idle(qtbot, win)
     assert win.project is None and page.isVisible()
@@ -394,7 +394,7 @@ def test_no_staged_snapshot_is_left_behind(qtbot, tmp_path, loads):
     """Failure, Cancel and a superseded open each leave the cache as they found it."""
     win = _opened(qtbot, tmp_path)
     bad = tmp_path / "bad.fits"
-    bad.write_text("not a fits file")
+    bad.write_text("not a fits file", encoding="utf-8")
     win.open_any(str(bad))
     _idle(qtbot, win)
     assert _incoming(win) == []

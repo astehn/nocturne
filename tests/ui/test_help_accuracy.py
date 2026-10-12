@@ -22,7 +22,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 
 
 def _src(rel):
-    return (ROOT / rel).read_text()
+    return (ROOT / rel).read_text(encoding="utf-8")
 
 
 def _body(topic_id):
@@ -1096,7 +1096,7 @@ def test_recipes_help_is_right_that_run_is_gated_on_the_recipe(qtbot, tmp_path):
     assert "Only a step that <i>cannot run at all</i> stops you" in b
 
     bad = tmp_path / "notes.json"                # not a recipe at all
-    bad.write_text("this is not json")
+    bad.write_text("this is not json", encoding="utf-8")
     d.recipe_edit.setText(str(bad))
     assert d.run_btn.isEnabled() is False and "isn't a Nocturne recipe" in d.status.text()
 
@@ -1350,7 +1350,7 @@ def test_upscale_help_describes_the_sidecar_file_that_is_actually_written(qtbot,
     d._run_upscale()
     d._save_runner = lambda img, path: None
     d._do_export(str(tmp_path / "out.jpg"))
-    report = (tmp_path / "out.txt").read_text()
+    report = (tmp_path / "out.txt").read_text(encoding="utf-8")
 
     assert upscale_filename("m42.fits", 2) == "m42_2x.jpg" and "yourfile_2x.jpg" in b
     for claim in ("Lanczos", "2×", "m42.fits", "M42", "Star tightening: 0.35"):

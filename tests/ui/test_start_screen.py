@@ -304,7 +304,7 @@ def test_a_drop_on_the_drop_box_reaches_the_window(qtbot, tmp_path, monkeypatch)
     zone = win._welcome.drop_zone
     assert zone.isVisible()
     p = tmp_path / "m.nocturne"
-    p.write_text("x")
+    p.write_text("x", encoding="utf-8")
     opened = []
     monkeypatch.setattr(win, "_open_project", lambda path=None: opened.append(path))
     mime = QMimeData()

@@ -35,7 +35,7 @@ def test_one_project_or_one_image_is_accepted(tmp_path):
     files = {}
     for name in ("a.nocturne", "b.fits", "c.FIT", "d.fts", "e.tif", "f.TIFF", "g.jpg", "h.png"):
         p = tmp_path / name
-        p.write_text("x")
+        p.write_text("x", encoding="utf-8")
         files[name] = p
     assert dropped_file(_mime(files["a.nocturne"])) == ("project", str(files["a.nocturne"]))
     for n in ("b.fits", "c.FIT", "d.fts", "e.tif", "f.TIFF"):
@@ -69,7 +69,7 @@ def test_an_image_dropped_on_the_start_page_opens(qtbot, tmp_path):
 def test_a_project_dropped_opens_through_the_project_door(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     p = tmp_path / "m.nocturne"
-    p.write_text("x")
+    p.write_text("x", encoding="utf-8")
     opened = []
     monkeypatch.setattr(win, "_open_project", lambda path=None: opened.append(path))
     _enter(win, _mime(p))
@@ -98,7 +98,7 @@ def test_an_image_dropped_mid_edit_asks_first(qtbot, tmp_path, monkeypatch):
 def test_refused_drops_do_nothing(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
     jpg = tmp_path / "x.jpg"
-    jpg.write_text("x")
+    jpg.write_text("x", encoding="utf-8")
     calls = []
     monkeypatch.setattr(win, "open_any", lambda p: calls.append(p))
     ev = _enter(win, _mime(jpg))

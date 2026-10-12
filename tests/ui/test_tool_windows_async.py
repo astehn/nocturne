@@ -485,7 +485,7 @@ def test_upscale_export_writes_the_value_at_the_press(qtbot, hold, tmp_path, mon
     qtbot.waitUntil(lambda: d.change_crop_btn.isEnabled(), timeout=5000)
     assert finish.started and finish.on_ui == [], "the finish ran on the UI thread"
     assert out.read_bytes() == (tmp_path / "inline.tiff").read_bytes()
-    assert (tmp_path / "pooled.txt").read_text() == (tmp_path / "inline.txt").read_text()
+    assert (tmp_path / "pooled.txt").read_text(encoding="utf-8") == (tmp_path / "inline.txt").read_text(encoding="utf-8")
     assert d._export_btn.isEnabled() and d.status_ring.isHidden()
 
 

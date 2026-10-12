@@ -102,7 +102,7 @@ def test_enhance_ops_registry_matches_enhance_names():
     assert set(ENHANCE_NAMES) - LAYERED == set(ENHANCE_OPS)
     # ...and the layered pair really is handled where the frame-wide ops are not.
     from pathlib import Path
-    batch_src = (Path(__file__).parents[2] / "nocturne" / "batch.py").read_text()
+    batch_src = (Path(__file__).parents[2] / "nocturne" / "batch.py").read_text(encoding="utf-8")
     for name in LAYERED:
         assert f'"{name}":' in batch_src, f"{name} has no replay path in batch"
 

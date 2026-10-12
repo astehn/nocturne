@@ -247,7 +247,7 @@ def test_job_command_end_to_end_from_source():
     repo_root = pathlib.Path(__file__).resolve().parents[2]
     tmpdir = tempfile.mkdtemp()
     opts_path = os.path.join(tmpdir, "opts.json")
-    with open(opts_path, "w") as f:
+    with open(opts_path, "w", encoding="utf-8") as f:
         json.dump(opts, f)
 
     try:

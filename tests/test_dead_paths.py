@@ -19,7 +19,7 @@ def test_no_live_module_points_at_the_dead_disk():
         str(f.relative_to(ROOT))
         for d in ("nocturne", "packaging", "scripts", "tests")
         for f in (ROOT / d).rglob("*.py")
-        if f.name != Path(__file__).name and DEAD in f.read_text(errors="ignore"))
+        if f.name != Path(__file__).name and DEAD in f.read_text(errors="ignore", encoding="utf-8"))
     assert not offenders, f"dead {DEAD} paths in: {offenders}"
 
 
@@ -30,5 +30,5 @@ def test_the_guard_is_looking_for_the_right_thing():
     archive = ROOT / "archive" / "training-v1"
     if not archive.is_dir():
         return                      # archive removed later; nothing to prove against
-    hits = [f for f in archive.rglob("*.py") if DEAD in f.read_text(errors="ignore")]
+    hits = [f for f in archive.rglob("*.py") if DEAD in f.read_text(errors="ignore", encoding="utf-8")]
     assert hits, f"{DEAD} matches nothing even in the archive — the search is broken"

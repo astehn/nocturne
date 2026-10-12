@@ -75,7 +75,7 @@ def _curated_names() -> dict:
     out = {}
     if not _NAMES.exists():
         return out
-    with open(_NAMES, newline="") as f:
+    with open(_NAMES, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(line for line in f if not line.startswith("#")):
             d, c = (r.get("designation") or "").replace(" ", ""), (r.get("common") or "").strip()
             if d and c:
@@ -86,7 +86,7 @@ def _curated_names() -> dict:
 def load_catalog(path: str = _DATA):
     curated = _curated_names()
     rows = []
-    with open(path, newline="") as f:
+    with open(path, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
             try:
                 common = r.get("common", "").strip() or curated.get(
@@ -151,7 +151,7 @@ def objects_in_field(wcs, shape, rows=None) -> list[CatalogObject]:
 @lru_cache(maxsize=1)
 def load_named_stars(path: str = _STARS):
     rows = []
-    with open(path, newline="") as f:
+    with open(path, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
             try:
                 rows.append((r["name"], float(r["ra_deg"]), float(r["dec_deg"]),

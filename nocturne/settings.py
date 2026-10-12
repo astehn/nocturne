@@ -112,7 +112,7 @@ class Settings:
 def load_settings(path: str) -> Settings:
     if not os.path.exists(path):
         return Settings()
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
     # A settings file carrying the caption keys was written by a build that
     # shipped the caption band, so that user's shares already look like Data.
@@ -170,7 +170,7 @@ def load_settings(path: str) -> Settings:
 
 
 def save_settings(s: Settings, path: str) -> None:
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(asdict(s), f, indent=2)
 
 

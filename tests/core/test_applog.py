@@ -26,7 +26,7 @@ def test_an_info_line_reaches_the_file(tmp_path, monkeypatch):
     assert configure_logging(str(p)) == str(p)
     logging.getLogger("nocturne.drizzle").info("pass 2 (drizzle): %d frames in %.0f s", 1233, 26700)
     logging.shutdown()
-    text = p.read_text()
+    text = p.read_text(encoding="utf-8")
     assert "pass 2 (drizzle): 1233 frames in 26700 s" in text
     assert "nocturne.drizzle" in text
 
@@ -38,7 +38,7 @@ def test_calling_it_twice_does_not_write_everything_twice(tmp_path, monkeypatch)
     configure_logging(str(p))
     logging.getLogger("nocturne.drizzle").info("once")
     logging.shutdown()
-    assert p.read_text().count("once") == 1
+    assert p.read_text(encoding="utf-8").count("once") == 1
 
 
 def test_an_unwritable_path_does_not_stop_the_app(tmp_path, monkeypatch):
@@ -62,12 +62,12 @@ def test_startup_configures_it(monkeypatch):
     """Wired, not merely written — the failure being fixed was a logger with no
     handler, which looks identical to a working one until you go to read it."""
     from pathlib import Path
-    src = (Path(__file__).parents[2] / "nocturne" / "__main__.py").read_text()
+    src = (Path(__file__).parents[2] / "nocturne" / "__main__.py").read_text(encoding="utf-8")
     assert "configure_logging()" in src
 
 
 def test_the_drizzle_timings_are_still_info_level():
     """If these ever drop to debug the file goes quiet again, silently."""
     from pathlib import Path
-    src = (Path(__file__).parents[2] / "nocturne" / "stacking" / "drizzle_stack.py").read_text()
+    src = (Path(__file__).parents[2] / "nocturne" / "stacking" / "drizzle_stack.py").read_text(encoding="utf-8")
     assert src.count("_log.info(") >= 3, "the per-pass timings lost their log calls"

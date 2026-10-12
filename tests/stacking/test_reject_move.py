@@ -868,7 +868,7 @@ def test_a_record_that_is_a_link_is_not_trusted(night, tmp_path):
     os.mkdir(rej(folder))
     decoy = tmp_path / "decoy.json"
     decoy.write_text(json.dumps({"version": 1, "moved": [{"name": "Light_00.fit",
-                                                          "moved_at": "x"}]}))
+                                                          "moved_at": "x"}]}), encoding="utf-8")
     os.symlink(str(decoy), os.path.join(rej(folder), MANIFEST_NAME))
     _refused(tmp_path, lambda: move_back(folder), "damaged")
 
@@ -897,7 +897,7 @@ def test_folder_labels_name_the_folder_and_leave_file_names_alone(tmp_path):
     a text replace after the fact rewrote it (review 2026-09-29)."""
     folder = tmp_path / "d2" / "M 31"
     (folder / REJECTED_DIR).mkdir(parents=True)
-    (folder / REJECTED_DIR / MANIFEST_NAME).write_text("not json")    # damaged
+    (folder / REJECTED_DIR / MANIFEST_NAME).write_text("not json", encoding="utf-8")    # damaged
     with pytest.raises(rm.RejectMoveError) as plain:
         rm.move_back(str(folder))
     with rm.folder_labels({str(folder): "d2/M 31"}):

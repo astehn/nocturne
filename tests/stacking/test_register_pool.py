@@ -164,13 +164,13 @@ def test_the_bundles_entry_point_calls_freeze_support():
     import pathlib
     import re
     root = pathlib.Path(__file__).resolve().parents[2]
-    spec = (root / "packaging" / "nocturne.spec").read_text()
+    spec = (root / "packaging" / "nocturne.spec").read_text(encoding="utf-8")
     m = re.search(r'SCRIPT\s*=\s*os\.path\.join\(SPECPATH,\s*"([^"]+)"\)', spec)
     assert m, "could not find the entry script in nocturne.spec"
     entry = root / "packaging" / m.group(1)
     assert entry.exists(), entry
 
-    tree = ast.parse(entry.read_text())
+    tree = ast.parse(entry.read_text(encoding="utf-8"))
     guard = [n for n in tree.body
              if isinstance(n, ast.If) and "__main__" in ast.dump(n.test)]
     assert guard, f"{entry.name} has no `if __name__ == \"__main__\"` block"

@@ -184,7 +184,7 @@ def test_curated_names_fill_only_blanks_never_override_the_catalogue():
     names = _curated_names()
     assert names, "curated file failed to load"
     import csv
-    for r in csv.DictReader(open("nocturne/data/openngc.csv")):
+    for r in csv.DictReader(open("nocturne/data/openngc.csv", encoding="utf-8")):
         d = r["name"].replace(" ", "")
         if d in names and r.get("common", "").strip():
             pytest.fail(f"{d} has a catalogue name AND a curated one — remove the curated row")
@@ -210,7 +210,7 @@ def test_every_curated_designation_exists_in_the_catalogue():
     mistake — most likely a mistyped designation."""
     import csv
     from nocturne.core.catalog import _curated_names
-    have = {r["name"].replace(" ", "") for r in csv.DictReader(open("nocturne/data/openngc.csv"))}
+    have = {r["name"].replace(" ", "") for r in csv.DictReader(open("nocturne/data/openngc.csv", encoding="utf-8"))}
     dead = [d for d in _curated_names() if d not in have and d not in NAME_ONLY]
     assert not dead, f"curated names for objects not in the catalogue: {dead}"
 
@@ -219,7 +219,7 @@ def test_the_name_only_allowlist_is_not_a_dumping_ground():
     """Every entry must genuinely be absent. One that later gains a catalogue
     row should drop off the list rather than sit here unexamined."""
     import csv
-    have = {r["name"].replace(" ", "") for r in csv.DictReader(open("nocturne/data/openngc.csv"))}
+    have = {r["name"].replace(" ", "") for r in csv.DictReader(open("nocturne/data/openngc.csv", encoding="utf-8"))}
     stale = [d for d in NAME_ONLY if d in have]
     assert not stale, f"these are in the catalogue now; remove them from NAME_ONLY: {stale}"
 

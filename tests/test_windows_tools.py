@@ -12,7 +12,7 @@ windows_only = pytest.mark.skipif(sys.platform != "win32", reason="Windows paths
 @windows_only
 def test_a_document_is_not_a_tool_on_windows(tmp_path):
     # Windows calls every existing file executable; the extension decides.
-    doc = tmp_path / "GraXpert.md"; doc.write_text("not a program")
+    doc = tmp_path / "GraXpert.md"; doc.write_text("not a program", encoding="utf-8")
     exe = tmp_path / "GraXpert.exe"; exe.write_bytes(b"MZ")
     assert not st.is_tool(str(doc))
     assert st.is_tool(str(exe))

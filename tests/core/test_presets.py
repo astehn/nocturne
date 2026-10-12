@@ -81,4 +81,4 @@ def test_the_module_is_pure():
     """core/ must not import Qt. share.py broke this once, mid-file at line 57,
     which is exactly why it went unnoticed."""
     import nocturne.core.presets as m
-    assert "PySide6" not in open(m.__file__).read()
+    assert "PySide6" not in open(m.__file__, encoding="utf-8").read()

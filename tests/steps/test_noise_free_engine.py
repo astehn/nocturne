@@ -32,7 +32,7 @@ def _img():
 
 def _exe(tmp_path, name):
     p = tmp_path / name
-    p.write_text("#!/bin/sh\n")
+    p.write_text("#!/bin/sh\n", encoding="utf-8")
     p.chmod(0o755)
     return str(p)
 

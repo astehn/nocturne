@@ -35,7 +35,7 @@ def test_the_hold_starts_after_the_window_is_built_not_before(qtbot):
     Pinned by position: the wait must come after the window exists.
     """
     src = Path(nocturne.__file__).resolve().parent / "__main__.py"
-    tree = ast.parse(src.read_text())
+    tree = ast.parse(src.read_text(encoding="utf-8"))
     main_fn = next(n for n in tree.body
                    if isinstance(n, ast.FunctionDef) and n.name == "main")
 
@@ -112,7 +112,7 @@ def test_main_shows_the_splash_before_it_builds_the_window():
     entry script, so everything under that guard is dead code in the bundle.
     """
     src = Path(nocturne.__file__).resolve().parent / "__main__.py"
-    tree = ast.parse(src.read_text())
+    tree = ast.parse(src.read_text(encoding="utf-8"))
     main_fn = next(n for n in tree.body
                    if isinstance(n, ast.FunctionDef) and n.name == "main")
 
@@ -167,7 +167,7 @@ def test_main_waits_on_an_event_loop_and_never_sleeps():
     and it is the obvious way to write this — so it is pinned.
     """
     src = Path(nocturne.__file__).resolve().parent / "__main__.py"
-    tree = ast.parse(src.read_text())
+    tree = ast.parse(src.read_text(encoding="utf-8"))
     main_fn = next(n for n in tree.body
                    if isinstance(n, ast.FunctionDef) and n.name == "main")
     called = {

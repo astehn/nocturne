@@ -339,7 +339,7 @@ def test_the_left_out_sentence_is_the_plan_that_ran(qtbot, tmp_path, monkeypatch
     """Settings can change while the chain runs (minutes, with external tools);
     the summary describes the plan that was built, not the settings now."""
     exe = tmp_path / "graxpert"
-    exe.write_text("#!/bin/sh\n")
+    exe.write_text("#!/bin/sh\n", encoding="utf-8")
     exe.chmod(0o755)
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))

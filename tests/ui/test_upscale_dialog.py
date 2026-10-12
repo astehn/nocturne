@@ -41,7 +41,7 @@ def test_export_uses_injected_saver_and_writes_report(qtbot, tmp_path):
     d._do_export(str(tmp_path / "out.jpg"))
     assert saved["shape"] == (120, 120, 3)
     assert (tmp_path / "out.txt").exists()          # provenance report written
-    assert "Lanczos" in (tmp_path / "out.txt").read_text()
+    assert "Lanczos" in (tmp_path / "out.txt").read_text(encoding="utf-8")
 
 
 def test_open_as_copy_calls_callback(qtbot):

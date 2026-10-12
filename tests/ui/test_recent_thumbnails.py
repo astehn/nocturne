@@ -76,7 +76,7 @@ def test_the_cards_fit_the_smallest_window(qtbot, tmp_path):
     files = []
     for i in range(6):
         p = tmp_path / f"a much longer project name than usual {i}.nocturne"
-        p.write_text("x")
+        p.write_text("x", encoding="utf-8")
         files.append(str(p))
     w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: files)
     qtbot.addWidget(w)
@@ -99,7 +99,7 @@ def test_nothing_but_the_cards_is_drawn_in_the_row(qtbot, tmp_path):
     stray box above the first card."""
     from PySide6.QtWidgets import QAbstractButton
     p = tmp_path / "a.nocturne"
-    p.write_text("x")
+    p.write_text("x", encoding="utf-8")
     w = WelcomeScreen(lambda: None, lambda: None, recent=lambda: [str(p)])
     qtbot.addWidget(w)
     w.show()

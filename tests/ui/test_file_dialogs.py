@@ -100,7 +100,7 @@ def test_no_static_file_dialogs_remain_in_the_ui():
     for path in sorted(ui.rglob("*.py")):
         if path.name == "file_dialogs.py":
             continue
-        for node in ast.walk(ast.parse(path.read_text())):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             # Parsed, not grepped. Scanning source TEXT also matches the
             # COMMENT explaining this rule, so writing "use file_dialogs, not
             # QFileDialog.getOpenFileName" at a call site failed the test —

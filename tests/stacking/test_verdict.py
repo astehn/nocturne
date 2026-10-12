@@ -286,7 +286,7 @@ def _fits(path, **cards):
 
 def test_the_first_readable_sub_decides(tmp_path):
     junk = tmp_path / "junk.fit"
-    junk.write_text("not a FITS file")
+    junk.write_text("not a FITS file", encoding="utf-8")
     first = _fits(tmp_path / "a.fit", FOCALLEN=160.0, XPIXSZ=2.9)
     second = _fits(tmp_path / "b.fit", FOCALLEN=250.0, XPIXSZ=2.9)
     paths = [str(tmp_path / "missing.fit"), str(junk), first, second]
