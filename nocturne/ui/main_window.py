@@ -7202,7 +7202,8 @@ class MainWindow(QMainWindow):
                     # layer on its own, the two files no longer Screen back to
                     # the picture; stretched once, first, they do.
                     from ..core.export import display_data
-                    src = AstroImage(display_data(src, linked=self._view_linked),
+                    from ..core.image import finite_or_zero
+                    src = AstroImage(finite_or_zero(display_data(src, linked=self._view_linked)),
                                      is_linear=False, metadata=dict(src.metadata))
                 starless, stars, used["kind"] = self._split_tagged(src)
                 sl, icc = self._prepare_for_export(starless, space)

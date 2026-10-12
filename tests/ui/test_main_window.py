@@ -6656,7 +6656,8 @@ def test_starless_stars_export_works_without_any_star_tool(qtbot, tmp_path, monk
     assert np.abs(1 - (1 - sl) * (1 - st) - whole.reshape(sl.shape)).max() < 2e-3
 
 
-def test_starless_stars_before_stretch_add_back_up_to_what_the_canvas_shows(qtbot, tmp_path, monkeypatch):
+@pytest.mark.parametrize("linked", [True, False])
+def test_starless_stars_before_stretch_add_back_up_to_what_the_canvas_shows(qtbot, tmp_path, monkeypatch, linked):
     """Before Stretch every picture export carries the canvas's display stretch.
     The split used to stretch each LAYER on its own, so Screen-blending the two
     files did not give the picture back (2026-10-11). Stretch once, then split."""
@@ -6674,6 +6675,7 @@ def test_starless_stars_before_stretch_add_back_up_to_what_the_canvas_shows(qtbo
     win = _window(qtbot, tmp_path)
     win.open_fits(str(p))
     win.settings = Settings()
+    win._set_view_linked(linked)                 # the user's view choice must carry over
     img = win.project.current()
     assert img.is_linear                         # the case under test: no Stretch yet
     out = tmp_path / "split"; out.mkdir()
