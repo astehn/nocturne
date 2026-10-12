@@ -1,12 +1,14 @@
-"""Regenerate the macOS .icns app icon from nocturne/assets/nocturne_icon.svg.
+"""Regenerate the app icons from nocturne/assets/nocturne_icon.svg.
 
 Run from the repo root:  .venv/bin/python packaging/make_icons.py
-Requires macOS `iconutil` (bundled with Xcode command line tools).
+Writes the Windows .ico everywhere; the macOS .icns needs `iconutil` (Xcode
+command line tools), so it is only rebuilt on a Mac.
 """
 from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import tempfile
 
 from PySide6.QtGui import QImage, QPainter
@@ -15,6 +17,11 @@ from PySide6.QtSvg import QSvgRenderer
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SVG = os.path.join(ROOT, "nocturne", "assets", "nocturne_icon.svg")
 OUT = os.path.join(ROOT, "packaging", "nocturne.icns")
+ICO = os.path.join(ROOT, "packaging", "nocturne.ico")
+
+# Each size rendered from the SVG rather than downscaled from 256: Explorer shows
+# 16 and 32 in lists and the taskbar, where a resampled badge goes to mush.
+_ICO_SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256)
 
 # (filename, pixel size) for a macOS .iconset
 _SPECS = [
@@ -38,7 +45,25 @@ def _render(size: int, path: str) -> None:
     img.save(path)
 
 
+def make_ico() -> None:
+    from PIL import Image
+
+    with tempfile.TemporaryDirectory() as tmp:
+        frames = []
+        for size in _ICO_SIZES:
+            path = os.path.join(tmp, f"{size}.png")
+            _render(size, path)
+            frames.append(Image.open(path).convert("RGBA"))
+        big = frames[-1]
+        big.save(ICO, format="ICO", sizes=[(s, s) for s in _ICO_SIZES],
+                 append_images=frames[:-1])
+    print("wrote", ICO)
+
+
 def main() -> None:
+    make_ico()
+    if sys.platform != "darwin":
+        return
     with tempfile.TemporaryDirectory() as tmp:
         iconset = os.path.join(tmp, "nocturne.iconset")
         os.makedirs(iconset)
