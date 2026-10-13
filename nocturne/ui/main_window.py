@@ -29,25 +29,15 @@ from ..core.crop import (
 )
 from ..core.enhance import (ENHANCE_OPS, sharpen_nebulosity_layers,
                             star_colour_layers)
-from ..core.export import camera_cards, jpeg_bytes, save_fits, save_png, save_tiff, _to_uint
+from ..core.export import camera_cards, decimate_for_preview, jpeg_bytes, save_fits, save_png, save_tiff, _to_uint
 # The start page thumbnail saved inside a project: twice the card it is
 # drawn in (welcome.py), so it stays sharp on a Retina screen.
 PREVIEW_EDGE = 480
 
 
 def _preview_source(img):
-    """Every n-th pixel, down to about twice the preview's edge, BEFORE the
-    display stretch: stretching the whole frame first cost ~2.9 GB extra on a
-    33 MP drizzled save (review 2026-10-06), enough to swap an 8 GB Air.
-    Strided, not averaged — averaging would lower the noise the autostretch
-    measures, and a thumbnail should look like the canvas."""
-    from ..core.image import AstroImage
-    h, w = img.data.shape[:2]
-    k = max(1, max(h, w) // (2 * PREVIEW_EDGE))
-    if k == 1:
-        return img
-    return AstroImage(np.ascontiguousarray(img.data[::k, ::k]), is_linear=img.is_linear,
-                      metadata=img.metadata)
+    """The project thumbnail's source pixels; a preset's preview uses the same."""
+    return decimate_for_preview(img, PREVIEW_EDGE)
 from ..core.fits_io import format_integration, import_summary, resolve_integration
 from ..core.image_io import load_tiff
 from ..history.project import Project
