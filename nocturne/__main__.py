@@ -343,10 +343,12 @@ def main() -> None:
     app.setApplicationName(APP_NAME)
     # Straight after the QApplication: macOS sends a double-clicked document
     # as an event as soon as the app can take one, before any window exists.
-    from .ui.open_requests import OpenRequests, path_from_argv
+    from .ui.open_requests import OpenRequests
     open_requests = OpenRequests(app)
     # The running instance's half of hand_over above. Early, so a file opened
     # while this window is still being built waits for it like a macOS one.
+    # Where it runs it also requests this launch's own file, before listening,
+    # so a file forwarded during startup is the later request and is kept.
     instance_server = single_instance.serve(open_requests, sys.argv)  # noqa: F841 — kept alive
 
     # After the QApplication (addApplicationFont needs one) and before any
@@ -428,7 +430,7 @@ def main() -> None:
 
     # `Nocturne image.fits` opens it, on both platforms; then any file macOS
     # sent while the window was being built.
-    argv_path = path_from_argv(sys.argv)
+    argv_path = single_instance.argv_path_after_window(sys.argv)
     if argv_path:
         open_requests.request(argv_path)
     open_requests.attach(win)
