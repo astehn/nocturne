@@ -481,3 +481,111 @@ def test_a_post_stretch_preset_applies_on_a_picture_that_opens_stretched(qtbot, 
     p = win._presets.save("Finished", POST_ONLY, _jpeg(), data_type="unknown")
     _choose(win, p); _box(win, (2, 10, 2, 10)); win._apply_crop()
     assert [n for n, _ in win.project.entries()] == ["Crop", "Levels", "Vibrance"]
+
+
+def _starfield(tmp_path, name, seed):
+    """A noise floor well above zero (so Auto Levels derives a non-default black
+    point, different per picture) plus a few bright stars, so the split and the
+    spikes have something real to work on. Big enough that the spikes draw
+    arms, not only blooms."""
+    import numpy as np
+    from astropy.io import fits
+    rng = np.random.default_rng(seed)
+    arr = rng.normal(18000, 1200, (3, 160, 160))
+    yy, xx = np.mgrid[:160, :160]
+    for _ in range(6):
+        cy, cx = rng.uniform(30, 130, 2)
+        arr += rng.uniform(20000, 40000) * np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / 4.0)
+    hdu = fits.PrimaryHDU(np.clip(arr, 0, 65535).astype(np.uint16))
+    hdu.header["FILTER"] = "LP"
+    p = tmp_path / name
+    hdu.writeto(str(p))
+    return str(p)
+
+
+# Full length on a 128 px crop: shorter arms stay inside the saturated cores
+# (or under a pixel and are skipped), leaving only blooms that ignore the angle.
+SPIKES = {"length": 1.0, "count": 6, "angle": 30.0, "intensity": 0.8,
+          "variation": 0.1, "colour": 0.5}
+_BOX = (16, 144, 16, 144)
+
+
+def _by_hand_after_crop(win):
+    """Stretch, Levels Auto, Vibrance, Starless Levels and Star Spikes the way
+    their own tools do it, on whatever picture is cropped in `win`."""
+    from nocturne.core.enhance import starless_levels_layers
+    from nocturne.core.star_spikes import add_spikes, detect_stars
+    win._go_to_id("stretch", user_initiated=False); win._panel.apply_btn.click()
+    win._go_to_id("levels", user_initiated=False)
+    win._on_levels_auto(); win._panel.apply_btn.click()
+    win._enhance("Vibrance")
+    base = win.project.current()
+    sl, st, _tag = win._split_tagged(base)
+    win._apply_starless_levels(starless_levels_layers(sl, st, 0.05, 0.9), (0.05, 0.9))
+    base = win.project.current()
+    s = SPIKES
+    win._apply_star_spikes(add_spikes(base, detect_stars(base.data), s["length"], s["count"],
+                                      s["angle"], s["intensity"], s["variation"],
+                                      s["colour"]), dict(SPIKES))
+
+
+def test_save_on_one_picture_apply_on_another_round_trip(qtbot, tmp_path, monkeypatch):
+    """The spec's core promise in one test: what was done to picture A, saved
+    from Enhancements, is done to picture B through the real Crop button — as
+    the same named steps with the same options, and to the same pixels as
+    doing those steps on B by hand."""
+    import numpy as np
+    from nocturne.recipe import deserialize_option, recipe_from_entries
+    from tests.ui.test_save_preset import _answer
+    (tmp_path / "a").mkdir(); (tmp_path / "b").mkdir(); (tmp_path / "hand").mkdir()
+    pic_a = _starfield(tmp_path / "a", "a.fits", 1)
+    pic_b = _starfield(tmp_path / "b", "b.fits", 2)
+
+    # Picture A, by hand.
+    win = _win(qtbot, tmp_path)
+    win.open_fits(pic_a)
+    win._go_to_id("crop", user_initiated=False); _box(win, _BOX); win._apply_crop()
+    _by_hand_after_crop(win)
+    a_entries = win.project.entries()
+    assert [n for n, _ in a_entries] == ["Crop", "Stretch", "Levels", "Vibrance",
+                                         "Starless Levels", "Star Spikes"], "fixture"
+    assert dict(a_entries)["Levels"] == "auto", "fixture: Auto must be what was pressed"
+
+    win._go_to_id("enhancements", user_initiated=False)
+    assert win._panel.save_preset_btn.isEnabled()
+    _answer(monkeypatch, name="Round trip")
+    win._panel.save_preset_btn.click()
+    [p] = win._presets.list()
+
+    # Picture B, through the Crop step's own button.
+    win._dirty = False
+    win.open_fits(pic_b)
+    win._go_to_id("crop", user_initiated=False)
+    _choose(win, p); _box(win, _BOX)
+    assert win._panel.apply_btn.text() == "Apply Crop + Round trip"
+    win._panel.apply_btn.click()
+
+    b_entries = win.project.entries()
+    assert [n for n, _ in b_entries] == [n for n, _ in a_entries]
+    assert win.current_stage_id() == "enhancements"
+    a_steps = recipe_from_entries(a_entries[1:], scope="preset").steps
+    b_steps = recipe_from_entries(b_entries[1:], scope="preset").steps
+    assert [s["stage"] for s in b_steps] == [s["stage"] for s in a_steps]
+    for sa, sb in zip(a_steps, b_steps):
+        assert deserialize_option(sb["stage"], sb["option"]) == \
+            deserialize_option(sa["stage"], sa["option"]), sa["stage"]
+    assert dict(b_entries)["Levels"] == "auto"
+
+    # The same steps on B by hand, in a window of its own.
+    hand = _win(qtbot, tmp_path / "hand")
+    hand.open_fits(pic_b)
+    hand._go_to_id("crop", user_initiated=False); _box(hand, _BOX); hand._apply_crop()
+    _by_hand_after_crop(hand)
+    assert [n for n, _ in hand.project.entries()] == [n for n, _ in b_entries]
+    # current(), not state_at(i): earlier positions REPLAY from the recorded
+    # options through the same steps the preset ran, so they would agree with
+    # each other even if the preset's replay drew something the tool never did.
+    assert np.allclose(win.project.current().data, hand.project.current().data, atol=1e-6)
+    assert not np.allclose(win.project.current().data,
+                           hand.project.state_at(len(b_entries) - 1).data, atol=1e-3), \
+        "fixture: the last step (Star Spikes) must change the picture"
