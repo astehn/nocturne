@@ -679,7 +679,7 @@ def test_every_tool_icon_is_tinted_by_its_group(qtbot, tmp_path):
     tint_src = src[src.index("tint = {"):src.index("}", src.index("tint = {"))]
     for name in ("stack", "haoiii", "combine", "plate-solve", "narrowband",
                  "color-balance", "star-spikes", "trim", "upscale", "share",
-                 "save-recipe", "batch", "auto-enhance"):
+                 "save-recipe", "save-preset", "batch", "auto-enhance"):
         assert f'"{name}"' in tint_src, f"{name} has no group tint"
     # the two reserved meanings must not be spent on a tool
     assert '"#e3b341"' not in tint_src, "WARNING amber means 'something is wrong'"
@@ -5362,7 +5362,7 @@ def test_the_toolbar_follows_the_order_a_session_happens_in(qtbot, tmp_path):
     assert pos["Narrowband…"] < pos["Colour Balance"] < pos["Star Spikes…"]
     assert pos["Star Spikes…"] < pos["Trim"] < pos["Upscale Crop"] < pos["Share"]
     # Recipes and Batch are about the NEXT image, not this one
-    assert pos["Share"] < pos["Save Recipe"] < pos["Batch…"]
+    assert pos["Share"] < pos["Save Recipe"] < pos["Save as Preset…"] < pos["Batch…"]
 
 
 def test_the_tool_groups_are_separated(qtbot, tmp_path):

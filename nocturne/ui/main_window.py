@@ -49,6 +49,7 @@ from ..settings import (
     resolve_binary, save_settings, start_dir,
 )
 from ..recipe import recipe_from_entries, save_recipe, uncaptured_step_names
+from ..user_presets import PresetLibrary, presets_dir
 from ..steps.star_split import preferred_splitter
 from ..steps.factory import make_step
 from ..steps.load import load_fits
@@ -143,6 +144,10 @@ def _clip_phrase(frac: float, channel: str, verb: str) -> str:
 
 _CLIP_AMBER_HI = 0.001     # 0.1% of highlights blown
 _CLIP_AMBER_LO = 0.0005    # 0.05% of shadows crushed
+
+_PRESET_TIP_ON = "Save this edit (everything after the crop) as a preset for similar pictures."
+_PRESET_TIP_OFF = ("Save as Preset — process a picture through to Enhancements first: "
+                   "a preset is made at the end of an edit.")
 
 # What the confirm calls each geometry action, in the user's words rather than
 # the history's. The history stores "Flip H" because the provenance report and
@@ -518,6 +523,8 @@ class MainWindow(QMainWindow):
                                        # cache reuse so the result card can still say how
                                        # long the underlying solve originally took
         self._cache_dir = os.path.join(os.path.dirname(settings_path), "cache")
+        # Beside settings.json, as the cache is: tests get a sandboxed library.
+        self._presets = PresetLibrary(presets_dir(settings_path))
         self._prune_staged()    # what a crash or kill mid-open left behind
         # How LINEAR data is DRAWN. A view preference, never image state: it is
         # a property of how you are looking, not of what you captured, so it
@@ -1675,6 +1682,36 @@ class MainWindow(QMainWindow):
         save_recipe(recipe_from_entries(self.project.entries()), path)
         self._show_output(f"Saved recipe: {os.path.basename(path)}")
 
+    def _sync_preset_action(self) -> None:
+        """From Enhancements on AND stretched: a preset is "my look", which a
+        linear picture does not have, and navigation alone is not state (Trim).
+        Busy is the `_busy_lock` group's, so a refresh mid-job cannot strand it."""
+        ok = (self.project is not None
+              and self.current_stage_id() in ("enhancements", "export")
+              and not self.project.is_linear_at(self.project.position))
+        self._save_preset_act.setEnabled(ok)
+        self._save_preset_act.setToolTip(_PRESET_TIP_ON if ok else _PRESET_TIP_OFF)
+
+    def _save_preset(self) -> None:
+        if self.project is None or self._busy or not self._save_preset_act.isEnabled():
+            return
+        from ..core.filter_type import detect_data_type
+        from ..recipe import step_display_name
+        from ..user_presets import preview_jpeg, steps_for_preset
+        from .save_preset_dialog import SavePresetDialog
+        steps, left_out = steps_for_preset(self.project.entries())
+        meta = self.project.meta_at(self.project.position)
+        target = str(meta.get("target") or meta.get("target_solved") or "").strip()
+        preview = preview_jpeg(self.project.current(), linked=self._view_linked)
+        dlg = SavePresetDialog(
+            preview, target, [step_display_name(s["stage"], s["option"]) for s in steps],
+            left_out, existing=lambda n: self._presets.find(n) is not None, parent=self)
+        if not dlg.exec():
+            return
+        p = self._presets.save(dlg.chosen_name(), steps, preview, target=target,
+                               data_type=detect_data_type(meta), left_out=left_out)
+        self._show_output(f"Saved preset {p.name} — {p.step_count} steps.")
+
     def _open_batch(self) -> None:
         BatchDialog(self.settings, self).exec()
 
@@ -2696,6 +2733,7 @@ class MainWindow(QMainWindow):
             # #5e636b. They read as greyed out. Warm and clearly distinct from
             # WARNING's brighter yellow #e3b341.
             "save-recipe": "#d1975b",
+            "save-preset": "#d1975b",
             "batch": "#dba86b",
         }
         # --- one tap ---
@@ -2754,6 +2792,10 @@ class MainWindow(QMainWindow):
         # --- repeat it on other data ---
         self._save_recipe_act = tb.addAction(load_icon("save-recipe", tint["save-recipe"]),
                                      "Save Recipe", self._save_recipe)
+        self._save_preset_act = tb.addAction(load_icon("save-preset", tint["save-preset"]),
+                                             "Save as Preset…", self._save_preset)
+        self._save_preset_act.setEnabled(False)   # gated in _sync_preset_action
+        self._save_preset_act.setToolTip(_PRESET_TIP_OFF)
         self._batch_act = batch_act = tb.addAction(
             load_icon("batch", tint["batch"]), "Batch…", self._open_batch)
         tb.addSeparator()
@@ -2796,7 +2838,7 @@ class MainWindow(QMainWindow):
         # toolbar has 24; the indicator is meant to look like one of its tools.
         self._jobs_bar.setIconSize(tb.iconSize())
         self._overflow = ToolbarOverflow(
-            tb, [batch_act, self._save_recipe_act, self._share_act, self._upscale_act,
+            tb, [batch_act, self._save_preset_act, self._save_recipe_act, self._share_act, self._upscale_act,
                  self._trim_act, self._starless_levels_act, spikes_act, self._cb_act,
                  narrowband_act, self._solve_act, combine_act, haoiii_act, stack_act],
             self._more_btn, self._more_act,
@@ -5215,7 +5257,8 @@ class MainWindow(QMainWindow):
             self._auto_enhance_act, self._stack_act, self._haoiii_act,
             self._combine_act, self._narrowband_act, self._cb_act, self._spikes_act,
             self._starless_levels_act, self._trim_act, self._upscale_act,
-            self._share_act, self._save_recipe_act, self._batch_act,
+            self._share_act, self._save_recipe_act, self._save_preset_act,
+            self._batch_act,
             self._open_project_menu_act, self._save_project_menu_act,
             self._save_project_as_act, self._recent_menu.menuAction(),
             self._close_project_act,
@@ -7956,6 +7999,7 @@ class MainWindow(QMainWindow):
         self._starless_levels_act.setToolTip(
             "Set black/white points on the starless layer" if stretched else
             "Starless Levels — available once you've stretched the image")
+        self._sync_preset_action()
         has_crop = self._has_crop()
         self._auto_enhance_act.setEnabled(has_crop)   # gated: works from the user's cropped frame
         self._auto_enhance_act.setToolTip(

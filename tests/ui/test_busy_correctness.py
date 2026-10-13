@@ -109,7 +109,7 @@ def test_stepper_refuses_a_click_while_a_step_runs(qtbot, tmp_path, monkeypatch)
 _LOCKED_TOOLBAR = ("Open Image", "Open Project", "Save Project", "Settings",
                    "Auto Enhance", "Stack…", "Ha/OIII…", "Combine…", "Narrowband…",
                    "Colour Balance", "Star Spikes…", "Starless Levels…", "Trim",
-                   "Upscale Crop", "Share", "Save Recipe", "Batch…")
+                   "Upscale Crop", "Share", "Save Recipe", "Save as Preset…", "Batch…")
 _LOCKED_MENU = ("Open Project…", "Save Project", "Save Project As…",
                 "Recent Projects", "Close Project")
 _LIVE_TOOLBAR = ("Before/After", "Fit", "100%")
