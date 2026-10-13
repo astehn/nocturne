@@ -15,6 +15,15 @@ def test_roundtrip(tmp_path):
     assert loaded.graxpert_path == "/x/graxpert"
 
 
+def test_preset_browser_fields_round_trip_and_default(tmp_path):
+    p = tmp_path / "s.json"
+    save_settings(Settings(preset_view="list", preset_sort="name"), str(p))
+    loaded = load_settings(str(p))
+    assert (loaded.preset_view, loaded.preset_sort) == ("list", "name")
+    d = Settings()
+    assert (d.preset_view, d.preset_sort) == ("", "created")
+
+
 def test_missing_file_returns_defaults(tmp_path):
     s = load_settings(str(tmp_path / "nope.json"))
     assert s.graxpert_path == ""

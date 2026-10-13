@@ -107,6 +107,9 @@ class Settings:
     plate_preset: str = "Scrim"
     plate_style: dict = field(default_factory=dict)          # user's edits to it
     plate_user_presets: list = field(default_factory=list)   # their own saved looks
+    # The preset browser: "" = from the screen (list below COMPACT_BELOW_HEIGHT), "grid" or "list".
+    preset_view: str = ""
+    preset_sort: str = "created"        # one of user_presets.SORT_KEYS
 
 
 def load_settings(path: str) -> Settings:
@@ -166,6 +169,8 @@ def load_settings(path: str) -> Settings:
         plate_preset=data.get("plate_preset", "Data" if caption_era else "Scrim"),
         plate_style=data.get("plate_style", {}) or {},
         plate_user_presets=data.get("plate_user_presets", []) or [],
+        preset_view=data.get("preset_view", ""),
+        preset_sort=data.get("preset_sort", "created"),
     )
 
 
