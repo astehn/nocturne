@@ -2392,7 +2392,11 @@ class MainWindow(QMainWindow):
             if resp != QMessageBox.StandardButton.Yes:
                 self._sync_step_controls()
                 return
-        self.project.jump_back(kept)
+        if len(entries) > kept:
+            # A confirmed discard is an unsaved change whatever the run does
+            # next: it stands even if every step then fails or is cancelled.
+            self.project.jump_back(kept)
+            self._mark_dirty()
         self._run_preset(p, plan, note)
 
     def _run_preset(self, p, plan=None, note: str = "") -> None:
@@ -2421,6 +2425,9 @@ class MainWindow(QMainWindow):
             if not run.results:
                 # Nothing landed: not a success. The choice stays for a retry,
                 # last_used is not stamped, and the picture stays where it was.
+                # Rebuilt: a discard before the run changed what Crop's derived
+                # controls (Reset step, Apply's state) should say.
+                self._rebuild_panel()
                 self._refresh()
                 self._warn_auto_failures(f"Preset {shown}", run)
                 return
@@ -2460,8 +2467,14 @@ class MainWindow(QMainWindow):
             self._show_output(msg)
             self._warn_auto_failures(f"Preset {shown}", run)
 
+        def on_error(_exc) -> None:
+            # Failed or cancelled as a whole: same reason as the zero-success
+            # branch, a discard may already have happened.
+            self._rebuild_panel()
+            self._refresh()
+
         self._run_busy(work, on_result, f"Applying preset \u201c{shown}\u201d\u2026",
-                       "Preset failed")
+                       "Preset failed", on_error=on_error)
 
     def _solve_current(self, img):
         """Blocking solve of a snapshotted display image; returns (SolveResult, objects)."""

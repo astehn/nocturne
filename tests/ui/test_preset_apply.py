@@ -1,6 +1,6 @@
 import pytest
 pytest.importorskip("PySide6")
-from tests.ui.test_main_window import _make_fits, _window
+from tests.ui.test_main_window import _make_fits
 from nocturne import user_presets as up
 
 STEPS = [{"stage": "stretch", "option": {"amount": 0.3, "linked": True}},
@@ -15,20 +15,20 @@ def _jpeg():
     b = io.BytesIO(); Image.new("RGB", (30, 20)).save(b, "JPEG"); return b.getvalue()
 
 
-_WINDOWS = []
-
-
-@pytest.fixture(autouse=True)
-def _clean_teardown():
-    """A preset run leaves the window dirty; closing it must not ask."""
-    yield
-    while _WINDOWS:
-        _WINDOWS.pop()._dirty = False
+def _win(qtbot, tmp_path):
+    """test_main_window._window, registered so the close at teardown finds it
+    clean: a preset run leaves it dirty, and a dirty close asks a question
+    (answered only by the conftest's blanket "Discard")."""
+    from nocturne.ui.main_window import MainWindow
+    win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False,
+                     telemetry=False)
+    win._async_enabled = False
+    qtbot.addWidget(win, before_close_func=lambda w: setattr(w, "_dirty", False))
+    return win
 
 
 def _setup(qtbot, tmp_path, card="L", steps=STEPS, name="M 8", dt="broadband"):
-    win = _window(qtbot, tmp_path)
-    _WINDOWS.append(win)
+    win = _win(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path, filter_card=card))
     win._go_to_id("crop", user_initiated=False)
     p = win._presets.save(name, steps, _jpeg(), target="M 8", data_type=dt)
@@ -343,12 +343,10 @@ def test_an_auto_levels_preset_records_auto(qtbot, tmp_path):
 
 
 def test_the_split_stage_lists_match_their_sources():
-    from nocturne.core import receipt
-    from nocturne.steps import enhance_step
     from nocturne.ui import main_window as mw
-    free = {s for s, e in receipt._FALLBACKS.items() if e == receipt._FREE_SPLIT}
-    assert free <= mw._SPLIT_STAGES
-    assert mw._SPLIT_TAPS == frozenset(enhance_step._LAYERED)
+    assert mw._SPLIT_STAGES == {"star_reduction", "saturation", "green_fringe",
+                                "narrowband", "color_balance", "starless_levels"}
+    assert mw._SPLIT_TAPS == {"Star Colour", "Sharpen Nebulosity"}
 
 
 def test_a_project_saved_after_a_preset_reopens_with_the_same_picture(qtbot, tmp_path):
@@ -377,7 +375,7 @@ def test_auto_enhance_log_and_warning_are_unchanged(qtbot, tmp_path, monkeypatch
     from tests.ui.test_main_window import _crop
     monkeypatch.setattr(LocalContrastStep, "apply",
                         lambda self, img, o: (_ for _ in ()).throw(RuntimeError("boom\nmore")))
-    win = _window(qtbot, tmp_path); _WINDOWS.append(win)
+    win = _win(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path)); _crop(win)
     lines, log = [], []
     monkeypatch.setattr(sessionlog, "write", lambda line: lines.append(line))
@@ -397,3 +395,59 @@ def test_auto_enhance_log_and_warning_are_unchanged(qtbot, tmp_path, monkeypatch
         "Auto-enhanced (Natural) \u2014 7 steps. Background and Deconvolution were left "
         "out: GraXpert and RC-Astro aren't set up. StarNet2 (free) or StarXTerminator "
         "gives cleaner stars.")
+
+
+def _crop_state(win):
+    b, r = win._panel.apply_btn, win._panel.reset_step_btn
+    return (b.text(), b.state(), b.isEnabled(), r.isEnabled(),
+            win._panel.preset_chip.isVisibleTo(win._panel))
+
+
+def test_all_steps_failing_after_a_confirmed_discard_leaves_crop_consistent(
+        qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from nocturne.steps.stretch_step import StretchStep
+    from nocturne.steps.levels import LevelsStep
+    from tests.ui.test_main_window import _crop
+    steps = [{"stage": "stretch", "option": {"amount": 0.3, "linked": True}},
+             {"stage": "levels", "option": [0.02, 1.0, 1.0]}]
+    win, p = _setup(qtbot, tmp_path, steps=steps)
+    _crop(win)
+    win._go_to_id("stretch", user_initiated=False); win._panel.apply_btn.click()
+    win._go_to_id("crop", user_initiated=False)
+    assert [n for n, _ in win.project.entries()] == ["Crop", "Stretch"], "fixture"
+    win._dirty = False                                   # as if just saved
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    for cls in (StretchStep, LevelsStep):
+        monkeypatch.setattr(cls, "apply",
+                            lambda self, img, o: (_ for _ in ()).throw(RuntimeError("bad")))
+    _choose(win, p); win._apply_crop()
+    assert [n for n, _ in win.project.entries()] == ["Crop"]
+    assert win._dirty                                    # the discard is an unsaved change
+    shown = _crop_state(win)
+    win._rebuild_panel()                                 # what a fresh panel says
+    assert _crop_state(win) == shown
+
+
+def test_cancel_after_a_confirmed_discard_leaves_crop_consistent(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    from nocturne.steps.levels import LevelsStep
+    from tests.ui.test_main_window import _crop
+    win, p = _setup(qtbot, tmp_path)
+    _crop(win)
+    win._go_to_id("stretch", user_initiated=False); win._panel.apply_btn.click()
+    win._go_to_id("crop", user_initiated=False)
+    win._dirty = False
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    real = LevelsStep.apply
+    def cancel_then_apply(self, img, o):
+        win._cancel_active()
+        return real(self, img, o)
+    monkeypatch.setattr(LevelsStep, "apply", cancel_then_apply)
+    _choose(win, p); win._apply_crop()
+    assert [n for n, _ in win.project.entries()] == ["Crop"] and win._dirty
+    shown = _crop_state(win)
+    win._rebuild_panel()
+    assert _crop_state(win) == shown
