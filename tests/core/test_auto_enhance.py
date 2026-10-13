@@ -276,3 +276,30 @@ def test_run_auto_plan_stops_on_cancel():
             run_auto_plan(img, plan, Settings())
     finally:
         clear_ambient()
+
+
+def test_each_stage_is_announced_before_it_runs(monkeypatch):
+    """The busy label must name the stage that is RUNNING. It used to be called
+    after each stage, so during Noise Reduction it still said "De-green Stars"
+    with NR's own tile counter under it (his preset test, 2026-10-13)."""
+    from nocturne.core import auto_enhance as ae
+    seen = []
+
+    class _Step:
+        def __init__(self, name):
+            self.name = name
+        def display_name(self, option):
+            return self.name
+        def apply(self, img, option):
+            seen.append(("apply", self.name))
+            return img
+
+    names = iter(["Stretch", "Levels", "Noise Reduction"])
+    monkeypatch.setattr(ae, "make_step", lambda sid, *a, **k: _Step(next(names)))
+    base = _broadband_stack()
+    plan = [("stretch", 0.3), ("levels", (0.0, 1.0, 1.0)), ("noise_sharpen", "strong")]
+    ae.run_auto_plan(base, plan, Settings(),
+                     on_progress=lambda i, n, name: seen.append(("progress", i, n, name)))
+    assert seen == [("progress", 1, 3, "Stretch"), ("apply", "Stretch"),
+                    ("progress", 2, 3, "Levels"), ("apply", "Levels"),
+                    ("progress", 3, 3, "Noise Reduction"), ("apply", "Noise Reduction")]

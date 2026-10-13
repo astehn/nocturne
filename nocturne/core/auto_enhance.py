@@ -278,6 +278,11 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
         try:
             # A tap is named by the tap ("Vibrance"), not by its step ("Enhancements").
             name = step.display_name(option)
+            # Announced BEFORE it runs: the busy label names the stage that is
+            # working now. Called after, it named the previous one, so a slow
+            # Noise Reduction showed "De-green Stars" over NR's own tile counter.
+            if on_progress is not None:
+                on_progress(i + 1, n, name)
             if stage_id == "crop":
                 option = _auto_crop_option(img)
             elif stage_id == "levels" and levels_auto:
@@ -297,8 +302,6 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
         except Exception as exc:
             failures.append((name, _short_reason(exc)))
             details.append("".join(traceback.format_exception(exc)).rstrip())
-            if on_progress is not None:
-                on_progress(i + 1, n, name)
             continue
         img = result
         recorded = getattr(step, "recorded_option", lambda o: o)(option)
@@ -306,6 +309,4 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
         engines.append(getattr(step, "last_engine", None))
         if getattr(step, "last_message", ""):
             notes.append(step.last_message)
-        if on_progress is not None:
-            on_progress(i + 1, n, name)
     return AutoRun(results, failures, engines, tuple(notes), tuple(details))
