@@ -72,6 +72,22 @@ print("result", si.hand_over(["nocturne", sys.argv[1]], sys.argv[2], platform="l
 """
 
 
+# A sender that sees the pipe's server as another account's process.
+_FOREIGN_CLIENT = """
+import json, sys
+from nocturne.ui import single_instance as si
+real_sid, real_owner = si._process_user_sid, si._pipe_server_pid_if_mine
+si._process_user_sid = lambda pid=None: "S-1-5-21-other" if pid else real_sid(None)
+def owner(sock):
+    r = real_owner(sock)
+    print("owner", r)
+    return r
+si._pipe_server_pid_if_mine = owner
+si._allow_foreground = lambda pid: print("allow", pid)
+print("result", si.forward(json.loads(sys.argv[1]), sys.argv[2]))
+"""
+
+
 def _spawn(qtbot, args, env=None):
     proc = subprocess.Popen([sys.executable, *args], cwd=str(ROOT), env=env,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -490,8 +506,7 @@ def test_a_name_that_is_not_a_socket_is_not_sent_to(name, tmp_path, monkeypatch)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="named pipes")
-def test_on_windows_the_pipe_server_must_be_this_user(qtbot, name, tmp_path, requests_to, servers,
-                                                      monkeypatch):
+def test_on_windows_the_pipe_server_must_be_this_user(qtbot, name, tmp_path, requests_to, servers):
     req, win = requests_to()
     assert servers(name, req.request).listen()
     # The real check, on a real pipe: our own server is ours.
@@ -502,13 +517,12 @@ def test_on_windows_the_pipe_server_must_be_this_user(qtbot, name, tmp_path, req
         assert si._pipe_server_pid_if_mine(s) == os.getpid()
     finally:
         s.abort()
-    # And a server run by someone else is not sent to.
-    real = si._process_user_sid
-    monkeypatch.setattr(si, "_process_user_sid",
-                        lambda pid=None: "S-1-5-21-other" if pid else real(None))
-    t, out = _in_thread(lambda: si.forward([_fits(tmp_path)], name))
-    qtbot.waitUntil(lambda: "r" in out, timeout=8000)
-    assert out["r"] is False
+    # And a server run by someone else is not sent to. In a process of its
+    # own: a client thread here would hold the GIL, the hello would never come,
+    # and False would be the timeout's, not the check's.
+    out = _spawn(qtbot, ["-c", _FOREIGN_CLIENT, json.dumps([_fits(tmp_path)]), name])
+    assert "owner None" in out and "result False" in out, out
+    assert "allow" not in out, out
     qtbot.wait(100)
     assert win.opened == []
 
