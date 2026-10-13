@@ -1281,6 +1281,11 @@ class MainWindow(QMainWindow):
             "Close Project", self._close_project)   # back to the welcome screen
         self._provenance_act = project_menu.addAction(
             "Provenance report…", self._show_provenance)   # readable record of the edit pipeline
+        # Not on the toolbar (owner, 2026-10-13: it is full). Here so it is
+        # reachable from Export too; the Enhancements panel has a button.
+        self._save_preset_act = project_menu.addAction("Save as Preset…", self._save_preset)
+        self._save_preset_act.setEnabled(False)   # gated in _sync_preset_action
+        self._save_preset_act.setToolTip(_PRESET_TIP_OFF)
 
         view_menu = self.menuBar().addMenu("View")
         self._activity_act = view_menu.addAction("Activity")
@@ -1695,9 +1700,12 @@ class MainWindow(QMainWindow):
         # step of its own: the dialog could only say "Nothing to save yet".
         # A walk over a handful of (name, option) pairs; no need to cache it.
         empty = ok and not recipe_from_entries(self.project.entries(), scope="preset").steps
-        self._save_preset_act.setEnabled(ok and not empty)
-        self._save_preset_act.setToolTip(
-            _PRESET_TIP_EMPTY if empty else _PRESET_TIP_ON if ok else _PRESET_TIP_OFF)
+        tip = _PRESET_TIP_EMPTY if empty else _PRESET_TIP_ON if ok else _PRESET_TIP_OFF
+        # The menu item and the Enhancements button: one gate, one tooltip.
+        for target in (self._save_preset_act, getattr(self._panel, "save_preset_btn", None)):
+            if target is not None:
+                target.setEnabled(ok and not empty)
+                target.setToolTip(tip)
 
     def _save_preset(self) -> None:
         if self.project is None or self._busy or not self._save_preset_act.isEnabled():
@@ -2747,7 +2755,6 @@ class MainWindow(QMainWindow):
             # #5e636b. They read as greyed out. Warm and clearly distinct from
             # WARNING's brighter yellow #e3b341.
             "save-recipe": "#d1975b",
-            "save-preset": "#d1975b",
             "batch": "#dba86b",
         }
         # --- one tap ---
@@ -2806,10 +2813,6 @@ class MainWindow(QMainWindow):
         # --- repeat it on other data ---
         self._save_recipe_act = tb.addAction(load_icon("save-recipe", tint["save-recipe"]),
                                      "Save Recipe", self._save_recipe)
-        self._save_preset_act = tb.addAction(load_icon("save-preset", tint["save-preset"]),
-                                             "Save as Preset…", self._save_preset)
-        self._save_preset_act.setEnabled(False)   # gated in _sync_preset_action
-        self._save_preset_act.setToolTip(_PRESET_TIP_OFF)
         self._batch_act = batch_act = tb.addAction(
             load_icon("batch", tint["batch"]), "Batch…", self._open_batch)
         tb.addSeparator()
@@ -2852,7 +2855,7 @@ class MainWindow(QMainWindow):
         # toolbar has 24; the indicator is meant to look like one of its tools.
         self._jobs_bar.setIconSize(tb.iconSize())
         self._overflow = ToolbarOverflow(
-            tb, [batch_act, self._save_preset_act, self._save_recipe_act, self._share_act, self._upscale_act,
+            tb, [batch_act, self._save_recipe_act, self._share_act, self._upscale_act,
                  self._trim_act, self._starless_levels_act, spikes_act, self._cb_act,
                  narrowband_act, self._solve_act, combine_act, haoiii_act, stack_act],
             self._more_btn, self._more_act,
@@ -4458,6 +4461,7 @@ class MainWindow(QMainWindow):
             # Curves. The tail past the truncation point has to actually
             # contain one of THIS step's own names.
             reset_btn.setEnabled(pending or self._step_has_commit(sid))
+        self._sync_preset_action()
         self._sync_next_light()
         if self._busy:
             # Anything above may have switched a control on, and a panel built
@@ -7518,6 +7522,7 @@ class MainWindow(QMainWindow):
             on_tint_change=self._on_tint_change,
             on_apply_tint=self._apply_tint_step,
             on_enhance=self._enhance,
+            on_save_preset=self._save_preset,
             on_stretch_change=self._on_stretch_change,
             on_visual_stretch=self._open_stretch_picker,
             on_view_linked=self._set_view_linked,
@@ -8013,7 +8018,6 @@ class MainWindow(QMainWindow):
         self._starless_levels_act.setToolTip(
             "Set black/white points on the starless layer" if stretched else
             "Starless Levels — available once you've stretched the image")
-        self._sync_preset_action()
         has_crop = self._has_crop()
         self._auto_enhance_act.setEnabled(has_crop)   # gated: works from the user's cropped frame
         self._auto_enhance_act.setToolTip(

@@ -24,6 +24,10 @@ def test_enabled_only_from_enhancements_on(qtbot, tmp_path, sid, ok):
     assert win.current_stage_id() == sid
     assert win._save_preset_act.isEnabled() is ok
     assert ("Enhancements first" in win._save_preset_act.toolTip()) is (not ok)
+    btn = getattr(win._panel, "save_preset_btn", None)
+    assert (btn is not None) is (sid == "enhancements"), "the button lives on Enhancements only"
+    if btn is not None:
+        assert btn.isEnabled() is ok and btn.toolTip() == win._save_preset_act.toolTip()
 
 
 def test_disabled_on_a_linear_picture_even_at_enhancements(qtbot, tmp_path):
@@ -37,6 +41,7 @@ def test_disabled_on_a_linear_picture_even_at_enhancements(qtbot, tmp_path):
     assert win.project.is_linear_at(win.project.position)
     assert not win._save_preset_act.isEnabled()
     assert "Enhancements first" in win._save_preset_act.toolTip()
+    assert not win._panel.save_preset_btn.isEnabled()
 
 
 def test_disabled_with_no_picture_and_while_busy(qtbot, tmp_path):
@@ -44,10 +49,15 @@ def test_disabled_with_no_picture_and_while_busy(qtbot, tmp_path):
     assert not win._save_preset_act.isEnabled()
     win.open_fits(_make_fits(tmp_path)); _crop(win); _stretch(win); _to(win, "enhancements")
     assert win._save_preset_act.isEnabled()          # the precondition the busy check needs
+    assert win._panel.save_preset_btn.isEnabled()
     win._set_busy(True, "x")
     assert not win._save_preset_act.isEnabled()
+    assert not win._panel.save_preset_btn.isEnabled()
+    win._refresh()                                    # a repaint mid-job must not relight it
+    assert not win._panel.save_preset_btn.isEnabled()
     win._set_busy(False)
     assert win._save_preset_act.isEnabled()
+    assert win._panel.save_preset_btn.isEnabled()
 
 
 def _answer(monkeypatch, name="M 8", replace=True):
@@ -233,10 +243,13 @@ def test_nothing_capturable_keeps_the_action_off_and_says_why(qtbot, tmp_path):
     assert win.current_stage_id() == "enhancements"
     assert not win.project.is_linear_at(win.project.position)   # the other half of the gate holds
     assert not win._save_preset_act.isEnabled()
+    assert not win._panel.save_preset_btn.isEnabled()
     tip = win._save_preset_act.toolTip()
     assert "nothing to save" in tip.lower() and "Enhancements first" not in tip
+    assert win._panel.save_preset_btn.toolTip() == tip
     win._enhance("Vibrance")
     assert win._save_preset_act.isEnabled()
+    assert win._panel.save_preset_btn.isEnabled()
 
 
 def test_a_long_target_is_cut_at_a_word_to_fit(qtbot):
@@ -264,3 +277,62 @@ def test_the_preview_is_drawn_at_the_screens_pixel_ratio(qtbot, monkeypatch):
     assert pm.devicePixelRatio() == 2.0
     assert pm.width() == 2 * _PREVIEW_EDGE           # device pixels, so sharp on Retina
     assert d.minimumWidth() >= 360
+
+
+# --- placement (owner, 2026-10-13): not on the toolbar ---------------------------
+
+def test_it_is_not_on_the_toolbar(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    assert "Save as Preset…" not in [a.text() for a in win._overflow.all_actions]
+    assert win._save_preset_act not in win._toolbar.actions()
+
+
+def test_it_is_in_the_project_menu(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    from PySide6.QtWidgets import QMenu
+    # findChildren, not menuAction().menu(): that wrapper let PySide delete the menu.
+    [project] = [m for m in win.menuBar().findChildren(QMenu) if m.title() == "Project"]
+    texts = [a.text() for a in project.actions()]
+    assert "Save as Preset…" in texts
+    assert texts.index("Save as Preset…") > texts.index("Provenance report…")
+    assert project.actions()[texts.index("Save as Preset…")] is win._save_preset_act
+
+
+def test_the_enhancements_button_saves(qtbot, tmp_path, monkeypatch):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path)); _crop(win); _stretch(win); _to(win, "enhancements")
+    _answer(monkeypatch)
+    win._panel.save_preset_btn.click()
+    assert [p.name for p in win._presets.list()] == ["M 8"]
+
+
+@pytest.mark.parametrize("size", [(1280, 800), (1440, 900 - 30 - 28)])
+def test_the_button_is_in_view_without_scrolling(qtbot, tmp_path, size):
+    """The Enhancements taps already scroll on a MacBook (464 px in a 208 px
+    zone), so the button must sit where scroll position 0 shows it. Real
+    window, real stylesheet; within 200 px, as the Crop fit test allows for
+    Cocoa's fonts."""
+    from PySide6.QtCore import QRect
+    from PySide6.QtWidgets import QApplication
+    from nocturne.ui.theme import build_stylesheet
+    app = QApplication.instance()
+    before = app.styleSheet()
+    app.setStyleSheet(build_stylesheet())
+    try:
+        win = _window(qtbot, tmp_path)
+        win.open_fits(_make_fits(tmp_path))
+        win.resize(*size); win.show(); qtbot.waitExposed(win)
+        _crop(win); _stretch(win)
+        _to(win, "enhancements"); qtbot.wait(80)
+        scroll = win._side.scroll
+        assert scroll.verticalScrollBar().value() == 0
+        view = scroll.viewport()
+        btn = win._panel.save_preset_btn
+        assert btn.isVisible()
+        r = QRect(btn.mapTo(view, btn.rect().topLeft()), btn.size())
+        assert view.rect().contains(r), f"{r.getRect()} outside the {view.height()} px view"
+        assert r.bottom() <= 200, f"ends at {r.bottom()} px"
+        assert btn.width() >= btn.minimumSizeHint().width(), "label clipped"
+        assert btn.mapTo(win._side, btn.rect().topRight()).x() <= win._side.width()
+    finally:
+        app.setStyleSheet(before)

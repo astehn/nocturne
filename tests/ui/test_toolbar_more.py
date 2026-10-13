@@ -10,7 +10,7 @@ from tests.ui.test_main_window import _make_fits, _window
 
 PINNED = ("Open Image", "Open Project", "Save Project", "Settings", "Auto Enhance",
           "Undo", "Redo", "Reset", "Before/After", "Fit", "100%")
-FIRST_TO_GO = ["Batch…", "Save as Preset…", "Save Recipe", "Share", "Upscale Crop", "Trim",
+FIRST_TO_GO = ["Batch…", "Save Recipe", "Share", "Upscale Crop", "Trim",
                "Starless Levels…", "Star Spikes…", "Colour Balance", "Narrowband…",
                "Plate Solve", "Combine…", "Ha/OIII…", "Stack…"]
 

@@ -246,6 +246,7 @@ def build_panel(
     on_remove_green=None,
     on_removegreen_change=None, on_tint_change=None, on_apply_tint=None,
     on_enhance=None,
+    on_save_preset=None,
     on_stretch_change=None,
     on_visual_stretch=None,
     on_view_linked=None,
@@ -597,6 +598,18 @@ def build_panel(
             ("soft_glow_btn", "Soft Glow", "Soft Glow"),
             ("sharpen_btn", "Sharpen Nebulosity", "Sharpen Nebulosity"),
         ]
+        # First, not after the taps: the taps already scroll at 1280x800 (464 px
+        # in a 208 px zone), so below them it would be out of sight; the action
+        # row is Apply/Reset only (owner, 2026-10-13: not on the toolbar). The
+        # icon tells it apart from the taps. MainWindow gates it with the menu item.
+        from .icons import load_icon
+        w.save_preset_btn = QPushButton(load_icon("save-preset"), "Save as Preset…")
+        w.save_preset_btn.setObjectName("savePreset")
+        w.save_preset_btn.setEnabled(False)
+        if on_save_preset is not None:
+            w.save_preset_btn.clicked.connect(lambda: on_save_preset())
+        controls.addWidget(w.save_preset_btn)
+        controls.addSpacing(6)
         for attr, label, op in _specs:
             btn = QPushButton(label)
             if on_enhance is not None:
