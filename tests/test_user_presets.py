@@ -399,3 +399,31 @@ def test_the_post_stretch_set_is_pinned():
         "remove_green", "recover_core", "levels", "curves", "saturation", "green_fringe",
         "noise_sharpen", "local_contrast", "star_reduction", "enhancements",
         "enhance", "starless_levels", "star_spikes", "narrowband", "color_balance"}
+
+
+# --- the mirror rule (owner, 2026-10-13 20:33) ---
+_UNSTRETCHED_NOTE = ("Made on an unstretched picture, so it can only be used on pictures "
+                     "that aren't stretched yet.")
+
+
+def test_a_preset_with_its_own_stretch_is_refused_on_a_stretched_base():
+    p = up.Preset(id="x", name="x", steps=tuple({"stage": s, "option": ""}
+                                                for s in ("background", "stretch", "levels")))
+    assert up.can_apply(p, "broadband", base_linear=False) == (False, _UNSTRETCHED_NOTE)
+    assert up.can_apply(p, "broadband", base_linear=True) == (True, "")
+    assert up.can_apply(p, "broadband") == (True, "")          # base unknown: no rule
+
+
+def test_sweep_removes_stale_temp_manifests_only(tmp_path):
+    import time
+    lib = up.PresetLibrary(str(tmp_path / "p"))
+    p = lib.save("A", [{"stage": "enhance", "option": "Vibrance"}], b"x")
+    stale = os.path.join(p.folder, ".tmp-dead.json")
+    fresh = os.path.join(p.folder, ".tmp-live.json")
+    for f in (stale, fresh):
+        open(f, "w").write("{}")
+    old = time.time() - 3600
+    os.utime(stale, (old, old))
+    lib.save("B", [{"stage": "enhance", "option": "Vibrance"}], b"x")
+    assert not os.path.exists(stale) and os.path.exists(fresh)
+    assert {q.name for q in lib.list()} == {"A", "B"}

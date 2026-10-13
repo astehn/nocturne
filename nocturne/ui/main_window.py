@@ -1755,6 +1755,7 @@ class MainWindow(QMainWindow):
                 dlg.show_error(msg)
                 continue
             self._show_output(f"Saved preset {p.name} — {p.step_count} steps.")
+            self._resolve_held_preset()      # it may have replaced the held one
             return
 
     def _open_batch(self) -> None:
@@ -2295,9 +2296,23 @@ class MainWindow(QMainWindow):
         elif dlg.deleted_current or dlg.cleared:
             self._clear_preset()
         elif held is not None:
-            # Renamed in the browser, or gone some other way: re-read by id.
-            self._choose_preset(next((q for q in self._presets.list() if q.id == held.id), None))
+            # Renamed, replaced or deleted in the browser: read it back.
+            self._resolve_held_preset()
+            self._sync_step_controls()
         dlg.deleteLater()
+
+    def _resolve_held_preset(self) -> None:
+        """The held choice, read back from the library: by id (a rename keeps
+        it), else by name (Save as Preset replaced it, which makes a new id),
+        else gone (deleted). Not on every sync: that runs per crop-box drag."""
+        held = self._chosen_preset
+        if held is None:
+            return
+        from ..user_presets import same_name
+        every = self._presets.list()
+        self._chosen_preset = (next((q for q in every if q.id == held.id), None)
+                               or next((q for q in every if same_name(q.name, held.name)),
+                                       None))
 
     def _preset_base_linear(self) -> bool:
         """Is the picture a preset would run on linear? That is the CROPPED
@@ -2344,18 +2359,28 @@ class MainWindow(QMainWindow):
 
     def _apply_crop_and_preset(self) -> None:
         from ..core.filter_type import detect_data_type
-        from ..user_presets import STRETCHED_NOTE, can_apply, preset_plan
+        from ..user_presets import STRETCHED_NOTE, UNSTRETCHED_NOTE, can_apply, preset_plan
+        shown = self._chosen_preset.name
+        self._resolve_held_preset()          # replaced or deleted since it was chosen
         p = self._chosen_preset
+        if p is None:
+            self._sync_step_controls()
+            self._show_warning(f"The preset {shown} no longer exists.")
+            return
         # Every refusal comes before anything is touched. The browser greys
         # these out by the same rule, so reaching one means the picture changed
         # under a held choice.
         ok, note = can_apply(p, detect_data_type(self.project.meta_at(self.project.position)),
                              self._preset_base_linear())
         if not ok:
-            self._show_warning(
-                "This preset was made on an already-stretched picture, so it can only "
-                "be used on pictures that open already stretched." if note == STRETCHED_NOTE
-                else f"\u201c{p.name}\u201d is for dual-band (LP filter) data.")
+            refusals = {
+                STRETCHED_NOTE: "This preset was made on an already-stretched picture, so "
+                                "it can only be used on pictures that open already stretched.",
+                UNSTRETCHED_NOTE: "This preset was made on an unstretched picture, so it "
+                                  "can only be used on pictures that aren't stretched yet.",
+            }
+            self._show_warning(refusals.get(
+                note, f"\u201c{p.name}\u201d is for dual-band (LP filter) data."))
             return
         plan = preset_plan(p, self.settings)
         if not plan.plan:
@@ -7883,6 +7908,8 @@ class MainWindow(QMainWindow):
         if stage.id == "saturation":
             self._setup_saturation()
         self._update_explainer()
+        if stage.id == "crop":
+            self._resolve_held_preset()      # a Save as Preset or delete since
         # The new Apply starts at the component's own default state; decide
         # its real one now rather than wait for a caller's _refresh (a
         # star-split setup above may also have switched it on directly).

@@ -589,3 +589,67 @@ def test_save_on_one_picture_apply_on_another_round_trip(qtbot, tmp_path, monkey
     assert not np.allclose(win.project.current().data,
                            hand.project.state_at(len(b_entries) - 1).data, atol=1e-3), \
         "fixture: the last step (Star Spikes) must change the picture"
+
+
+FITS_STEPS = [{"stage": "background", "option": "off"},
+              {"stage": "stretch", "option": {"amount": 0.3, "linked": True}},
+              {"stage": "levels", "option": [0.02, 1.0, 1.0]}]
+
+
+def test_a_preset_with_a_stretch_is_refused_on_a_picture_that_opens_stretched(qtbot, tmp_path):
+    from tests.ui.test_open_tiff import _write_stretched_tiff
+    win = _win(qtbot, tmp_path)
+    win.open_any(_write_stretched_tiff(tmp_path))
+    win._go_to_id("crop", user_initiated=False)
+    p = win._presets.save("FITS", FITS_STEPS, _jpeg(), data_type="unknown")
+    before = list(win.project.entries())
+    _choose(win, p); _box(win, (2, 10, 2, 10)); win._apply_crop()
+    assert win.project.entries() == before
+    assert win._warning.text() == ("This preset was made on an unstretched picture, so it "
+                                   "can only be used on pictures that aren't stretched yet.")
+
+
+def test_the_browser_hears_a_stretched_base(qtbot, tmp_path, monkeypatch):
+    from tests.ui.test_open_tiff import _write_stretched_tiff
+    import nocturne.ui.preset_browser as pb
+    seen = []
+    monkeypatch.setattr(pb.PresetBrowser, "exec", lambda self: seen.append(self._base_linear) or 0)
+    win = _win(qtbot, tmp_path)
+    win.open_any(_write_stretched_tiff(tmp_path))
+    win._go_to_id("crop", user_initiated=False)
+    win._open_presets()
+    assert seen == [False]
+
+
+def test_a_held_preset_replaced_by_save_as_preset_applies_the_new_steps(qtbot, tmp_path, monkeypatch):
+    from tests.ui.test_save_preset import _answer
+    from PySide6.QtWidgets import QMessageBox
+    win, p = _setup(qtbot, tmp_path)           # "M 8" = STEPS
+    _choose(win, p); _box(win)
+    win.image_view.crop_box_modified = lambda: True
+    win._ask_pending = lambda label: "apply"
+    win._go_to_id("stretch")                   # Next: the crop only, the choice held
+    assert [n for n, _ in win.project.entries()] == ["Crop"] and win._chosen_preset.id == p.id
+    win._panel.apply_btn.click()               # Stretch by hand
+    win._go_to_id("enhancements", user_initiated=False)
+    win._enhance("Vibrance")
+    _answer(monkeypatch, name="M 8", replace=True)
+    win._save_preset()                         # replaces "M 8": a new id, new steps
+    new = win._presets.find("M 8")
+    assert new.id != p.id and [s["stage"] for s in new.steps] == ["stretch", "enhance"]
+    win._go_to_id("crop", user_initiated=False)
+    assert win._chosen_preset.id == new.id     # re-resolved, chip and label with it
+    assert win._panel.apply_btn.text() == "Apply M 8"
+    monkeypatch.setattr(QMessageBox, "question",
+                        lambda *a, **k: QMessageBox.StandardButton.Yes)
+    win._apply_crop()
+    assert [n for n, _ in win.project.entries()] == ["Crop", "Stretch", "Vibrance"]
+
+
+def test_a_held_preset_deleted_elsewhere_is_cleared(qtbot, tmp_path):
+    win, p = _setup(qtbot, tmp_path)
+    _choose(win, p)
+    win._presets.delete(p)
+    win._go_to_id("background", user_initiated=False)
+    win._go_to_id("crop", user_initiated=False)
+    assert win._chosen_preset is None and win._panel.apply_btn.text() == "Apply Crop"

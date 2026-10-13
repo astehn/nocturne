@@ -363,3 +363,81 @@ def test_a_colour_balance_preset_is_greyed_on_a_linear_base(qtbot, tmp_path, ste
     b = _browser(qtbot, lib, picture_type="broadband", base_linear=True)
     item = _item(b, "CB")
     assert not item.flags() & Qt.ItemFlag.ItemIsEnabled and item.toolTip() == _STRETCHED_NOTE
+
+
+# --- the mirror rule: a preset with its own Stretch on an already-stretched base ---
+FITS_STEPS = [{"stage": "background", "option": "off"},
+              {"stage": "stretch", "option": {"amount": 0.3, "linked": True}},
+              {"stage": "levels", "option": [0.02, 1.0, 1.0]}]
+_UNSTRETCHED_NOTE = ("Made on an unstretched picture, so it can only be used on pictures "
+                     "that aren't stretched yet.")
+
+
+def _fits_lib(tmp_path):
+    lib = up.PresetLibrary(str(tmp_path / "presets"))
+    lib.save("FITS", FITS_STEPS, _jpeg(), data_type="broadband", now=1_760_000_001)
+    lib.save("Finished", POST_ONLY, _jpeg(), data_type="broadband", now=1_760_000_002)
+    return lib
+
+
+@pytest.mark.parametrize("view", ["grid", "list"])
+def test_a_preset_with_a_stretch_is_greyed_on_a_stretched_base(qtbot, tmp_path, view):
+    s = Settings(); s.preset_view = view
+    b = _browser(qtbot, _fits_lib(tmp_path), picture_type="broadband", settings=s,
+                 base_linear=False)
+    item = _item(b, "FITS")
+    assert not item.flags() & Qt.ItemFlag.ItemIsEnabled and item.toolTip() == _UNSTRETCHED_NOTE
+    b.items.setCurrentItem(item)
+    assert not b.choose_btn.isEnabled()
+    assert b.details_note.text() == _UNSTRETCHED_NOTE and b.details_note.isVisibleTo(b)
+    assert _item(b, "Finished").flags() & Qt.ItemFlag.ItemIsEnabled
+
+
+def test_a_preset_with_a_stretch_is_allowed_on_a_linear_base(qtbot, tmp_path):
+    b = _browser(qtbot, _fits_lib(tmp_path), picture_type="broadband", base_linear=True)
+    assert _item(b, "FITS").flags() & Qt.ItemFlag.ItemIsEnabled
+
+
+def test_return_cannot_choose_a_stretch_preset_on_a_stretched_base(qtbot, tmp_path):
+    b = _browser(qtbot, _fits_lib(tmp_path), picture_type="broadband", base_linear=False)
+    b.show(); qtbot.waitExposed(b); b.items.setFocus()
+    b.items.setCurrentItem(_item(b, "FITS"))
+    _press_return(b)
+    assert b.chosen() is None and b.isVisible()
+    b.items.setCurrentItem(_item(b, "Finished"))
+    _press_return(b)
+    assert b.chosen() is not None and b.chosen().name == "Finished"
+
+
+def test_the_details_title_is_larger_under_the_app_stylesheet(qtbot, tmp_path):
+    from PySide6.QtWidgets import QApplication
+    from nocturne.ui.theme import build_stylesheet
+    app = QApplication.instance(); before = app.styleSheet()
+    app.setStyleSheet(build_stylesheet())
+    try:
+        b = _browser(qtbot, _lib(tmp_path))
+        b.items.setCurrentRow(0)
+        b.details_title.ensurePolished(); b.details_meta.ensurePolished()
+        title, body = b.details_title.font(), b.details_meta.font()
+        assert title.pixelSize() > body.pixelSize() and title.bold()
+    finally:
+        app.setStyleSheet(before)
+
+
+def test_a_long_name_never_pushes_the_date_off_a_grid_card(qtbot, tmp_path):
+    lib = up.PresetLibrary(str(tmp_path / "presets"))
+    long = "Heart and Soul with the Fish Head, both panels, July and August, wide"
+    lib.save(long, STEPS, _jpeg(), target="IC 1805", data_type="broadband")
+    s = Settings(); s.preset_view = "grid"
+    b = _browser(qtbot, lib, picture_type="broadband", settings=s)
+    item = b.items.item(0)
+    first, second = item.text().split("\n")[:2]
+    fm = b.items.fontMetrics()
+    assert first.endswith("…") and fm.horizontalAdvance(first) <= up_icon_w()
+    assert second.startswith("IC 1805 · saved")
+    assert long in item.toolTip()
+
+
+def up_icon_w():
+    from nocturne.ui.preset_browser import ICON_W
+    return ICON_W

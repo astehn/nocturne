@@ -34,6 +34,7 @@ MANIFEST, PREVIEW = "preset.json", "preview.jpg"
 SORT_KEYS = ("created", "last_used", "name", "target")
 DATA_TYPES = ("broadband", "dualband", "unknown")    # core.filter_type.detect_data_type
 MAX_NAME = 80
+_STALE_TMP_SECONDS = 300
 
 # Into the `nocturne` tree, which core.applog sends to the log file: a packaged
 # app has no console, and a skipped preset should leave a trace somewhere.
@@ -46,6 +47,8 @@ _GEOMETRY_STAGES = frozenset({"crop", "rotate", "flip_h", "flip_v"})
 _DUALBAND_NOTE = "Made on dual-band (LP filter) data — this picture is not dual-band"
 STRETCHED_NOTE = ("Made on an already-stretched picture, so it can only be used on "
                   "pictures that open already stretched.")
+UNSTRETCHED_NOTE = ("Made on an unstretched picture, so it can only be used on pictures "
+                    "that aren't stretched yet.")
 # A preset's stages that need stretched data — exactly what the hand paths
 # refuse on linear data: the stepper's post-stretch steps (navigation forces a
 # Stretch first, _ensure_stretched), the Enhancements taps (only reachable from
@@ -247,15 +250,25 @@ def starts_after_stretch(p: Preset) -> bool:
     return "stretch" not in stages and bool(stages & (POST_STRETCH_IDS | _FINISHING_STAGES))
 
 
-def can_apply(p: Preset, picture_type: str, base_linear: bool = False) -> tuple[bool, str]:
+def has_own_stretch(p: Preset) -> bool:
+    return any(s.get("stage") == "stretch" for s in p.steps)
+
+
+def can_apply(p: Preset, picture_type: str,
+              base_linear: bool | None = None) -> tuple[bool, str]:
     """One rule for the browser's greying and Apply's backstop. `base_linear`
     is the picture the preset would run on: the CROPPED base, since Apply
-    discards everything after the leading geometry first."""
+    discards everything after the leading geometry first. None (unknown)
+    applies neither stretch rule."""
     # The same rule as Gold and blue: unknown is not dual-band.
     if p.data_type == "dualband" and picture_type != "dualband":
         return False, _DUALBAND_NOTE
-    if base_linear and starts_after_stretch(p):
+    if base_linear is True and starts_after_stretch(p):
         return False, STRETCHED_NOTE
+    if base_linear is False and has_own_stretch(p):
+        # The mirror (Andreas, 2026-10-13 20:33): stretching a stretched
+        # picture again is never what the preset was made for.
+        return False, UNSTRETCHED_NOTE
     if p.data_type == "broadband" and picture_type == "dualband":
         return True, _BROADBAND_NOTE
     return True, ""
@@ -323,6 +336,20 @@ class PresetLibrary:
             for entry in os.listdir(self.root):
                 if entry.startswith((".part-", ".trash-")):
                     shutil.rmtree(os.path.join(self.root, entry), ignore_errors=True)
+        # A rewrite's temp manifest (_write_json_atomic) killed before its
+        # replace. Only old ones: a fresh one may be another moment's write.
+        cutoff = time.time() - _STALE_TMP_SECONDS
+        with contextlib.suppress(OSError):
+            for entry in os.listdir(self.root):
+                folder = os.path.join(self.root, entry)
+                if entry.startswith(".") or not os.path.isdir(folder):
+                    continue
+                for name in os.listdir(folder):
+                    path = os.path.join(folder, name)
+                    if name.startswith(".tmp-") and name.endswith(".json"):
+                        with contextlib.suppress(OSError):
+                            if os.path.getmtime(path) < cutoff:
+                                os.remove(path)
 
     def _remove(self, folder: str) -> None:
         root = os.path.realpath(self.root)

@@ -60,7 +60,7 @@ class PresetBrowser(QDialog):
     def __init__(self, library, *, picture_type: str, settings,
                  on_settings_changed: Callable[[], None] | None = None,
                  current_id: str | None = None, screen_height: int | None = None,
-                 base_linear: bool = False, parent=None) -> None:
+                 base_linear: bool | None = None, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Presets")
         self.setStyleSheet(_STYLE)
@@ -137,6 +137,9 @@ class PresetBrowser(QDialog):
         # --- details ---
         self.details = QWidget()
         self.details_title = QLabel()
+        # Sized by theme.py's QLabel#presetDetailsTitle: the app stylesheet's
+        # `* { font-size: 14px }` overrides a setFont.
+        self.details_title.setObjectName("presetDetailsTitle")
         self.details_title.setWordWrap(True)
         f = self.details_title.font()
         f.setBold(True)
@@ -321,7 +324,11 @@ class PresetBrowser(QDialog):
         for p in shown:
             ok, note = can_apply(p, self._picture_type, self._base_linear)
             label = saved_label(p)
-            text = (f"{p.name}\n{label}" if grid
+            # One line for the name on a card, elided: a long name wrapped and
+            # pushed the target and date off the card's fixed height.
+            name = (self.items.fontMetrics().elidedText(p.name, Qt.TextElideMode.ElideRight,
+                                                         ICON_W) if grid else p.name)
+            text = (f"{name}\n{label}" if grid
                     else f"{p.name} — {label} · {_steps_text(p.step_count)}")
             if ok and note:
                 # Its own line in a card: appended, it wrapped and the cell clipped it.
@@ -334,7 +341,9 @@ class PresetBrowser(QDialog):
                 # two-line card set the size and clipped a three-line one.
                 item.setSizeHint(QSize(ICON_W + _CELL_PAD - 8, ICON_H + _CELL_TEXT - 8))
                 item.setTextAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-            if note:
+            if name != p.name:
+                item.setToolTip(f"{p.name}\n{note}" if note else p.name)
+            elif note:
                 item.setToolTip(note)
             if not ok:
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEnabled)
