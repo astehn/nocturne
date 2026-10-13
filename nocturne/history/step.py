@@ -41,6 +41,12 @@ class Step(ABC):
         (ColorStep: whether photometric fell back)."""
         return option
 
+    def display_name(self, option) -> str:
+        """The history name for one apply. The class name for every step but
+        the Enhancements taps, where the option IS the step (a hand tap records
+        "Vibrance", not "Enhancements")."""
+        return self.name
+
     @abstractmethod
     def options(self) -> list[str]:
         ...
