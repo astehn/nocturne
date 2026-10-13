@@ -2,6 +2,25 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.52.0] — 2026-10-13
+
+Nocturne for Windows, presets for Auto Enhance, and Starless + Stars for everyone.
+
+### Added
+- Windows: Nocturne for 64-bit Windows 11, as an installer. It installs for your own user without administrator rights, appears in the Start menu, and is removed under Settings → Apps. .nocturne projects open in Nocturne with a double-click, and FITS files get Nocturne under "Open with". The installer isn't signed yet, so Windows may show "Windows protected your PC": click More info, then Run anyway.
+- Auto Enhance presets: a click gives Natural; the arrow beside the button offers Vivid, and Gold and blue for dual-band nebulae. Auto Enhance now also runs Deconvolution (with RC-Astro) and Star Reduction.
+- Opening a file while Nocturne is running (Windows and Linux) opens it in the window that's already there.
+
+### Changed
+- Starless + Stars export works without RC-Astro: it uses StarNet2 or Nocturne's own star separation, and the log says which.
+- Starless + Stars before Stretch is stretched once, as a whole, so the two files Screen back to exactly the picture you saw.
+- Auto Enhance never uses GraXpert for noise reduction: it takes NoiseXTerminator, a Nocturne NR model, or Nocturne's own, so a run takes about a minute instead of ten. If a step can't run, it says which one and why.
+- A stacked master is written to a temporary file first, so a cancel or crash can't leave a broken master or destroy the one you had.
+
+### Fixed
+- Stacking dual-band data: if the helper processes failed partway, the fallback could switch away from the Ha/OIII path.
+- The Ha/OIII window could open shorter than its contents.
+
 ## [0.51.0] — 2026-10-11
 
 Photometric colour that finally works, a cleaner stretch, and shape buttons for cropping.
