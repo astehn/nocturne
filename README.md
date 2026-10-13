@@ -60,7 +60,7 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
 - ✨ **Targeted Enhancements** — tap-to-stack colour boosts (red/Ha, cyan/OIII, blue, gold), vibrance, star colour, sky darken/lighten, dark structure, soft glow and nebulosity sharpening — eleven taps, each individually undoable.
 - 🔪 **Sharpen Nebulosity** — sharpens nebula structure only: it works on the starless layer under a signal mask and screens the stars back untouched, so stars can't ring and background noise isn't amplified.
 - 🎨 **Colour-managed export** — pick the colour space your export is written in: sRGB, Display P3, Adobe RGB or ProPhoto RGB. The image is converted into that space and the ICC profile is embedded, so Photoshop, Lightroom and Capture One read it as what it is instead of assuming their own working space. Wide-gamut spaces on 16-bit TIFF, where the extra depth pays for itself.
-- ⚡ **Auto Enhance** — one tap carries the linear master to a finished result automatically.
+- ⚡ **Auto Enhance** — one tap carries the linear master to a finished result automatically: Natural, or Vivid and Gold and blue (dual-band) from its menu.
 - 🔍 **Upscale Crop** — 2× upscale of a cropped region, for a closer look without losing quality.
 - ✂️ **Trim** — crop the edges off a *finished* image. A ragged stacking border is invisible until after the stretch, and going back to the Crop step would throw away everything done since; Trim appends instead, so the whole edit survives.
 - 🖥️ **Fullscreen inspection** — press `F` for a distraction-free canvas to pan and zoom around the frame.
@@ -78,7 +78,7 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
 - **[GraXpert](https://www.graxpert.com/)** — free. Powers background/gradient extraction and one of the denoise engines; the one tool worth installing first. Point Nocturne at it in **Settings**.
 - **[StarNet2](https://starnetastro.com/cli-tools/starnet/)** — free. Splits an image into starless and stars, which ten steps and tools depend on (Star Reduction, De-green Stars, Nebula Saturation, Narrowband, Starless Levels, Star Colour, Sharpen Nebulosity, Upscale Crop, Auto Enhance and Colour Balance). Take the **CLI** package, not the PixInsight module. Without it those fall back to Nocturne's own separator, which leaves roughly twice as much star flux behind.
 - **[ASTAP](https://www.hnsky.org/astap.htm)** — free, **optional**. Adds plate-solving, target identification and annotation. Install it *and its D05 star database* (from the ASTAP page), then set the path in Settings.
-- **[RC-Astro](https://www.rc-astro.com/) (BlurXTerminator / NoiseXTerminator / StarXTerminator)** — paid, **optional**. Every RC-Astro step except the starless+stars export has a free fallback, so Nocturne works without it. Set its path in Settings if you own it.
+- **[RC-Astro](https://www.rc-astro.com/) (BlurXTerminator / NoiseXTerminator / StarXTerminator)** — paid, **optional**. Every RC-Astro step has a free fallback, so Nocturne works without it. Set its path in Settings if you own it.
 
 Nocturne drives these as separate installs and does not bundle them.
 
