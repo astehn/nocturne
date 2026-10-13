@@ -5,7 +5,7 @@ import sys
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QStyle,
-    QLineEdit, QPushButton, QRadioButton, QSizePolicy, QSlider, QToolButton, QVBoxLayout,
+    QLineEdit, QPushButton, QRadioButton, QSlider, QToolButton, QVBoxLayout,
     QWidget,
 )
 
@@ -231,26 +231,19 @@ DEFAULT_ENGINE = "Default"
 DEFAULT_BUILTIN = "Default (built-in)"
 
 
-def _add_preset_controls(w, title_row, notes, on_presets, on_clear_preset) -> None:
-    """Crop's "Presets…" and the chosen preset's chip. Crop only: the panel
-    builder is shared by every step, so this is opt-in by construction.
+def _add_preset_controls(w, controls, on_presets, on_clear_preset) -> None:
+    """Crop's "Presets…" and the chosen preset's chip, under Guides. Crop only:
+    the panel builder is shared by every step, so this is opt-in by
+    construction.
 
-    "Presets…" sits on the title row, left of "How this works", because the
-    card's scroll zone is ~208 px on a MacBook and its controls already end at
-    195 (test_every_crop_control_is_in_view_without_scrolling), and the pinned
-    action row holds only Apply and Reset step. Its vertical size policy is
-    Ignored so it can never make this header taller than any other step's.
-    The chip goes with the notes: below the fold on a small screen, but what
-    it says is always on the Apply button."""
+    A real button, as Stretch's "Visual stretch…" is (Andreas, 2026-10-13,
+    his description in the spec). At 1280×800 it and the chip sit below the
+    card's ~208 px fold; what the chip says is always on the Apply button."""
     btn = QPushButton("Presets…")
-    btn.setObjectName("presetsLink")
-    btn.setFlat(True)
-    btn.setCursor(Qt.CursorShape.PointingHandCursor)
     btn.setToolTip("Choose a saved preset to apply after the crop")
-    btn.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored)
     if on_presets is not None:
         btn.clicked.connect(lambda: on_presets())
-    title_row.insertWidget(title_row.indexOf(w.help_link), btn)
+    controls.addWidget(btn)
 
     chip = QWidget()
     row = QHBoxLayout(chip)
@@ -270,7 +263,7 @@ def _add_preset_controls(w, title_row, notes, on_presets, on_clear_preset) -> No
     row.addWidget(name, 1)
     row.addWidget(clear)
     chip.setVisible(False)
-    notes.addWidget(chip)
+    controls.addWidget(chip)
     w.presets_btn = btn
     w.preset_chip = chip
     w.preset_chip_thumb = thumb
@@ -504,7 +497,7 @@ def build_panel(
         w.flip_v_btn = flip_v
         w.apply_btn = w.primary_action = apply_btn
         w.crop_size_label = size
-        _add_preset_controls(w, title_row, notes, on_presets, on_clear_preset)
+        _add_preset_controls(w, controls, on_presets, on_clear_preset)
 
     elif stage.kind == "process":
         # Joined buttons, not a dropdown: every level visible, one click

@@ -198,10 +198,14 @@ def test_a_long_name_is_elided_on_the_button_and_whole_in_the_tooltip(qtbot, tmp
     assert long in btn.toolTip()
 
 
-def test_the_presets_button_is_in_the_header_and_the_header_did_not_grow(qtbot, tmp_path):
+def test_the_presets_button_is_in_the_card_and_the_header_is_untouched(qtbot, tmp_path):
+    from PySide6.QtWidgets import QPushButton, QToolButton
     win, _p = _setup(qtbot, tmp_path)
-    crop_h = win._panel.header.sizeHint().height()
-    assert win._panel.header.isAncestorOf(win._panel.presets_btn)
+    hdr = win._panel.header
+    crop_h = hdr.sizeHint().height()
+    assert not hdr.isAncestorOf(win._panel.presets_btn)
+    assert win._panel.isAncestorOf(win._panel.presets_btn)
+    assert hdr.findChildren(QPushButton) == [] and hdr.findChildren(QToolButton) == []
     win._go_to_id("background", user_initiated=False)
     assert win._panel.header.sizeHint().height() == crop_h
 

@@ -920,7 +920,7 @@ def test_crop_panel_has_presets_button_and_a_hidden_chip(qtbot):
     got = []
     w = build_panel(_stage("crop"), on_presets=lambda: got.append("presets"))
     qtbot.addWidget(w)
-    assert w.header.isAncestorOf(w.presets_btn)
+    assert not w.header.isAncestorOf(w.presets_btn)
     w.presets_btn.click()
     assert got == ["presets"]
     assert not w.preset_chip.isVisibleTo(w)
@@ -943,3 +943,18 @@ def test_only_the_crop_panel_has_a_presets_button(qtbot):
         w = build_panel(stage, on_presets=lambda: None)
         qtbot.addWidget(w)
         assert not hasattr(w, "presets_btn"), stage.id
+
+
+def test_crop_presets_button_sits_under_guides_with_the_chip_under_it(qtbot):
+    """Shape → Rotate/Flip → Guides → Presets… → chip (Andreas, 2026-10-13):
+    a real button, as Stretch's Visual stretch… is, in the card body."""
+    from PySide6.QtWidgets import QPushButton
+    w = build_panel(_stage("crop"))
+    qtbot.addWidget(w)
+    lay = w.controls
+    order = [lay.itemAt(i).widget() for i in range(lay.count())]
+    g = order.index(w.guides_box)
+    assert order[g + 1] is w.presets_btn and order[g + 2] is w.preset_chip
+    assert order[g + 2] is order[-1]
+    assert type(w.presets_btn) is QPushButton and w.presets_btn.objectName() == ""
+    assert not w.presets_btn.isFlat() and w.presets_btn.text() == "Presets…"
