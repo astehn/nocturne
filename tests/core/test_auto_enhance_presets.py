@@ -397,3 +397,21 @@ def test_a_tap_is_recorded_under_its_own_name_with_an_empty_option():
 def test_a_failing_tap_is_named_by_the_tap():
     run = run_auto_plan(_img(), [("enhance", "Nonsense")], Settings())
     assert run.failures[0][0] == "Nonsense"
+
+
+def test_a_raising_display_name_is_that_stages_failure_not_an_abort(monkeypatch):
+    real = ae.make_step
+
+    class _BadName:
+        name = "Odd"
+        def display_name(self, option):
+            raise RuntimeError("no name")
+        def apply(self, img, option):
+            return img
+
+    monkeypatch.setattr(ae, "make_step", lambda sid, *a, **k:
+                        _BadName() if sid == "enhance" else real(sid, *a, **k))
+    run = run_auto_plan(_img(), [("enhance", "Vibrance"), ("levels", (0.05, 1.0, 0.9))],
+                        Settings())
+    assert run.failures == [("Odd", "no name")]
+    assert [n for n, _o, _i in run.results] == ["Levels"]

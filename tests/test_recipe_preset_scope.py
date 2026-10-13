@@ -46,6 +46,9 @@ def test_every_entry_is_either_stored_or_named(scope):
     excluded = sum(1 for n, _ in ENTRIES if scope == "preset" and n in PRESET_EXCLUDED_NAMES)
     unnamed_left = sum(1 for n, _ in ENTRIES if n in named)
     assert stored + unnamed_left + excluded == len(ENTRIES)
+    stored_names = {step_display_name(st["stage"], st["option"])
+                    for st in recipe_from_entries(ENTRIES, scope=scope).steps}
+    assert not stored_names & named
 
 
 def test_new_stage_options_round_trip_through_json():
@@ -62,12 +65,31 @@ def test_display_names_for_preset_steps():
     assert step_display_name("noise_sharpen") == "Noise Reduction"
 
 
-def test_preflight_can_build_the_new_stages():
-    from nocturne.recipe import Recipe, preflight
+def test_preflight_builds_the_new_stages_for_a_preset_and_refuses_them_in_a_recipe():
+    """make_step can build them (the preset runner needs it), but a recipe must
+    not replay Starless Levels' hand-picked values across a batch."""
+    from nocturne.recipe import CANNOT_BUILD_REASON, Recipe, preflight
     from nocturne.settings import Settings
     r = Recipe(steps=[{"stage": "star_spikes", "option": SPIKES},
                       {"stage": "starless_levels", "option": [0.1, 0.8]}])
-    assert [p.outcome for p in preflight(r, Settings())] == ["run", "run"]
+    assert [p.outcome for p in preflight(r, Settings(), scope="preset")] == ["run", "run"]
+    refused = preflight(r, Settings())
+    assert [(p.step, p.outcome, p.reason) for p in refused] == [
+        ("Star Spikes", "fail", CANNOT_BUILD_REASON),
+        ("Starless Levels", "fail", CANNOT_BUILD_REASON)]
+
+
+@pytest.mark.parametrize("stage, option", [("star_spikes", SPIKES),
+                                           ("starless_levels", [0.1, 0.8])])
+def test_apply_recipe_refuses_a_preset_only_stage(stage, option):
+    import numpy as np
+    from nocturne.batch import apply_recipe
+    from nocturne.core.image import AstroImage
+    from nocturne.recipe import Recipe
+    from nocturne.settings import Settings
+    img = AstroImage(np.full((8, 8, 3), 0.2, np.float32), is_linear=False)
+    with pytest.raises(ValueError, match=stage):
+        apply_recipe(img, Recipe(steps=[{"stage": stage, "option": option}]), Settings())
 
 
 def test_preset_only_stages_are_not_in_the_recipe_map():

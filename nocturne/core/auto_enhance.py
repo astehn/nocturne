@@ -274,9 +274,10 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
             raise Cancelled()      # stop the chain cleanly between steps (a mid-step
                                    # subprocess is already killed via run_cli's token)
         step = make_step(stage_id, settings, bg_runner=bg_runner, rc_runner=rc_runner)
-        # A tap is named by the tap ("Vibrance"), not by its step ("Enhancements").
-        name = step.display_name(option)
+        name = step.name           # until display_name answers, inside the try
         try:
+            # A tap is named by the tap ("Vibrance"), not by its step ("Enhancements").
+            name = step.display_name(option)
             if stage_id == "crop":
                 option = _auto_crop_option(img)
             elif stage_id == "levels" and levels_auto:

@@ -5,7 +5,7 @@ import os
 from .core.crop import detect_content_bounds
 from .core.export import save_fits, save_png, save_tiff
 from .core.tasks import current as current_token
-from .recipe import RETIRED_STAGES, Recipe, deserialize_option
+from .recipe import PRESET_ONLY_STAGE_IDS, RETIRED_STAGES, Recipe, deserialize_option
 from .steps.factory import make_step
 from .steps.load import load_fits
 from .tools.base import run_cli
@@ -51,6 +51,9 @@ def apply_recipe(base, recipe: Recipe, settings, *, bg_runner=run_cli, rc_runner
         sid = step["stage"]
         if sid in RETIRED_STAGES:
             continue        # the preflight has already told the user (recipe.preflight)
+        if sid in PRESET_ONLY_STAGE_IDS:
+            # Refused as before presets made it buildable; preflight says why.
+            raise ValueError(sid)
         option = deserialize_option(sid, step["option"])
         if sid == "enhance":
             from .core.enhance import (ENHANCE_OPS, sharpen_nebulosity_layers,

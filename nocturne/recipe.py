@@ -61,6 +61,10 @@ def retired_reason(stage_id) -> str:
 # editable starting point. Star Spikes is here because Save Recipe stays as it
 # is (presets spec, 2026-10-13). Kept out of _NAME_TO_STAGE on purpose.
 PRESET_ONLY_STAGES = {"Star Spikes": "star_spikes", "Starless Levels": "starless_levels"}
+# make_step builds these for the preset runner, so a RECIPE file that names one
+# (hand-edited, or written by a later version) is refused by preflight and
+# apply_recipe instead of replaying hand-picked values across a batch.
+PRESET_ONLY_STAGE_IDS = frozenset(PRESET_ONLY_STAGES.values())
 # Each picture's own geometry and finishing crop: never part of a preset (spec).
 PRESET_EXCLUDED_NAMES = frozenset(GEOMETRY_NAMES)
 _SPIKE_KEYS = ("length", "count", "angle", "intensity", "variation", "colour")
@@ -171,10 +175,9 @@ def serialize_option(stage_id, option):
             "gold_strength": p.gold_strength, "blue_strength": p.blue_strength,
         }
     if stage_id == "star_spikes":
-        o = option if isinstance(option, dict) else {}
-        return {"length": float(o["length"]), "count": int(o["count"]),
-                "angle": float(o["angle"]), "intensity": float(o["intensity"]),
-                "variation": float(o["variation"]), "colour": float(o["colour"])}
+        return {"length": float(option["length"]), "count": int(option["count"]),
+                "angle": float(option["angle"]), "intensity": float(option["intensity"]),
+                "variation": float(option["variation"]), "colour": float(option["colour"])}
     if stage_id == "starless_levels":
         b, w = option
         return [float(b), float(w)]
@@ -359,7 +362,6 @@ def step_display_name(stage_id, option=None) -> str:
 _step_display_name = step_display_name   # existing callers
 
 
-
 CANNOT_BUILD_REASON = ("this version of Nocturne cannot replay that step — "
                        "open the image and apply it by hand, or re-save the recipe")
 
@@ -384,7 +386,7 @@ def _can_build(stage_id, settings) -> bool:
     return True
 
 
-def preflight(recipe: Recipe, settings) -> list[StepPlan]:
+def preflight(recipe: Recipe, settings, *, scope: str = "recipe") -> list[StepPlan]:
     """Step by step: what will run, what will be substituted, what will fail.
 
     `missing_tools` already answers "can this recipe run at all", and the batch
@@ -427,6 +429,10 @@ def preflight(recipe: Recipe, settings) -> list[StepPlan]:
         # file in the folder, with a raw stage id as the message. Colour Balance
         # was in exactly that state. Answering the question this function claims
         # to answer costs one construction per step, before any file is touched.
+        # A preset-only stage is buildable, but a recipe must not replay it.
+        if scope == "recipe" and sid in PRESET_ONLY_STAGE_IDS:
+            plans.append(StepPlan(name, "fail", "", CANNOT_BUILD_REASON))
+            continue
         if not _can_build(sid, settings):
             plans.append(StepPlan(name, "fail", "", CANNOT_BUILD_REASON))
             continue
