@@ -17,7 +17,6 @@ import json
 import logging
 import os
 import shutil
-import tempfile
 import time
 import uuid
 from dataclasses import dataclass
@@ -33,6 +32,8 @@ FORMAT = 1
 PREVIEW_EDGE = 600            # spec: "e.g. 600 px long edge"
 MANIFEST, PREVIEW = "preset.json", "preview.jpg"
 SORT_KEYS = ("created", "last_used", "name", "target")
+DATA_TYPES = ("broadband", "dualband", "unknown")    # core.filter_type.detect_data_type
+MAX_NAME = 80
 
 # Into the `nocturne` tree, which core.applog sends to the log file: a packaged
 # app has no console, and a skipped preset should leave a trace somewhere.
@@ -72,6 +73,13 @@ class Preset:
     def preview_path(self) -> str:
         return os.path.join(self.folder, PREVIEW)
 
+    @property
+    def has_preview(self) -> bool:
+        try:
+            return os.path.getsize(self.preview_path) > 0
+        except OSError:
+            return False
+
     def step_names(self) -> list[str]:
         return [step_display_name(s.get("stage"), s.get("option")) for s in self.steps]
 
@@ -104,14 +112,16 @@ def _now_iso(now: float | None) -> str:
 
 
 def _write_json_atomic(path: str, data: dict) -> None:
-    fd, tmp = tempfile.mkstemp(prefix=".tmp-", suffix=".json", dir=os.path.dirname(path))
+    # Not mkstemp: that makes the file owner-only (0600). Opening with 0o666
+    # lets the process umask give it a plain file's mode without reading the
+    # umask, which can only be done by changing it.
+    tmp = os.path.join(os.path.dirname(path), f".tmp-{uuid.uuid4().hex}.json")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        # mkstemp makes the file owner-only (0600); give it a plain file's mode.
-        umask = os.umask(0)
-        os.umask(umask)
-        os.chmod(tmp, 0o666 & ~umask)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, path)
     except BaseException:
         with contextlib.suppress(OSError):
@@ -133,7 +143,9 @@ def load_preset(folder: str) -> Preset:
     if not isinstance(fmt, int) or fmt > FORMAT:
         raise PresetError("saved by a newer version of Nocturne")
     name = m.get("name")
-    if not isinstance(name, str) or not name.strip():
+    if name is not None and not isinstance(name, str):
+        raise PresetError("name is not text")
+    if not name or not name.strip():
         raise PresetError("the preset has no name")
     steps = m.get("steps")
     if not isinstance(steps, list):
@@ -141,13 +153,31 @@ def load_preset(folder: str) -> Preset:
     for s in steps:
         if not isinstance(s, dict) or not isinstance(s.get("stage"), str):
             raise PresetError("a step has no stage")
-    left_out = m.get("left_out") or ()
+    text = {}
+    for key, default in (("target", ""), ("data_type", "unknown"), ("created", ""),
+                         ("last_used", ""), ("app", "")):
+        value = m.get(key)
+        if value is None:
+            value = default
+        if not isinstance(value, str):
+            raise PresetError(f"{key} is not text")
+        text[key] = value
+    left_out = m.get("left_out")
+    if left_out is None:
+        left_out = []
+    if not isinstance(left_out, list) or not all(isinstance(x, str) for x in left_out):
+        raise PresetError("left_out is not a list of names")
     return Preset(id=os.path.basename(os.path.normpath(folder)), name=name,
-                  steps=tuple(steps), target=str(m.get("target") or ""),
-                  data_type=str(m.get("data_type") or "unknown"),
-                  created=str(m.get("created") or ""),
-                  last_used=str(m.get("last_used") or ""), app=str(m.get("app") or ""),
-                  left_out=tuple(str(x) for x in left_out), folder=folder)
+                  steps=tuple(steps), left_out=tuple(left_out), folder=folder, **text)
+
+
+def _clean_name(name) -> str:
+    name = name.strip() if isinstance(name, str) else ""
+    if not name:
+        raise PresetError("a preset needs a name")
+    if len(name) > MAX_NAME:
+        raise PresetError(f"a preset name is at most {MAX_NAME} characters")
+    return name
 
 
 def same_name(a: str, b: str) -> bool:
@@ -240,19 +270,26 @@ class PresetLibrary:
                 continue
             try:
                 out.append(load_preset(folder))
-            except PresetError as exc:
+            except Exception as exc:    # one bad preset must never take down the list
                 _log.warning("preset %s skipped: %s", entry, exc)
         return out
 
     def list(self) -> list[Preset]:
         # Two folders with one name: an overwrite killed between its rename and
         # the removal. The later one is the one the user saved last.
-        kept: dict[str, Preset] = {}
+        # Equal `created` (same second): newer folder mtime, then folder name,
+        # so the answer never depends on listing order.
+        kept: dict[str, tuple] = {}
         for p in self._all():
             k = p.name.strip().casefold()
-            if k not in kept or p.created > kept[k].created:
-                kept[k] = p
-        return list(kept.values())
+            try:
+                mtime = os.stat(p.folder).st_mtime
+            except OSError:
+                mtime = 0.0
+            rank = (p.created, mtime, p.id)
+            if k not in kept or rank > kept[k][0]:
+                kept[k] = (rank, p)
+        return [p for _, p in kept.values()]
 
     def find(self, name: str) -> Preset | None:
         return next((p for p in self.list() if same_name(p.name, name)), None)
@@ -266,15 +303,18 @@ class PresetLibrary:
                     shutil.rmtree(os.path.join(self.root, entry), ignore_errors=True)
 
     def _remove(self, folder: str) -> None:
+        root = os.path.realpath(self.root)
+        if os.path.dirname(os.path.realpath(folder)) != root:
+            raise ValueError(f"not a preset in this library: {folder}")
         trash = os.path.join(self.root, f".trash-{uuid.uuid4().hex}")
         os.replace(folder, trash)            # gone from list() in one step
         shutil.rmtree(trash, ignore_errors=True)
 
     def save(self, name, steps, preview, *, target="", data_type="unknown",
              left_out=(), now=None) -> Preset:
-        name = name.strip()
-        if not name:
-            raise PresetError("a preset needs a name")
+        name = _clean_name(name)
+        if data_type not in DATA_TYPES:
+            raise ValueError(f"data_type must be one of {DATA_TYPES}, not {data_type!r}")
         os.makedirs(self.root, exist_ok=True)
         self._sweep()
         pid = uuid.uuid4().hex
@@ -287,17 +327,22 @@ class PresetLibrary:
                     "left_out": list(left_out), "steps": list(steps)}
         with open(os.path.join(part, MANIFEST), "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())                     # on disk before it can be found
         final = os.path.join(self.root, pid)
         os.replace(part, final)                      # the one atomic step
-        for other in self._all():                    # only now retire the replaced one
+        # Only now retire the replaced one. The new preset is already saved, so a
+        # failure here is not the save's: list() resolves the duplicate by rank.
+        for other in self._all():
             if other.id != pid and same_name(other.name, name):
-                self._remove(other.folder)
+                try:
+                    self._remove(other.folder)
+                except OSError as exc:
+                    _log.warning("could not retire replaced preset %s: %s", other.id, exc)
         return load_preset(final)
 
     def rename(self, p: Preset, new_name: str) -> Preset:
-        new_name = new_name.strip()
-        if not new_name:
-            raise PresetError("a preset needs a name")
+        new_name = _clean_name(new_name)
         if any(o.id != p.id and same_name(o.name, new_name) for o in self._all()):
             raise PresetError(f"a preset called “{new_name}” already exists")
         return self._rewrite(p, name=new_name)

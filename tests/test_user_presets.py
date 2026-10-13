@@ -101,6 +101,14 @@ def test_missing_optional_fields_load_with_defaults(tmp_path):
     ({"steps": []}, "name"),
     ({"name": "X", "steps": "nope"}, "steps"),
     ({"name": "X", "steps": [{"option": 1}]}, "stage"),
+    ({"name": "X", "steps": ["stretch"]}, "stage"),
+    ({"name": 5, "steps": []}, "name"),
+    ({"name": "X", "steps": [], "left_out": 3}, "left_out"),
+    ({"name": "X", "steps": [], "left_out": "Star Spikes"}, "left_out"),
+    ({"name": "X", "steps": [], "left_out": [1]}, "left_out"),
+    ({"name": "X", "steps": [], "target": 8}, "target"),
+    ({"name": "X", "steps": [], "data_type": ["dualband"]}, "data_type"),
+    ({"name": "X", "steps": [], "created": 17}, "created"),
 ])
 def test_unusable_presets_are_refused_clearly(tmp_path, manifest, why):
     folder = tmp_path / "p"
@@ -182,7 +190,7 @@ def test_names_compare_casefolded_and_stripped():
 
 def test_awkward_names_round_trip(tmp_path):
     lib = _lib(tmp_path)
-    for n in ("a/b:c", "Nébuleuse 🌌", "x" * 200):
+    for n in ("a/b:c", "Nébuleuse 🌌", "x" * up.MAX_NAME):
         lib.save(n, STEPS, JPEG)
         assert lib.find(n).name == n
     assert all(len(os.path.basename(p.folder)) == 32 for p in lib.list())   # uuid hex, never the name
@@ -242,3 +250,109 @@ def test_preview_is_600_px_from_the_display_pixels():
 
 def test_presets_dir_is_beside_the_settings_file(tmp_path):
     assert up.presets_dir(str(tmp_path / "settings.json")) == str(tmp_path / "presets")
+
+
+def _hand_write(folder, **changes):
+    path = os.path.join(folder, up.MANIFEST)
+    m = json.load(open(path))
+    m.update(changes)
+    json.dump(m, open(path, "w"))
+
+
+def test_a_manifest_of_the_wrong_shape_never_takes_down_the_list(tmp_path, monkeypatch):
+    lib = _lib(tmp_path)
+    good = lib.save("Good", STEPS, JPEG, now=1)
+    bad = lib.save("Bad", STEPS, JPEG, now=2)
+    _hand_write(bad.folder, left_out=3)
+    assert [p.id for p in lib.list()] == [good.id]
+    real = up.load_preset
+    def boom(folder):                                # whatever a future bug raises
+        if folder == good.folder:
+            raise TypeError("unexpected")
+        return real(folder)
+    monkeypatch.setattr(up, "load_preset", boom)
+    assert lib.list() == []
+
+
+def test_duplicates_with_the_same_created_resolve_by_folder_mtime(tmp_path):
+    lib = _lib(tmp_path)
+    a = lib.save("A", STEPS[:1], JPEG, now=5)
+    b = lib.save("B", STEPS, JPEG, now=5)
+    _hand_write(b.folder, name="A")
+    os.utime(a.folder, (100, 100))
+    os.utime(b.folder, (200, 200))
+    assert lib.find("A").id == b.id
+    os.utime(a.folder, (300, 300))
+    assert lib.find("A").id == a.id
+    os.utime(b.folder, (300, 300))                   # full tie: the folder name decides
+    assert lib.find("A").id == max(a.id, b.id)
+
+
+def test_a_failed_retire_does_not_fail_the_save(tmp_path, monkeypatch):
+    lib = _lib(tmp_path)
+    lib.save("M 8", STEPS[:1], JPEG, now=1)
+    def refuse(folder):
+        raise PermissionError("locked")
+    monkeypatch.setattr(lib, "_remove", refuse)
+    new = lib.save("M 8", STEPS, JPEG, now=2)        # must not raise
+    monkeypatch.undo()
+    assert lib.find("M 8").id == new.id and lib.find("M 8").step_count == 5
+
+
+def test_saved_files_get_a_plain_mode_without_touching_the_umask(tmp_path, monkeypatch):
+    import stat
+    umask = os.umask(0)
+    os.umask(umask)
+    lib = _lib(tmp_path)
+    p = lib.save("A", STEPS, JPEG)
+    calls = []
+    monkeypatch.setattr(up.os, "umask", lambda *a: calls.append(a) or 0o022)
+    lib.touch(p)
+    lib.rename(p, "B")
+    monkeypatch.undo()
+    assert calls == []
+    expect = 0o666 & ~umask
+    mode = stat.S_IMODE(os.stat(os.path.join(p.folder, up.MANIFEST)).st_mode)
+    assert mode == expect and mode & 0o044          # readable by others, not 0600
+
+
+def test_has_preview(tmp_path):
+    lib = _lib(tmp_path)
+    p = lib.save("A", STEPS, JPEG)
+    q = lib.save("Empty", STEPS, b"")
+    assert p.has_preview and not q.has_preview
+    os.remove(p.preview_path)
+    assert not p.has_preview
+
+
+def test_save_refuses_an_unknown_data_type(tmp_path):
+    with pytest.raises(ValueError):
+        _lib(tmp_path).save("A", STEPS, JPEG, data_type="narrowband")
+    assert set(up.DATA_TYPES) == {"broadband", "dualband", "unknown"}
+
+
+def test_names_are_capped(tmp_path):
+    lib = _lib(tmp_path)
+    assert lib.save("  " + "x" * up.MAX_NAME + "  ", STEPS, JPEG).name == "x" * up.MAX_NAME
+    with pytest.raises(up.PresetError):
+        lib.save("x" * (up.MAX_NAME + 1), STEPS, JPEG)
+    with pytest.raises(up.PresetError):
+        lib.save("   ", STEPS, JPEG)
+    p = lib.find("x" * up.MAX_NAME)
+    with pytest.raises(up.PresetError):
+        lib.rename(p, "y" * (up.MAX_NAME + 1))
+    assert up.MAX_NAME == 80
+
+
+def test_delete_refuses_a_folder_outside_the_library(tmp_path):
+    lib = _lib(tmp_path)
+    lib.save("A", STEPS, JPEG)
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("mine")
+    stranger = up.Preset(id="elsewhere", name="X", steps=(), folder=str(outside))
+    with pytest.raises(ValueError):
+        lib.delete(stranger)
+    with pytest.raises(ValueError):
+        lib.delete(up.Preset(id="r", name="X", steps=(), folder=lib.root))
+    assert (outside / "keep.txt").read_text() == "mine" and len(lib.list()) == 1
