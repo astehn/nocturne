@@ -914,3 +914,32 @@ def test_levels_auto_button_says_what_it_does(qtbot):
     w = build_panel(_stage("levels"), on_levels_auto=lambda: None)
     qtbot.addWidget(w)
     assert w.auto_btn.text() == "Auto black point"
+
+
+def test_crop_panel_has_presets_button_and_a_hidden_chip(qtbot):
+    got = []
+    w = build_panel(_stage("crop"), on_presets=lambda: got.append("presets"))
+    qtbot.addWidget(w)
+    assert w.header.isAncestorOf(w.presets_btn)
+    w.presets_btn.click()
+    assert got == ["presets"]
+    assert not w.preset_chip.isVisibleTo(w)
+    assert w.preset_chip_clear.toolTip() == "Don't apply a preset"
+
+
+def test_crop_chip_clear_calls_back(qtbot):
+    got = []
+    w = build_panel(_stage("crop"), on_clear_preset=lambda: got.append("clear"))
+    qtbot.addWidget(w)
+    w.preset_chip_clear.click()
+    assert got == ["clear"]
+
+
+def test_only_the_crop_panel_has_a_presets_button(qtbot):
+    # Opt-in (CLAUDE.md): the panel builder is shared by every step.
+    for stage in path_stages():
+        if stage.id == "crop":
+            continue
+        w = build_panel(stage, on_presets=lambda: None)
+        qtbot.addWidget(w)
+        assert not hasattr(w, "presets_btn"), stage.id

@@ -226,6 +226,12 @@ QFrame#stepFrame QWidget#stepCard
 /* "How this works" on the title line: the link is drawn in ACCENT with no
    underline by MainWindow's rich text; this sizes it to sit on the title. */
 QLabel#helpHeader {{ font-size: 12px; }}
+/* Crop's "Presets…", beside it on the title line: a link, not a button, so
+   it takes the title row's height rather than a button's padding. */
+QPushButton#presetsLink {{ background: transparent; border: none; padding: 0 6px;
+    color: {ACCENT}; font-size: 12px; }}
+QPushButton#presetsLink:hover {{ color: {ACCENT_HI}; }}
+QPushButton#presetsLink:disabled {{ color: {TEXT_FAINT}; }}
 QLabel#stepDesc {{ color: {TEXT_DIM}; font-size: 12px; padding-bottom: 6px; }}
 QLabel#importMeta {{ color: {TEXT}; font-size: 13px; padding-bottom: 6px; }}
 QWidget#welcome {{ background: transparent; }}

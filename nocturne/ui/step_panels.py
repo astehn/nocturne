@@ -5,7 +5,8 @@ import sys
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QStyle,
-    QLineEdit, QPushButton, QRadioButton, QSlider, QVBoxLayout, QWidget,
+    QLineEdit, QPushButton, QRadioButton, QSizePolicy, QSlider, QToolButton, QVBoxLayout,
+    QWidget,
 )
 
 from .option_buttons import OptionButtons
@@ -230,6 +231,53 @@ DEFAULT_ENGINE = "Default"
 DEFAULT_BUILTIN = "Default (built-in)"
 
 
+def _add_preset_controls(w, title_row, notes, on_presets, on_clear_preset) -> None:
+    """Crop's "Presets…" and the chosen preset's chip. Crop only: the panel
+    builder is shared by every step, so this is opt-in by construction.
+
+    "Presets…" sits on the title row, left of "How this works", because the
+    card's scroll zone is ~208 px on a MacBook and its controls already end at
+    195 (test_every_crop_control_is_in_view_without_scrolling), and the pinned
+    action row holds only Apply and Reset step. Its vertical size policy is
+    Ignored so it can never make this header taller than any other step's.
+    The chip goes with the notes: below the fold on a small screen, but what
+    it says is always on the Apply button."""
+    btn = QPushButton("Presets…")
+    btn.setObjectName("presetsLink")
+    btn.setFlat(True)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.setToolTip("Choose a saved preset to apply after the crop")
+    btn.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored)
+    if on_presets is not None:
+        btn.clicked.connect(lambda: on_presets())
+    title_row.insertWidget(title_row.indexOf(w.help_link), btn)
+
+    chip = QWidget()
+    row = QHBoxLayout(chip)
+    row.setContentsMargins(0, 2, 0, 0)
+    thumb = QLabel()
+    thumb.setFixedSize(48, 32)
+    thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    name = QLabel("")
+    name.setObjectName("stepDesc")
+    clear = QToolButton()
+    clear.setText("\u2715")
+    clear.setToolTip("Don't apply a preset")
+    clear.setAutoRaise(True)
+    if on_clear_preset is not None:
+        clear.clicked.connect(lambda: on_clear_preset())
+    row.addWidget(thumb)
+    row.addWidget(name, 1)
+    row.addWidget(clear)
+    chip.setVisible(False)
+    notes.addWidget(chip)
+    w.presets_btn = btn
+    w.preset_chip = chip
+    w.preset_chip_thumb = thumb
+    w.preset_chip_name = name
+    w.preset_chip_clear = clear
+
+
 def build_panel(
     stage,
     *,
@@ -237,6 +285,8 @@ def build_panel(
     on_apply=None,
     on_crop_apply=None,
     on_crop_change=None,
+    on_presets=None,
+    on_clear_preset=None,
     on_guides_change=None,
     on_rotate=None,
     on_flip_h=None,
@@ -454,6 +504,7 @@ def build_panel(
         w.flip_v_btn = flip_v
         w.apply_btn = w.primary_action = apply_btn
         w.crop_size_label = size
+        _add_preset_controls(w, title_row, notes, on_presets, on_clear_preset)
 
     elif stage.kind == "process":
         # Joined buttons, not a dropdown: every level visible, one click
