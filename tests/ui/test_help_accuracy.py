@@ -1553,8 +1553,11 @@ def test_auto_enhance_help_says_denoise_never_uses_graxpert(monkeypatch):
                                           ("graxpert", "rcastro")):
         s = Settings(graxpert_path=gx, rcastro_path=rc, denoise_engine=pref)
         assert _auto_denoise_engine(s) != "graxpert"
-    # "A model you are testing runs only when you pick it in Settings."
-    assert "A model you are testing runs only when you pick it in Settings" in b
+    # Users can't have a Nocturne NR model until one ships, so the help names
+    # only the engines they can have (2026-10-13: "people can wonder what that
+    # is"). Put the model wording back when NR is released.
+    assert "NoiseXTerminator if" in b and "built-in denoise" in b
+    assert "Nocturne NR" not in b
     test_model = nr_models.NRModel("v21.5", "Ullr (v21.5)", "/x/v21.5.onnx", False)
     monkeypatch.setattr(nr_models, "available", lambda: [test_model])
     assert _auto_denoise_engine(Settings()) == "free"
