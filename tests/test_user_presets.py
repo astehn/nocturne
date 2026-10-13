@@ -356,3 +356,21 @@ def test_delete_refuses_a_folder_outside_the_library(tmp_path):
     with pytest.raises(ValueError):
         lib.delete(up.Preset(id="r", name="X", steps=(), folder=lib.root))
     assert (outside / "keep.txt").read_text() == "mine" and len(lib.list()) == 1
+
+
+def test_can_apply_refuses_a_post_stretch_preset_on_a_linear_base(tmp_path):
+    lib = up.PresetLibrary(str(tmp_path / "p"))
+    post = lib.save("Finished", [{"stage": "levels", "option": [0.02, 1.0, 1.0]},
+                                 {"stage": "enhance", "option": "Vibrance"}], b"x",
+                    data_type="broadband")
+    whole = lib.save("Whole", [{"stage": "stretch", "option": {"amount": 0.3, "linked": True}},
+                               {"stage": "levels", "option": [0.02, 1.0, 1.0]}], b"x",
+                     data_type="broadband")
+    linear_only = lib.save("Grad", [{"stage": "background", "option": "off"}], b"x",
+                           data_type="broadband")
+    note = ("Made on an already-stretched picture, so it can only be used on pictures "
+            "that open already stretched.")
+    assert up.can_apply(post, "broadband", base_linear=True) == (False, note)
+    assert up.can_apply(post, "broadband", base_linear=False) == (True, "")
+    assert up.can_apply(whole, "broadband", base_linear=True) == (True, "")
+    assert up.can_apply(linear_only, "broadband", base_linear=True) == (True, "")

@@ -44,6 +44,11 @@ _log = logging.getLogger("nocturne.user_presets")
 _GEOMETRY_STAGES = frozenset({"crop", "rotate", "flip_h", "flip_v"})
 
 _DUALBAND_NOTE = "Made on dual-band (LP filter) data — this picture is not dual-band"
+STRETCHED_NOTE = ("Made on an already-stretched picture, so it can only be used on "
+                  "pictures that open already stretched.")
+# A preset's stages that need stretched data: the stepper's post-stretch steps
+# plus the finishing steps that live on Enhancements.
+_FINISHING_STAGES = frozenset({"enhance", "starless_levels", "star_spikes"})
 _BROADBAND_NOTE = "Made on broadband data"
 
 
@@ -230,10 +235,23 @@ def filter_presets(presets, text: str = "", data_type: str | None = None) -> lis
     return out
 
 
-def can_apply(p: Preset, picture_type: str) -> tuple[bool, str]:
+def starts_after_stretch(p: Preset) -> bool:
+    """Saved from a picture that opened already stretched (a finished TIFF, an
+    Upscale): steps that need stretched data, and no Stretch of its own."""
+    from .ui.pipeline import POST_STRETCH_IDS
+    stages = {s.get("stage") for s in p.steps} - _GEOMETRY_STAGES
+    return "stretch" not in stages and bool(stages & (POST_STRETCH_IDS | _FINISHING_STAGES))
+
+
+def can_apply(p: Preset, picture_type: str, base_linear: bool = False) -> tuple[bool, str]:
+    """One rule for the browser's greying and Apply's backstop. `base_linear`
+    is the picture the preset would run on: the CROPPED base, since Apply
+    discards everything after the leading geometry first."""
     # The same rule as Gold and blue: unknown is not dual-band.
     if p.data_type == "dualband" and picture_type != "dualband":
         return False, _DUALBAND_NOTE
+    if base_linear and starts_after_stretch(p):
+        return False, STRETCHED_NOTE
     if p.data_type == "broadband" and picture_type == "dualband":
         return True, _BROADBAND_NOTE
     return True, ""

@@ -60,12 +60,13 @@ class PresetBrowser(QDialog):
     def __init__(self, library, *, picture_type: str, settings,
                  on_settings_changed: Callable[[], None] | None = None,
                  current_id: str | None = None, screen_height: int | None = None,
-                 parent=None) -> None:
+                 base_linear: bool = False, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Presets")
         self.setStyleSheet(_STYLE)
         self._library = library
         self._picture_type = picture_type
+        self._base_linear = base_linear     # the cropped base the preset would run on
         self._settings = settings
         self._on_settings_changed = on_settings_changed
         self._current_id = current_id
@@ -318,7 +319,7 @@ class PresetBrowser(QDialog):
         self._shown = {}
         selected = None
         for p in shown:
-            ok, note = can_apply(p, self._picture_type)
+            ok, note = can_apply(p, self._picture_type, self._base_linear)
             label = saved_label(p)
             text = (f"{p.name}\n{label}" if grid
                     else f"{p.name} — {label} · {_steps_text(p.step_count)}")
@@ -382,7 +383,7 @@ class PresetBrowser(QDialog):
         if p.app:
             meta += f" · Nocturne {p.app}"
         self.details_meta.setText(meta)
-        note = can_apply(p, self._picture_type)[1]
+        note = can_apply(p, self._picture_type, self._base_linear)[1]
         self.details_note.setText(note)
         self.details_steps.addItems(p.step_names())
         self.details_left_out.setText(

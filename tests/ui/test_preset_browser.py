@@ -299,3 +299,56 @@ def test_return_on_a_disabled_preset_chooses_nothing(qtbot, tmp_path):
     _select(b, "M 31")
     _press_return(b)
     assert b.chosen() is not None and b.chosen().name == "M 31"
+
+
+# --- a preset made on an already-stretched picture (owner's ruling, 2026-10-13) ---
+POST_ONLY = [{"stage": "levels", "option": [0.02, 1.0, 1.0]},
+             {"stage": "enhance", "option": "Vibrance"}]
+_STRETCHED_NOTE = ("Made on an already-stretched picture, so it can only be used on "
+                   "pictures that open already stretched.")
+
+
+def _post_only_lib(tmp_path):
+    lib = up.PresetLibrary(str(tmp_path / "presets"))
+    lib.save("Finished", POST_ONLY, _jpeg(), target="M 31", data_type="broadband", now=1_760_000_001)
+    lib.save("Whole", STEPS, _jpeg(), target="M 31", data_type="broadband", now=1_760_000_002)
+    return lib
+
+
+def _item(b, name):
+    return next(b.items.item(i) for i in range(b.items.count())
+                if b.items.item(i).text().startswith(name))
+
+
+@pytest.mark.parametrize("view", ["grid", "list"])
+def test_a_post_stretch_preset_is_greyed_on_a_linear_base(qtbot, tmp_path, view):
+    s = Settings(); s.preset_view = view
+    b = _browser(qtbot, _post_only_lib(tmp_path), picture_type="broadband",
+                 settings=s, base_linear=True)
+    assert b._view == view
+    item = _item(b, "Finished")
+    assert not item.flags() & Qt.ItemFlag.ItemIsEnabled
+    assert item.toolTip() == _STRETCHED_NOTE
+    b.items.setCurrentItem(item)
+    assert not b.choose_btn.isEnabled()
+    assert b.details_note.text() == _STRETCHED_NOTE and b.details_note.isVisibleTo(b)
+    assert _item(b, "Whole").flags() & Qt.ItemFlag.ItemIsEnabled     # it has a Stretch
+
+
+def test_a_post_stretch_preset_is_allowed_on_a_stretched_base(qtbot, tmp_path):
+    b = _browser(qtbot, _post_only_lib(tmp_path), picture_type="broadband", base_linear=False)
+    item = _item(b, "Finished")
+    assert item.flags() & Qt.ItemFlag.ItemIsEnabled and item.toolTip() == ""
+    b.items.setCurrentItem(item)
+    assert b.choose_btn.isEnabled()
+
+
+def test_return_cannot_choose_a_post_stretch_preset_on_a_linear_base(qtbot, tmp_path):
+    b = _browser(qtbot, _post_only_lib(tmp_path), picture_type="broadband", base_linear=True)
+    b.show(); qtbot.waitExposed(b); b.items.setFocus()
+    b.items.setCurrentItem(_item(b, "Finished"))
+    _press_return(b)
+    assert b.chosen() is None and b.isVisible()
+    b.items.setCurrentItem(_item(b, "Whole"))          # control: Return does reach Choose
+    _press_return(b)
+    assert b.chosen() is not None and b.chosen().name == "Whole"

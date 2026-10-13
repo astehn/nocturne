@@ -263,8 +263,9 @@ def test_a_preset_that_starts_after_stretch_is_refused_on_a_linear_picture(qtbot
     before = list(win.project.entries())
     _choose(win, p); _box(win); win._apply_crop()
     assert win.project.entries() == before            # not even the crop
-    assert win._warning.text() == ("This preset starts after Stretch \u2014 stretch the "
-                                   "picture first, then apply it.")
+    assert win._warning.text() == ("This preset was made on an already-stretched picture, "
+                                   "so it can only be used on pictures that open already "
+                                   "stretched.")
     assert win._chosen_preset is not None and win.current_stage_id() == "crop"
 
 
@@ -283,7 +284,7 @@ def test_stretch_later_in_history_does_not_count_it_is_discarded(qtbot, tmp_path
     before = list(win.project.entries())
     _choose(win, p); win._apply_crop()
     assert win.project.entries() == before and asked == []
-    assert "starts after Stretch" in win._warning.text()
+    assert "already-stretched picture" in win._warning.text()
 
 
 def test_a_run_that_stays_linear_does_not_land_on_enhancements(qtbot, tmp_path):
@@ -451,3 +452,28 @@ def test_cancel_after_a_confirmed_discard_leaves_crop_consistent(qtbot, tmp_path
     shown = _crop_state(win)
     win._rebuild_panel()
     assert _crop_state(win) == shown
+
+
+def test_the_browser_is_told_whether_the_cropped_base_is_linear(qtbot, tmp_path, monkeypatch):
+    from tests.ui.test_main_window import _crop
+    import nocturne.ui.preset_browser as pb
+    seen = []
+    monkeypatch.setattr(pb.PresetBrowser, "exec",
+                        lambda self: seen.append(self._base_linear) or 0)
+    win, _p = _setup(qtbot, tmp_path)
+    win._open_presets()
+    _crop(win)
+    win._go_to_id("stretch", user_initiated=False); win._panel.apply_btn.click()
+    win._go_to_id("crop", user_initiated=False)
+    win._open_presets()                    # stretched now, but the base it runs on is not
+    assert seen == [True, True]
+
+
+def test_a_post_stretch_preset_applies_on_a_picture_that_opens_stretched(qtbot, tmp_path):
+    from tests.ui.test_open_tiff import _write_stretched_tiff
+    win = _win(qtbot, tmp_path)
+    win.open_any(_write_stretched_tiff(tmp_path))
+    win._go_to_id("crop", user_initiated=False)
+    p = win._presets.save("Finished", POST_ONLY, _jpeg(), data_type="unknown")
+    _choose(win, p); _box(win, (2, 10, 2, 10)); win._apply_crop()
+    assert [n for n, _ in win.project.entries()] == ["Crop", "Levels", "Vibrance"]

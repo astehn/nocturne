@@ -501,16 +501,6 @@ def _uses_star_split(stage_id: str, option) -> bool:
     return stage_id in _SPLIT_STAGES or (stage_id == "enhance" and option in _SPLIT_TAPS)
 
 
-# Preset stage ids that need a stretched picture. POST_STRETCH_IDS names
-# stepper stages; a preset's taps and finishing steps are "enhance",
-# "starless_levels" and "star_spikes", all of which live on Enhancements.
-_PRESET_POST_STRETCH = frozenset({"enhance", "starless_levels", "star_spikes"})
-
-
-def _post_stretch(stage_id: str) -> bool:
-    return stage_id in POST_STRETCH_IDS or stage_id in _PRESET_POST_STRETCH
-
-
 def _and_join(words: list[str]) -> str:
     """"A", "A and B", "A, B and C"."""
     return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
@@ -2297,7 +2287,8 @@ class MainWindow(QMainWindow):
             self._presets,
             picture_type=detect_data_type(self.project.meta_at(self.project.position)),
             settings=self.settings, on_settings_changed=self._save_settings,
-            current_id=held.id if held is not None else None, parent=self)
+            current_id=held.id if held is not None else None,
+            base_linear=self._preset_base_linear(), parent=self)
         dlg.exec()
         if dlg.chosen() is not None:
             self._choose_preset(dlg.chosen())
@@ -2307,6 +2298,12 @@ class MainWindow(QMainWindow):
             # Renamed in the browser, or gone some other way: re-read by id.
             self._choose_preset(next((q for q in self._presets.list() if q.id == held.id), None))
         dlg.deleteLater()
+
+    def _preset_base_linear(self) -> bool:
+        """Is the picture a preset would run on linear? That is the CROPPED
+        base: Apply discards everything after the leading geometry first."""
+        kept = self._leading_kept(self.project.entries(), set(GEOMETRY_NAMES))
+        return self.project.is_linear_at(kept)
 
     def _sync_crop_preset(self) -> None:
         """Crop's chip, Presets… and Apply's label and enabling, from the
@@ -2347,29 +2344,24 @@ class MainWindow(QMainWindow):
 
     def _apply_crop_and_preset(self) -> None:
         from ..core.filter_type import detect_data_type
-        from ..user_presets import can_apply, preset_plan
+        from ..user_presets import STRETCHED_NOTE, can_apply, preset_plan
         p = self._chosen_preset
-        # Every refusal comes before anything is touched. The browser greys a
-        # dual-band preset out, so reaching that one means the picture changed
+        # Every refusal comes before anything is touched. The browser greys
+        # these out by the same rule, so reaching one means the picture changed
         # under a held choice.
-        ok, note = can_apply(p, detect_data_type(self.project.meta_at(self.project.position)))
+        ok, note = can_apply(p, detect_data_type(self.project.meta_at(self.project.position)),
+                             self._preset_base_linear())
         if not ok:
-            self._show_warning(f"\u201c{p.name}\u201d is for dual-band (LP filter) data.")
+            self._show_warning(
+                "This preset was made on an already-stretched picture, so it can only "
+                "be used on pictures that open already stretched." if note == STRETCHED_NOTE
+                else f"\u201c{p.name}\u201d is for dual-band (LP filter) data.")
             return
         plan = preset_plan(p, self.settings)
         if not plan.plan:
             reasons = "; ".join(dict.fromkeys(r.rstrip(".") for _n, r in plan.left_out))
             self._show_warning(f"Preset {p.name}: none of its steps can run here"
                                + (f" \u2014 {reasons}." if reasons else "."))
-            return
-        # The preset runs on the cropped base: whatever follows the leading
-        # geometry is discarded first, so that base's linearity is what counts.
-        kept = self._leading_kept(self.project.entries(), set(GEOMETRY_NAMES))
-        if (self.project.is_linear_at(kept)
-                and not any(sid == "stretch" for sid, _o in plan.plan)
-                and any(_post_stretch(sid) for sid, _o in plan.plan)):
-            self._show_warning("This preset starts after Stretch \u2014 stretch the "
-                               "picture first, then apply it.")
             return
         if self.image_view.crop_box_visible() and not self._crop_box_is_full_frame():
             top, bottom, left, right = self.image_view.crop_bounds()
