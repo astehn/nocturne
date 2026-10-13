@@ -485,14 +485,30 @@ def _remove_quietly(path: str) -> None:
 
 
 # The steps that split stars from the sky, and so are cleaner with a real star
-# tool (steps/star_split.resolve_star_split; core/receipt's _FREE_SPLIT list).
-_SPLIT_STAGES = frozenset({"star_reduction", "saturation", "green_fringe", "narrowband",
-                           "color_balance", "starless_levels"})
-_SPLIT_TAPS = frozenset({"Star Colour", "Sharpen Nebulosity"})   # steps/enhance_step._LAYERED
+# tool: receipt's free-split fallbacks, Starless Levels (which has no fallback
+# entry, the split IS the step) and the two layered Enhancements taps.
+def _split_sets():
+    from ..core import receipt
+    from ..steps.enhance_step import _LAYERED
+    stages = {s for s, e in receipt._FALLBACKS.items() if e == receipt._FREE_SPLIT}
+    return frozenset(stages | {"starless_levels"}), frozenset(_LAYERED)
+
+
+_SPLIT_STAGES, _SPLIT_TAPS = _split_sets()
 
 
 def _uses_star_split(stage_id: str, option) -> bool:
     return stage_id in _SPLIT_STAGES or (stage_id == "enhance" and option in _SPLIT_TAPS)
+
+
+# Preset stage ids that need a stretched picture. POST_STRETCH_IDS names
+# stepper stages; a preset's taps and finishing steps are "enhance",
+# "starless_levels" and "star_spikes", all of which live on Enhancements.
+_PRESET_POST_STRETCH = frozenset({"enhance", "starless_levels", "star_spikes"})
+
+
+def _post_stretch(stage_id: str) -> bool:
+    return stage_id in POST_STRETCH_IDS or stage_id in _PRESET_POST_STRETCH
 
 
 def _and_join(words: list[str]) -> str:
@@ -2212,21 +2228,7 @@ class MainWindow(QMainWindow):
 
         def on_result(run) -> None:
             results = run.results
-            stage_of = {v: k for k, v in STEP_NAME.items()}
-            for (name, option, img), engine in zip(results, run.engines):
-                self.project.record_precomputed(name, option, img)
-                label = str(self._step_log_label(stage_of.get(name, ""), option, engine) or "")
-                # Its own line per stage, naming the preset: the next line (an
-                # Export, a Reset) would otherwise be taken as this stage's.
-                self.log_panel.append_entry(
-                    format_log_entry(name, label, None) + f" \u2014 Auto Enhance ({shown})")
-                # And to the file, as _log_step does for a manual apply.
-                sessionlog.write(f"step  {name}" + (f" ({label})" if label else "")
-                                 + f" \u2014 Auto Enhance ({shown})")
-            for (name, _reason), detail in zip(run.failures, run.failure_details):
-                sessionlog.write(f"ERROR Auto Enhance ({shown}): {name} failed\n{detail}")
-            if results:
-                self._mark_dirty()
+            self._record_auto_run(run, f"Auto Enhance ({shown})")
             self._rebuild_panel()
             self._refresh()
             msg = f"Auto-enhanced ({shown}) \u2014 {len(results)} steps."
@@ -2244,14 +2246,37 @@ class MainWindow(QMainWindow):
             for note in dict.fromkeys(run.notes):
                 msg += " " + note
             self._show_output(msg)
-            if run.failures:
-                planned = len(results) + len(run.failures)
-                failed = _and_join([n for n, _r in run.failures])
-                reasons = "; ".join(r for _n, r in run.failures)
-                self._show_warning(f"Auto Enhance ({shown}): {len(results)} of {planned} "
-                                   f"steps \u2014 {failed} failed: {reasons}")
+            self._warn_auto_failures(f"Auto Enhance ({shown})", run)
 
         self._run_busy(work, on_result, f"Auto-enhancing ({shown})\u2026", "Auto Enhance failed")
+
+    def _record_auto_run(self, run, suffix: str) -> None:
+        """Fold a run_auto_plan result into history, one ordinary undoable step
+        each, with a log line and a session-log line per step. Shared by Auto
+        Enhance and a user preset; `suffix` names which ("Auto Enhance
+        (Natural)", "Preset (M 8)")."""
+        stage_of = {v: k for k, v in STEP_NAME.items()}
+        for (name, option, img), engine in zip(run.results, run.engines):
+            self.project.record_precomputed(name, option, img)
+            label = str(self._step_log_label(stage_of.get(name, ""), option, engine) or "")
+            # Its own line per stage, naming the run: the next line (an
+            # Export, a Reset) would otherwise be taken as this stage's.
+            self.log_panel.append_entry(format_log_entry(name, label, None) + f" \u2014 {suffix}")
+            # And to the file, as _log_step does for a manual apply.
+            sessionlog.write(f"step  {name}" + (f" ({label})" if label else "")
+                             + f" \u2014 {suffix}")
+        for (name, _reason), detail in zip(run.failures, run.failure_details):
+            sessionlog.write(f"ERROR {suffix}: {name} failed\n{detail}")
+        if run.results:
+            self._mark_dirty()
+
+    def _warn_auto_failures(self, prefix: str, run) -> None:
+        if run.failures:
+            planned = len(run.results) + len(run.failures)
+            failed = _and_join([n for n, _r in run.failures])
+            reasons = "; ".join(r for _n, r in run.failures)
+            self._show_warning(f"{prefix}: {len(run.results)} of {planned} "
+                               f"steps \u2014 {failed} failed: {reasons}")
 
     # --- user presets: chosen in Crop, run by its Apply ---
     def _choose_preset(self, p) -> None:
@@ -2322,13 +2347,29 @@ class MainWindow(QMainWindow):
 
     def _apply_crop_and_preset(self) -> None:
         from ..core.filter_type import detect_data_type
-        from ..user_presets import can_apply
+        from ..user_presets import can_apply, preset_plan
         p = self._chosen_preset
-        # Before anything is touched. The browser greys such presets out, so
-        # reaching this means the picture changed under a held choice.
-        ok, _note = can_apply(p, detect_data_type(self.project.meta_at(self.project.position)))
+        # Every refusal comes before anything is touched. The browser greys a
+        # dual-band preset out, so reaching that one means the picture changed
+        # under a held choice.
+        ok, note = can_apply(p, detect_data_type(self.project.meta_at(self.project.position)))
         if not ok:
             self._show_warning(f"\u201c{p.name}\u201d is for dual-band (LP filter) data.")
+            return
+        plan = preset_plan(p, self.settings)
+        if not plan.plan:
+            reasons = "; ".join(dict.fromkeys(r.rstrip(".") for _n, r in plan.left_out))
+            self._show_warning(f"Preset {p.name}: none of its steps can run here"
+                               + (f" \u2014 {reasons}." if reasons else "."))
+            return
+        # The preset runs on the cropped base: whatever follows the leading
+        # geometry is discarded first, so that base's linearity is what counts.
+        kept = self._leading_kept(self.project.entries(), set(GEOMETRY_NAMES))
+        if (self.project.is_linear_at(kept)
+                and not any(sid == "stretch" for sid, _o in plan.plan)
+                and any(_post_stretch(sid) for sid, _o in plan.plan)):
+            self._show_warning("This preset starts after Stretch \u2014 stretch the "
+                               "picture first, then apply it.")
             return
         if self.image_view.crop_box_visible() and not self._crop_box_is_full_frame():
             top, bottom, left, right = self.image_view.crop_bounds()
@@ -2352,15 +2393,16 @@ class MainWindow(QMainWindow):
                 self._sync_step_controls()
                 return
         self.project.jump_back(kept)
-        self._run_preset(p)
+        self._run_preset(p, plan, note)
 
-    def _run_preset(self, p) -> None:
+    def _run_preset(self, p, plan=None, note: str = "") -> None:
         """Auto Enhance's runner on the preset's saved steps: one history entry
         per step, each an ordinary undoable step. Cancel is all-or-nothing for
         the preset's steps (a crop already applied stays), and keeps the choice
         so pressing again retries."""
         from ..user_presets import preset_plan
-        plan = preset_plan(p, self.settings)
+        if plan is None:
+            plan = preset_plan(p, self.settings)
         base = self.project.current()
         shown = p.name
         lib, pid = self._presets, p.id
@@ -2375,47 +2417,48 @@ class MainWindow(QMainWindow):
                                  levels_auto=False)
 
         def on_result(run) -> None:
-            results = run.results
-            stage_of = {v: k for k, v in STEP_NAME.items()}
-            for (name, option, img), engine in zip(results, run.engines):
-                self.project.record_precomputed(name, option, img)
-                label = str(self._step_log_label(stage_of.get(name, ""), option, engine) or "")
-                self.log_panel.append_entry(
-                    format_log_entry(name, label, None) + f" \u2014 Preset ({shown})")
-                sessionlog.write(f"step  {name}" + (f" ({label})" if label else "")
-                                 + f" \u2014 Preset ({shown})")
-            for (name, _reason), detail in zip(run.failures, run.failure_details):
-                sessionlog.write(f"ERROR Preset ({shown}): {name} failed\n{detail}")
-            if results:
-                self._mark_dirty()
-            msg = f"Applied preset {shown} \u2014 {len(results)} steps."
+            self._record_auto_run(run, f"Preset ({shown})")
+            if not run.results:
+                # Nothing landed: not a success. The choice stays for a retry,
+                # last_used is not stamped, and the picture stays where it was.
+                self._refresh()
+                self._warn_auto_failures(f"Preset {shown}", run)
+                return
+            n = len(run.results)
+            msg = f"Applied preset {shown} \u2014 {n} step{'' if n == 1 else 's'}."
+            if note:
+                msg += f" {note}."
             if plan.left_out:
                 names = [n for n, _r in plan.left_out]
                 were = "was" if len(names) == 1 else "were"
                 reasons = "; ".join(dict.fromkeys(r.rstrip(".") for _n, r in plan.left_out))
                 msg += f" {_and_join(names)} {were} left out: {reasons}."
+            used: dict = {}
+            for name, engine, reason in plan.substitutes:
+                used.setdefault((engine, reason.rstrip(".")), []).append(name)
+            for (engine, reason), names in used.items():
+                msg += f" {_and_join(names)} used {engine}" + (f": {reason}." if reason else ".")
             if (preferred_splitter(self.settings) is None
                     and any(_uses_star_split(sid, opt) for sid, opt in plan.plan)):
                 msg += " StarNet2 (free) or StarXTerminator gives cleaner stars."
-            for note in dict.fromkeys(run.notes):
-                msg += " " + note
+            for n in dict.fromkeys(run.notes):
+                msg += " " + n
             with contextlib.suppress(Exception):     # a stamp, never worth a failed apply
                 found = next((q for q in lib.list() if q.id == pid), None)
                 if found is not None:
                     lib.touch(found)
             self._chosen_preset = None
-            # Enhancements: the preset's own endpoint, and where Save as Preset
-            # lives. Crop would show a crop tool over a finished picture.
-            self._go_to_id("enhancements", user_initiated=False)
-            self._rebuild_panel()
+            if not self.project.current().is_linear:
+                # Enhancements: the preset's own endpoint, and where Save as
+                # Preset lives. Crop would show a crop tool over a finished
+                # picture. A run that stayed linear (its Stretch failed) has
+                # no business on a post-stretch step.
+                self._go_to_id("enhancements", user_initiated=False)
+            else:
+                self._rebuild_panel()
             self._refresh()
             self._show_output(msg)
-            if run.failures:
-                planned = len(results) + len(run.failures)
-                failed = _and_join([n for n, _r in run.failures])
-                reasons = "; ".join(r for _n, r in run.failures)
-                self._show_warning(f"Preset {shown}: {len(results)} of {planned} "
-                                   f"steps \u2014 {failed} failed: {reasons}")
+            self._warn_auto_failures(f"Preset {shown}", run)
 
         self._run_busy(work, on_result, f"Applying preset \u201c{shown}\u201d\u2026",
                        "Preset failed")
@@ -3457,7 +3500,11 @@ class MainWindow(QMainWindow):
             if not self._button_step_pending(btn):
                 continue            # already committed by an earlier press
             before = self._last_entry()
-            btn.click()
+            if (self.current_stage_id() == "crop"
+                    and btn is getattr(self._panel, "apply_btn", None)):
+                self._apply_plain_crop()
+            else:
+                btn.click()
             if self._busy:
                 self._apply_run = (self.project, self._panel,
                                    self._expected_entry(btn), before, plan)
@@ -5874,6 +5921,13 @@ class MainWindow(QMainWindow):
             return
         if self._chosen_preset is not None:
             self._apply_crop_and_preset()
+            return
+        self._apply_plain_crop()
+
+    def _apply_plain_crop(self) -> None:
+        """The box alone. Next's "Apply and continue" lands here even with a
+        preset chosen: the preset only runs from the button that names it."""
+        if self.project is None or self._busy:
             return
         top, bottom, left, right = self.image_view.crop_bounds()
         h, w = self.project.current().data.shape[:2]

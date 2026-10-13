@@ -87,7 +87,7 @@ class Preset:
 class PresetPlan(NamedTuple):
     plan: list                       # [(stage_id, native_option)] for run_auto_plan
     left_out: list                   # [(display name, reason)]: retired or cannot run here
-    substitutes: list                # [(display name, engine)]
+    substitutes: list                # [(display name, engine, why)]
 
 
 def presets_dir(settings_path: str) -> str:
@@ -247,7 +247,7 @@ def preset_plan(p: Preset, settings) -> PresetPlan:
             left_out.append((sp.step, sp.reason))
             continue
         if sp.outcome == "substitute":
-            substitutes.append((sp.step, sp.engine))
+            substitutes.append((sp.step, sp.engine, sp.reason))
         stage = step["stage"]
         plan.append((stage, deserialize_option(stage, step.get("option"))))
     return PresetPlan(plan, left_out, substitutes)
