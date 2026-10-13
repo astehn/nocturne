@@ -2266,8 +2266,17 @@ def test_presets_help_names_the_real_controls():
     assert 'project_menu.addAction("Save as Preset…"' in mw
     assert 'QPushButton(load_icon("save-preset"), "Save as Preset…")' in sp
     assert "Project menu" in b and "top of the Enhancements" in b
-    # Presets… on Crop, and the Apply label it produces.
+    assert "Export step" in b                       # the menu item's gate includes export
+    # Presets… on Crop, under Guides, the chosen preset directly under it, and
+    # the Apply label it produces.
     assert "Presets…" in b and 'QPushButton("Presets…")' in sp
+    crop = sp.split('controls.addWidget(section_label("Guides"))')[1]
+    assert crop.index("controls.addWidget(guides)") < crop.index("_add_preset_controls(w, controls")
+    controls = sp.split("def _add_preset_controls")[1].split("\ndef ")[0]
+    assert controls.index("controls.addWidget(btn)") < controls.index("controls.addWidget(chip)")
+    assert "under Guides" in b and "directly under the Presets… button" in b
+    assert "How this works" not in b                # the old title-row link is gone
+    assert "Apply button names it" in b
     assert "Apply Crop + " in b and '"Apply Crop + " if box' in mw
     assert "Apply M 8" in b and 'else "Apply "' in mw
     for label in ("Rename…", "Delete…", "Use no preset", "Choose"):
@@ -2321,7 +2330,10 @@ def test_presets_help_states_the_data_type_rules_the_code_enforces():
     assert "dual-band" in b and "broadband" in b
     dual = up.Preset(id="x", name="x", steps=(), data_type="dualband")
     broad = up.Preset(id="y", name="y", steps=(), data_type="broadband")
-    assert up.can_apply(dual, "broadband")[0] is False
+    for picture in ("broadband", "unknown"):     # anything not dual-band
+        assert up.can_apply(dual, picture)[0] is False, picture
+    assert up.can_apply(dual, "dualband")[0] is True
+    assert "any picture that is not dual-band" in b and "cannot tell" in b
     ok, note = up.can_apply(broad, "dualband")
     assert ok is True and note in b                     # allowed, and marked
 
@@ -2341,11 +2353,47 @@ def test_presets_help_describes_how_a_run_ends():
     mw = _src("nocturne/ui/main_window.py")
     run = mw.split("def _run_preset")[1].split("\n    def ")[0]
     assert "Enhancements" in b and 'self._go_to_id("enhancements"' in run
-    assert "levels_auto=False" in run                   # saved Levels, unless saved as Auto
-    assert "Auto" in b and "re-measures" in b
-    assert "editable" in b or "undo" in b
-    # The Apply-and-continue prompt applies the crop alone.
+    # Each step its own history entry: the run is folded in one result at a time.
+    assert "self._record_auto_run(run, " in run
+    rec = mw.split("def _record_auto_run")[1].split("\n    def ")[0]
+    loop = rec.split("for (name, option, img), engine in zip(run.results, run.engines):")[1]
+    assert loop.lstrip().startswith("self.project.record_precomputed(name, option, img)")
+    assert "its own step, so you can change or undo any of them" in b
+    # Apply and continue on Crop presses the crop-only path, which never runs a preset.
+    press = mw.split("def _press_apply_plan")[1].split("\n    def ")[0]
+    assert ('btn is getattr(self._panel, "apply_btn", None)):\n'
+            '                self._apply_plain_crop()') in press
+    plain = mw.split("def _apply_plain_crop")[1].split("\n    def ")[0]
+    assert "preset" not in plain.split('"""')[2]
     assert "Apply and continue" in b and "crop only" in b
+
+
+def test_presets_help_auto_levels_re_measures_and_the_rest_is_as_saved():
+    """A preset's Levels saved as Auto reaches the run as the AUTO decision,
+    which LevelsStep derives from the picture in front of it; a chosen Levels
+    reaches it as its numbers."""
+    import nocturne.user_presets as up
+    from nocturne.core.image import AstroImage
+    from nocturne.core.levels import auto_levels
+    from nocturne.recipe import LEVELS_AUTO
+    from nocturne.settings import Settings
+    from nocturne.steps.levels import LevelsStep
+    b = _plain(_body("presets"))
+    assert "Auto black point" in b and "re-measures" in b and "values you saved" in b
+    auto = up.Preset(id="a", name="a", steps=({"stage": "levels", "option": LEVELS_AUTO},))
+    fixed = up.Preset(id="f", name="f", steps=({"stage": "levels", "option": [0.1, 1.0, 1.0]},))
+    assert up.preset_plan(auto, Settings()).plan == [("levels", LEVELS_AUTO)]
+    assert up.preset_plan(fixed, Settings()).plan == [("levels", (0.1, 1.0, 1.0))]
+    rng = np.random.default_rng(7)
+    dim = (0.10 + 0.01 * rng.standard_normal((32, 32, 3))).astype(np.float32)
+    bright = dim + np.float32(0.2)
+    for data in (dim, bright):
+        out = LevelsStep().apply(AstroImage(data, {}), LEVELS_AUTO).data
+        black = auto_levels(data)[0]
+        assert np.allclose(out, LevelsStep().apply(AstroImage(data, {}),
+                                                    auto_levels(data)).data)
+        assert black > 0
+    assert auto_levels(dim)[0] != auto_levels(bright)[0]   # re-measured, not carried
 
 
 def test_crop_and_enhancements_help_point_at_presets():
