@@ -21,6 +21,17 @@ from .theme import WARNING
 _NEVER_SAVED = "Crop, rotate, flip and Trim belong to this picture and are not saved."
 _NOTHING = "Nothing to save yet — every step so far belongs to this picture."
 _PREVIEW_EDGE = 320
+_MIN_WIDTH = 380
+
+
+def _fit_name(name: str) -> str:
+    """A long FITS target cut at a word, not mid-word by setMaxLength."""
+    name = name.strip()
+    if len(name) <= MAX_NAME:
+        return name
+    cut = name[:MAX_NAME + 1]
+    head = cut.rsplit(None, 1)[0] if " " in cut.strip() else ""
+    return (head or name[:MAX_NAME]).strip()
 
 
 def _left_out_line(name: str) -> str:
@@ -35,20 +46,27 @@ class SavePresetDialog(QDialog):
                  left_out: list[str], existing: Callable[[str], bool], parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Save as Preset")
+        self.setMinimumWidth(_MIN_WIDTH)
         self._existing = existing
         self._has_steps = bool(step_names)
 
         self.preview_label = QLabel()
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         pm = QPixmap()
+        self.preview_pixmap: QPixmap | None = None
         if preview and pm.loadFromData(preview, "JPG"):
-            self.preview_label.setPixmap(pm.scaled(
-                _PREVIEW_EDGE, _PREVIEW_EDGE, Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation))
+            # Scaled in device pixels, then tagged: sharp on a Retina screen.
+            dpr = self.devicePixelRatioF()
+            edge = round(_PREVIEW_EDGE * dpr)
+            pm = pm.scaled(edge, edge, Qt.AspectRatioMode.KeepAspectRatio,
+                           Qt.TransformationMode.SmoothTransformation)
+            pm.setDevicePixelRatio(dpr)
+            self.preview_pixmap = pm     # QLabel.pixmap() re-renders at the label's own ratio
+            self.preview_label.setPixmap(pm)
         else:
             self.preview_label.hide()
 
-        self.name_edit = QLineEdit(default_name)
+        self.name_edit = QLineEdit(_fit_name(default_name))
         self.name_edit.setPlaceholderText("Name, e.g. the target")
         self.name_edit.setMaxLength(MAX_NAME)
 
@@ -71,6 +89,12 @@ class SavePresetDialog(QDialog):
         self.left_out_label.setStyleSheet(f"color: {WARNING};")
         self.left_out_label.setVisible(bool(left_out))
 
+        # Why the last Save did not land; the dialog comes back with it shown.
+        self.error_label = QLabel()
+        self.error_label.setWordWrap(True)
+        self.error_label.setStyleSheet(f"color: {WARNING};")
+        self.error_label.hide()
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
                                    | QDialogButtonBox.StandardButton.Cancel)
         self.save_btn = buttons.button(QDialogButtonBox.StandardButton.Save)
@@ -87,10 +111,15 @@ class SavePresetDialog(QDialog):
         lay.addWidget(self.empty_label)
         lay.addWidget(self.left_out_label)
         lay.addWidget(never)
+        lay.addWidget(self.error_label)
         lay.addWidget(buttons)
 
         self.name_edit.textChanged.connect(self._sync)
         self._sync()
+
+    def show_error(self, text: str) -> None:
+        self.error_label.setText(text)
+        self.error_label.show()
 
     def chosen_name(self) -> str:
         return self.name_edit.text().strip()

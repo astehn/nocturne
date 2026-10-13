@@ -179,3 +179,88 @@ def test_the_dialog_says_what_is_never_saved_and_why_steps_were_left_out(qtbot):
     assert "Crop, rotate, flip and Trim belong to this picture and are not saved." in texts
     assert "Star Spikes (saved before its settings were recorded)" in d.left_out_label.text()
     assert "Linear Denoise — a preset cannot replay it" in d.left_out_label.text()
+
+
+# --- fix round 1 ---------------------------------------------------------------
+
+@pytest.mark.parametrize("exc", [OSError("disk full"), ValueError("disk full")])
+def test_a_failed_save_warns_and_keeps_the_name(qtbot, tmp_path, monkeypatch, exc):
+    import nocturne.ui.save_preset_dialog as spd
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path)); _crop(win); _stretch(win); _to(win, "enhancements")
+    def boom(*a, **k):
+        raise exc
+    monkeypatch.setattr(win._presets, "save", boom)
+    calls = []
+    def fake_exec(self):
+        calls.append((self, self.name_edit.text()))
+        if len(calls) == 1:
+            self.name_edit.setText("M 8")
+            self._on_save()
+            return self.result()
+        return 0                                      # the user gives up the second time
+    monkeypatch.setattr(spd.SavePresetDialog, "exec", fake_exec)
+    win._save_preset()                                # must not raise
+    assert len(calls) == 2, "the dialog comes back after a failed save"
+    assert calls[1] == (calls[0][0], "M 8"), "same dialog, name kept"
+    assert "Couldn't save the preset: disk full" in win._warning.text()
+    assert "disk full" in calls[0][0].error_label.text()
+
+
+def test_a_preset_error_is_reported_too(qtbot, tmp_path, monkeypatch):
+    from nocturne.user_presets import PresetError
+    import nocturne.ui.save_preset_dialog as spd
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path)); _crop(win); _stretch(win); _to(win, "enhancements")
+    monkeypatch.setattr(win._presets, "save",
+                        lambda *a, **k: (_ for _ in ()).throw(PresetError("a preset needs a name")))
+    n = []
+    def fake_exec(self):
+        n.append(1)
+        if len(n) > 1:
+            return 0
+        self.name_edit.setText("M 8"); self._on_save(); return self.result()
+    monkeypatch.setattr(spd.SavePresetDialog, "exec", fake_exec)
+    win._save_preset()
+    assert "Couldn't save the preset: a preset needs a name" in win._warning.text()
+
+
+def test_nothing_capturable_keeps_the_action_off_and_says_why(qtbot, tmp_path):
+    from tests.ui.test_open_tiff import _write_stretched_tiff
+    win = _window(qtbot, tmp_path)
+    win.open_any(_write_stretched_tiff(tmp_path))
+    _to(win, "enhancements")
+    assert win.current_stage_id() == "enhancements"
+    assert not win.project.is_linear_at(win.project.position)   # the other half of the gate holds
+    assert not win._save_preset_act.isEnabled()
+    tip = win._save_preset_act.toolTip()
+    assert "nothing to save" in tip.lower() and "Enhancements first" not in tip
+    win._enhance("Vibrance")
+    assert win._save_preset_act.isEnabled()
+
+
+def test_a_long_target_is_cut_at_a_word_to_fit(qtbot):
+    from nocturne.ui.save_preset_dialog import SavePresetDialog
+    from nocturne.user_presets import MAX_NAME
+    long = " ".join(["Andromedae"] * 20)              # 80 falls inside a word
+    assert long[MAX_NAME - 1] != " " and long[MAX_NAME] != " "
+    d = SavePresetDialog(b"", long, ["Stretch"], [], existing=lambda n: False)
+    qtbot.addWidget(d)
+    got = d.name_edit.text()
+    assert 0 < len(got) <= MAX_NAME and got == got.strip()
+    assert long.startswith(got) and got.split() == ["Andromedae"] * len(got.split())
+
+
+def test_the_preview_is_drawn_at_the_screens_pixel_ratio(qtbot, monkeypatch):
+    import numpy as np
+    from nocturne.core.image import AstroImage
+    from nocturne.ui.save_preset_dialog import SavePresetDialog, _PREVIEW_EDGE
+    from nocturne.user_presets import preview_jpeg
+    jpg = preview_jpeg(AstroImage(np.full((400, 600, 3), 0.5, np.float32), is_linear=False))
+    monkeypatch.setattr(SavePresetDialog, "devicePixelRatioF", lambda self: 2.0)
+    d = SavePresetDialog(jpg, "M 8", ["Stretch"], [], existing=lambda n: False)
+    qtbot.addWidget(d)
+    pm = d.preview_pixmap                            # what was handed to the label
+    assert pm.devicePixelRatio() == 2.0
+    assert pm.width() == 2 * _PREVIEW_EDGE           # device pixels, so sharp on Retina
+    assert d.minimumWidth() >= 360

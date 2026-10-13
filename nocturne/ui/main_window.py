@@ -49,7 +49,7 @@ from ..settings import (
     resolve_binary, save_settings, start_dir,
 )
 from ..recipe import recipe_from_entries, save_recipe, uncaptured_step_names
-from ..user_presets import PresetLibrary, presets_dir
+from ..user_presets import PresetError, PresetLibrary, presets_dir
 from ..steps.star_split import preferred_splitter
 from ..steps.factory import make_step
 from ..steps.load import load_fits
@@ -148,6 +148,8 @@ _CLIP_AMBER_LO = 0.0005    # 0.05% of shadows crushed
 _PRESET_TIP_ON = "Save this edit (everything after the crop) as a preset for similar pictures."
 _PRESET_TIP_OFF = ("Save as Preset — process a picture through to Enhancements first: "
                    "a preset is made at the end of an edit.")
+_PRESET_TIP_EMPTY = ("Save as Preset — nothing to save yet: this picture has no steps "
+                     "a preset can carry. Apply a step after the crop first.")
 
 # What the confirm calls each geometry action, in the user's words rather than
 # the history's. The history stores "Flip H" because the provenance report and
@@ -1689,8 +1691,13 @@ class MainWindow(QMainWindow):
         ok = (self.project is not None
               and self.current_stage_id() in ("enhancements", "export")
               and not self.project.is_linear_at(self.project.position))
-        self._save_preset_act.setEnabled(ok)
-        self._save_preset_act.setToolTip(_PRESET_TIP_ON if ok else _PRESET_TIP_OFF)
+        # A stretched TIFF or an Upscale result can be at Enhancements with no
+        # step of its own: the dialog could only say "Nothing to save yet".
+        # A walk over a handful of (name, option) pairs; no need to cache it.
+        empty = ok and not recipe_from_entries(self.project.entries(), scope="preset").steps
+        self._save_preset_act.setEnabled(ok and not empty)
+        self._save_preset_act.setToolTip(
+            _PRESET_TIP_EMPTY if empty else _PRESET_TIP_ON if ok else _PRESET_TIP_OFF)
 
     def _save_preset(self) -> None:
         if self.project is None or self._busy or not self._save_preset_act.isEnabled():
@@ -1706,11 +1713,18 @@ class MainWindow(QMainWindow):
         dlg = SavePresetDialog(
             preview, target, [step_display_name(s["stage"], s["option"]) for s in steps],
             left_out, existing=lambda n: self._presets.find(n) is not None, parent=self)
-        if not dlg.exec():
+        # A failed save brings the same dialog back, name and all.
+        while dlg.exec():
+            try:
+                p = self._presets.save(dlg.chosen_name(), steps, preview, target=target,
+                                       data_type=detect_data_type(meta), left_out=left_out)
+            except (OSError, PresetError, ValueError) as exc:
+                msg = f"Couldn't save the preset: {exc}"
+                self._show_warning(msg)
+                dlg.show_error(msg)
+                continue
+            self._show_output(f"Saved preset {p.name} — {p.step_count} steps.")
             return
-        p = self._presets.save(dlg.chosen_name(), steps, preview, target=target,
-                               data_type=detect_data_type(meta), left_out=left_out)
-        self._show_output(f"Saved preset {p.name} — {p.step_count} steps.")
 
     def _open_batch(self) -> None:
         BatchDialog(self.settings, self).exec()
