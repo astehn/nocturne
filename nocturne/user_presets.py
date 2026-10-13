@@ -46,9 +46,13 @@ _GEOMETRY_STAGES = frozenset({"crop", "rotate", "flip_h", "flip_v"})
 _DUALBAND_NOTE = "Made on dual-band (LP filter) data — this picture is not dual-band"
 STRETCHED_NOTE = ("Made on an already-stretched picture, so it can only be used on "
                   "pictures that open already stretched.")
-# A preset's stages that need stretched data: the stepper's post-stretch steps
-# plus the finishing steps that live on Enhancements.
-_FINISHING_STAGES = frozenset({"enhance", "starless_levels", "star_spikes"})
+# A preset's stages that need stretched data — exactly what the hand paths
+# refuse on linear data: the stepper's post-stretch steps (navigation forces a
+# Stretch first, _ensure_stretched), the Enhancements taps (only reachable from
+# that step), and the four toolbar tools that say "Stretch the image first":
+# Star Spikes, Starless Levels, Narrowband and Colour Balance.
+_FINISHING_STAGES = frozenset({"enhance", "starless_levels", "star_spikes",
+                               "narrowband", "color_balance"})
 _BROADBAND_NOTE = "Made on broadband data"
 
 

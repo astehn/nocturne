@@ -352,3 +352,14 @@ def test_return_cannot_choose_a_post_stretch_preset_on_a_linear_base(qtbot, tmp_
     b.items.setCurrentItem(_item(b, "Whole"))          # control: Return does reach Choose
     _press_return(b)
     assert b.chosen() is not None and b.chosen().name == "Whole"
+
+
+@pytest.mark.parametrize("steps", [[{"stage": "color_balance", "option": {}}],
+                                   [{"stage": "background", "option": "off"},
+                                    {"stage": "color_balance", "option": {}}]])
+def test_a_colour_balance_preset_is_greyed_on_a_linear_base(qtbot, tmp_path, steps):
+    lib = up.PresetLibrary(str(tmp_path / "presets"))
+    lib.save("CB", steps, _jpeg(), data_type="broadband")
+    b = _browser(qtbot, lib, picture_type="broadband", base_linear=True)
+    item = _item(b, "CB")
+    assert not item.flags() & Qt.ItemFlag.ItemIsEnabled and item.toolTip() == _STRETCHED_NOTE

@@ -374,3 +374,28 @@ def test_can_apply_refuses_a_post_stretch_preset_on_a_linear_base(tmp_path):
     assert up.can_apply(post, "broadband", base_linear=False) == (True, "")
     assert up.can_apply(whole, "broadband", base_linear=True) == (True, "")
     assert up.can_apply(linear_only, "broadband", base_linear=True) == (True, "")
+
+
+@pytest.mark.parametrize("stages", [["color_balance"], ["background", "color_balance"],
+                                    ["narrowband"], ["star_spikes"], ["starless_levels"],
+                                    ["enhance"], ["background", "levels"]])
+def test_a_preset_needing_stretched_data_is_refused_on_a_linear_base(tmp_path, stages):
+    """The set matches what each tool's hand path refuses on linear data."""
+    p = up.Preset(id="x", name="x", steps=tuple({"stage": s, "option": ""} for s in stages))
+    assert up.starts_after_stretch(p)
+    assert up.can_apply(p, "broadband", base_linear=True)[0] is False
+
+
+@pytest.mark.parametrize("stages", [["background"], ["color"], ["deconvolution"],
+                                    ["tint"], ["stretch", "color_balance"]])
+def test_linear_steps_or_an_own_stretch_are_allowed_on_a_linear_base(tmp_path, stages):
+    p = up.Preset(id="x", name="x", steps=tuple({"stage": s, "option": ""} for s in stages))
+    assert not up.starts_after_stretch(p)
+
+
+def test_the_post_stretch_set_is_pinned():
+    from nocturne.ui.pipeline import POST_STRETCH_IDS
+    assert POST_STRETCH_IDS | up._FINISHING_STAGES == {
+        "remove_green", "recover_core", "levels", "curves", "saturation", "green_fringe",
+        "noise_sharpen", "local_contrast", "star_reduction", "enhancements",
+        "enhance", "starless_levels", "star_spikes", "narrowband", "color_balance"}
