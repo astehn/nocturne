@@ -231,3 +231,71 @@ def test_sort_is_remembered_and_reported(qtbot, tmp_path):
     assert s.preset_sort == "name" and calls == [1]
     b2 = _browser(qtbot, _lib(tmp_path / "z"), settings=s)
     assert b2.sort_box.currentData() == "name" and _names(b2) == ["Heart", "M 31", "M 8"]
+
+
+@pytest.mark.parametrize("bad", ["   ", "x" * (up.MAX_NAME + 1)])
+def test_rename_to_blank_or_too_long_is_a_message_and_nothing_changes(qtbot, tmp_path, bad):
+    lib = _lib(tmp_path)
+    before = sorted(p.name for p in lib.list())
+    b = _browser(qtbot, lib)
+    _select(b, "Heart")
+    b._ask_name = lambda cur: bad
+    b.rename_btn.click()
+    assert sorted(p.name for p in lib.list()) == before
+    assert b.warning.text().startswith("Not renamed:") and "Heart" in _names(b)
+
+
+def test_rename_failing_on_disk_is_a_message_and_the_preset_stays(qtbot, tmp_path):
+    lib = _lib(tmp_path)
+    b = _browser(qtbot, lib)
+    _select(b, "Heart")
+    b._ask_name = lambda cur: "Heart Nebula"
+
+    def refuse(p, name):
+        raise PermissionError(13, "The file is in use")
+    lib.rename = refuse
+    b.rename_btn.click()
+    assert "Heart" in b.warning.text() and "in use" in b.warning.text()
+    assert "Heart" in _names(b) and b.items.currentItem().text().startswith("Heart")
+
+
+def test_rename_of_a_manifest_damaged_meanwhile_is_a_message(qtbot, tmp_path):
+    # _rewrite validates and then re-reads. Damage landing between the two reaches
+    # the dialog as a bare JSONDecodeError, which is a ValueError and not a PresetError.
+    import json
+    lib = _lib(tmp_path)
+    b = _browser(qtbot, lib)
+    _select(b, "Heart")
+
+    def damaged(p, name):
+        raise json.JSONDecodeError("Expecting value", "{", 1)
+    lib.rename = damaged
+    b._ask_name = lambda cur: "Heart Nebula"
+    b.rename_btn.click()
+    assert "Heart" in b.warning.text() and "damaged" in b.warning.text()
+    assert "Heart" in _names(b)
+
+
+def _press_return(b):
+    from PySide6.QtCore import QEvent
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication
+    for t in (QEvent.Type.KeyPress, QEvent.Type.KeyRelease):
+        QApplication.sendEvent(b.items, QKeyEvent(t, Qt.Key.Key_Return,
+                                                  Qt.KeyboardModifier.NoModifier))
+
+
+def test_return_on_a_disabled_preset_chooses_nothing(qtbot, tmp_path):
+    b = _browser(qtbot, _lib(tmp_path), picture_type="broadband")
+    b.show()
+    qtbot.waitExposed(b)
+    b.items.setFocus()
+    item = next(b.items.item(i) for i in range(b.items.count())
+                if b.items.item(i).text().startswith("M 8"))
+    b.items.setCurrentItem(item)
+    _press_return(b)
+    assert b.chosen() is None and b.isVisible()
+    # Control: the same key on an allowed preset does choose, so the key reaches Choose.
+    _select(b, "M 31")
+    _press_return(b)
+    assert b.chosen() is not None and b.chosen().name == "M 31"

@@ -410,6 +410,10 @@ class PresetBrowser(QDialog):
         except PresetError as exc:
             msg = str(exc)
             self._say(f"Not renamed: {msg[:1].lower()}{msg[1:]}.")
+        except ValueError as exc:
+            # Not a PresetError: the manifest went bad between listing and rewrite
+            # (json.load's JSONDecodeError).
+            self._say(f"Could not rename “{p.name}” — its preset file is damaged ({exc}).")
         except OSError as exc:
             self._say(f"Could not rename “{p.name}” — another program may be using it "
                       f"({exc.strerror or exc}).")
