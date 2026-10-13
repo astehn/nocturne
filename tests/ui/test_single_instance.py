@@ -748,3 +748,13 @@ def test_main_asks_for_the_launchs_own_file_through_the_one_place_that_knows():
     src = _main_source()
     assert "argv_path = single_instance.argv_path_after_window(sys.argv)" in src
     assert "argv_path = path_from_argv(sys.argv)" not in src
+
+
+def test_a_deeply_nested_request_is_refused_not_raised():
+    """json.loads raises RecursionError on deep nesting under the 64 KB cap; it
+    must be refused like any other malformed request (review, 2026-10-13)."""
+    from nocturne.ui import single_instance as si
+    deep = b"[" * 20000 + b"]" * 20000 + b"\n"
+    import pytest
+    with pytest.raises((ValueError, KeyError, TypeError, AttributeError, RecursionError)):
+        si._parse(deep)

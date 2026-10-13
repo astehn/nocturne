@@ -389,7 +389,7 @@ class Server(QObject):
         buf.clear()
         try:
             paths, sent, window, activation = _parse(line)
-        except (ValueError, KeyError, TypeError, AttributeError):
+        except (ValueError, KeyError, TypeError, AttributeError, RecursionError):
             sock.abort()
             return
         # Not for a sender that has given up and opened the file itself.
