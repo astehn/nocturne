@@ -14,7 +14,7 @@ Nocturne for Windows, presets for Auto Enhance, and Starless + Stars for everyon
 ### Changed
 - Starless + Stars export works without RC-Astro: it uses StarNet2 or Nocturne's own star separation, and the log says which.
 - Starless + Stars before Stretch is stretched once, as a whole, so the two files Screen back to exactly the picture you saw.
-- Auto Enhance never uses GraXpert for noise reduction: it takes NoiseXTerminator, a Nocturne NR model, or Nocturne's own, so a run takes about a minute instead of ten. If a step can't run, it says which one and why.
+- Auto Enhance never uses GraXpert for noise reduction: it uses NoiseXTerminator if you have RC-Astro, and Nocturne's own denoise otherwise, so a run takes about a minute instead of ten. If a step can't run, it says which one and why.
 - A stacked master is written to a temporary file first, so a cancel or crash can't leave a broken master or destroy the one you had.
 
 ### Fixed
