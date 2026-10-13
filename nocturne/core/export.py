@@ -77,6 +77,20 @@ def save_png(img: AstroImage, path: str, icc: bytes | None = None, *,
     Image.fromarray(arr, mode=mode).save(path, format="PNG", **extra)
 
 
+def decimate_for_preview(img: AstroImage, edge: int) -> AstroImage:
+    """Every n-th pixel, down to about twice the preview's edge, BEFORE the
+    display stretch: stretching the whole frame first cost ~2.9 GB extra on a
+    33 MP drizzled save (review 2026-10-06), enough to swap an 8 GB Air.
+    Strided, not averaged — averaging would lower the noise the autostretch
+    measures, and a thumbnail should look like the canvas."""
+    h, w = img.data.shape[:2]
+    k = max(1, max(h, w) // (2 * edge))
+    if k == 1:
+        return img
+    return AstroImage(np.ascontiguousarray(img.data[::k, ::k]), is_linear=img.is_linear,
+                      metadata=img.metadata)
+
+
 def jpeg_bytes(img: AstroImage, longest_edge: int, *, linked: bool = True,
                quality: int = 92) -> bytes:
     """The finished picture as JPEG bytes, for the wall.

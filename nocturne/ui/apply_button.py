@@ -47,6 +47,7 @@ class ApplyButton(QPushButton):
         super().__init__("", parent)
         self.setObjectName("primary")
         self._label = label
+        self._tip = None            # set_label's full text, when the label is elided
         self._state = "not_run"
         # What the words say. Busy (spec §4: "unchanged text") keeps the last
         # real state's status — only the enablement changes.
@@ -64,6 +65,18 @@ class ApplyButton(QPushButton):
 
     def label_text(self) -> str:
         return self._label
+
+    def set_label(self, text: str, *, full: str | None = None) -> None:
+        """Crop's label changes with the preset chosen ("Apply Crop + M 8").
+        `full` is the unelided text, for the tooltip."""
+        self._label = text
+        self._tip = full
+        self._sync_tooltip()
+        self.update()
+
+    def _sync_tooltip(self) -> None:
+        tip = self._tip or self._label
+        self.setToolTip(f"{tip} — {self.status_text()}" if self.status_text() else tip)
 
     def status_text(self) -> str:
         return _STATUS[self._shown]
@@ -99,7 +112,7 @@ class ApplyButton(QPushButton):
             self.setProperty("pending", "true" if green else "false")
             self.style().unpolish(self); self.style().polish(self)
         super().setEnabled(self._available and state not in _OFF and not unchanged)
-        self.setToolTip(f"{self._label} — {self.status_text()}" if self.status_text() else self._label)
+        self._sync_tooltip()
         self.update()
 
     # --- enablement: two independent reasons to be off. The STATE says whether

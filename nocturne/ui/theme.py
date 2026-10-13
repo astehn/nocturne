@@ -241,6 +241,7 @@ QFrame#welcomeEmpty QLabel {{ background: transparent; border: none; }}
 QFrame#welcomeEmpty QFrame#welcomeDrop {{ border: 1px dashed {ACCENT}; border-radius: 10px;
     background: rgba(74, 144, 226, 13); }}
 QLabel#welcomeEmptyTitle {{ font-size: 17px; font-weight: 600; color: #ffffff; }}
+QLabel#presetDetailsTitle {{ font-size: 17px; font-weight: 600; color: #ffffff; }}
 QLabel#welcomeSteps, QLabel#welcomeSample {{ font-size: 13px; color: {TEXT_DIM}; }}
 QLabel#welcomeDropMain {{ font-size: 14px; color: {ACCENT}; }}
 QLabel#welcomeDropSub {{ font-size: 12px; color: {TEXT_DIM}; }}

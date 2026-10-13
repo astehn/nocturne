@@ -110,7 +110,7 @@ _LOCKED_TOOLBAR = ("Open Image", "Open Project", "Save Project", "Settings",
                    "Auto Enhance", "Stack…", "Ha/OIII…", "Combine…", "Narrowband…",
                    "Colour Balance", "Star Spikes…", "Starless Levels…", "Trim",
                    "Upscale Crop", "Share", "Save Recipe", "Batch…")
-_LOCKED_MENU = ("Open Project…", "Save Project", "Save Project As…",
+_LOCKED_MENU = ("Open Project…", "Save Project", "Save Project As…", "Save as Preset…",
                 "Recent Projects", "Close Project")
 _LIVE_TOOLBAR = ("Before/After", "Fit", "100%")
 _LIVE_MENU = ("Help…", "Activity", "Report a problem…")

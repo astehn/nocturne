@@ -926,10 +926,10 @@ def test_recipes_help_lists_what_a_recipe_can_and_cannot_hold():
         "the taps are no longer captured; the help says they are"
 
     every = [(n, "") for n in list(_NAME_TO_STAGE) + list(ENHANCE_NAMES)
-             + ["Star Spikes", "Trim"]]
-    assert uncaptured_step_names(every) == ["Star Spikes", "Trim"], \
-        "the set of steps a recipe drops changed; the help names these two"
-    assert "<b>Star Spikes</b> and <b>Trim</b>" in b
+             + ["Star Spikes", "Starless Levels", "Trim"]]
+    assert uncaptured_step_names(every) == ["Star Spikes", "Starless Levels", "Trim"], \
+        "the set of steps a recipe drops changed; the help names these three"
+    assert "<b>Star Spikes</b>, <b>Starless Levels</b> and <b>Trim</b>" in b
     assert "can’t include" in b
     assert "can't include" in _src("nocturne/ui/main_window.py"), \
         "Save Recipe no longer warns; the help promises it does"
@@ -2240,3 +2240,162 @@ def test_linked_is_never_said_to_keep_the_skys_own_colour():
     b = _body("stretch")
     assert "one curve for all colours" in b and "keeps the colours of stars and nebula" in b
     assert "makes the sky neutral" in b
+
+
+# ---- Presets (2026-10-13) ----
+
+def _plain(html):
+    """Body text without tags, so a claim split by <b> still reads whole."""
+    return re.sub(r"<[^>]+>", "", html)
+
+
+def test_presets_topic_exists_and_is_listed_beside_recipes():
+    ids = {t.id for t in h._TOPIC_LIST}
+    assert "presets" in ids
+    section = next(s for s in h.SECTIONS if "recipes" in s.topic_ids)
+    assert "presets" in section.topic_ids
+
+
+def test_presets_help_names_the_real_controls():
+    b = _plain(_body("presets"))
+    mw = _src("nocturne/ui/main_window.py")
+    sp = _src("nocturne/ui/step_panels.py")
+    pb = _src("nocturne/ui/preset_browser.py")
+    # Save as Preset… is a Project menu item and the Enhancements button.
+    assert "Save as Preset…" in b
+    assert 'project_menu.addAction("Save as Preset…"' in mw
+    assert 'QPushButton(load_icon("save-preset"), "Save as Preset…")' in sp
+    assert "Project menu" in b and "top of the Enhancements" in b
+    assert "Export step" in b                       # the menu item's gate includes export
+    # Presets… on Crop, under Guides, the chosen preset directly under it, and
+    # the Apply label it produces.
+    assert "Presets…" in b and 'QPushButton("Presets…")' in sp
+    crop = sp.split('controls.addWidget(section_label("Guides"))')[1]
+    assert crop.index("controls.addWidget(guides)") < crop.index("_add_preset_controls(w, controls")
+    controls = sp.split("def _add_preset_controls")[1].split("\ndef ")[0]
+    assert controls.index("controls.addWidget(btn)") < controls.index("controls.addWidget(chip)")
+    assert "under Guides" in b and "directly under the Presets… button" in b
+    assert "How this works" not in b                # the old title-row link is gone
+    assert "Apply button names it" in b
+    assert "Apply Crop + " in b and '"Apply Crop + " if box' in mw
+    assert "Apply M 8" in b and 'else "Apply "' in mw
+    for label in ("Rename…", "Delete…", "Use no preset", "Choose"):
+        assert label in b and f'QPushButton("{label}")' in pb, label
+    for label in ("Grid", "List"):
+        assert label in b and f'(self.{label.lower()}_btn, "{label}"' in pb, label
+    assert "✕" in b and 'clear.setText("\\u2715")' in sp
+
+
+def test_presets_help_names_the_sort_and_filter_the_browser_offers():
+    from nocturne.ui.preset_browser import _SORT_LABELS
+    b = _plain(_body("presets"))
+    for label in _SORT_LABELS.values():
+        assert label in b, label
+    pb = _src("nocturne/ui/preset_browser.py")
+    assert "Only presets for this kind of data" in b
+    assert 'QCheckBox("Only presets for this kind of data")' in pb
+
+
+def test_presets_help_gets_the_save_gate_right():
+    b = _plain(_body("presets"))
+    mw = _src("nocturne/ui/main_window.py")
+    gate = mw.split("def _sync_preset_action")[1].split("def _save_preset")[0]
+    assert '("enhancements", "export")' in gate and "is_linear_at" in gate
+    assert "recipe_from_entries" in gate                 # at least one step to carry
+    assert "Enhancements" in b and "stretched" in b and "nothing to save" in b.lower()
+
+
+def test_presets_help_names_exactly_what_is_left_out():
+    from nocturne.recipe import PRESET_EXCLUDED_NAMES
+    b = _plain(_body("presets")).lower()
+    for name in ("crop", "rotate", "flip", "trim", "share", "upscale crop"):
+        assert name in b, name
+    assert {"Crop", "Rotate", "Flip H", "Flip V", "Trim"} == set(PRESET_EXCLUDED_NAMES)
+
+
+def test_presets_help_says_which_tools_recipes_cannot_carry():
+    """Both topics: a preset carries them, a recipe names them as left out."""
+    from nocturne.recipe import PRESET_ONLY_STAGES, uncaptured_step_names
+    for name in PRESET_ONLY_STAGES:
+        assert name in _body("presets"), name
+        assert name in _body("recipes"), name
+    left = uncaptured_step_names([("Star Spikes", {}), ("Starless Levels", [0.1, 0.9]),
+                                  ("Trim", {})])
+    assert set(left) == set(PRESET_ONLY_STAGES) | {"Trim"}
+
+
+def test_presets_help_states_the_data_type_rules_the_code_enforces():
+    import nocturne.user_presets as up
+    b = _plain(_body("presets"))
+    assert "dual-band" in b and "broadband" in b
+    dual = up.Preset(id="x", name="x", steps=(), data_type="dualband")
+    broad = up.Preset(id="y", name="y", steps=(), data_type="broadband")
+    for picture in ("broadband", "unknown"):     # anything not dual-band
+        assert up.can_apply(dual, picture)[0] is False, picture
+    assert up.can_apply(dual, "dualband")[0] is True
+    assert "any picture that is not dual-band" in b and "cannot tell" in b
+    ok, note = up.can_apply(broad, "dualband")
+    assert ok is True and note in b                     # allowed, and marked
+
+
+def test_presets_help_quotes_the_already_stretched_rule():
+    import nocturne.user_presets as up
+    b = _plain(_body("presets"))
+    assert up.STRETCHED_NOTE in b
+    p = up.Preset(id="x", name="x", steps=({"stage": "levels", "option": None},),
+                  data_type="broadband")
+    assert up.can_apply(p, "broadband", base_linear=True) == (False, up.STRETCHED_NOTE)
+    assert up.can_apply(p, "broadband", base_linear=False)[0] is True
+
+
+def test_presets_help_describes_how_a_run_ends():
+    b = _plain(_body("presets"))
+    mw = _src("nocturne/ui/main_window.py")
+    run = mw.split("def _run_preset")[1].split("\n    def ")[0]
+    assert "Enhancements" in b and 'self._go_to_id("enhancements"' in run
+    # Each step its own history entry: the run is folded in one result at a time.
+    assert "self._record_auto_run(run, " in run
+    rec = mw.split("def _record_auto_run")[1].split("\n    def ")[0]
+    loop = rec.split("for (name, option, img), engine in zip(run.results, run.engines):")[1]
+    assert loop.lstrip().startswith("self.project.record_precomputed(name, option, img)")
+    assert "its own step, so you can change or undo any of them" in b
+    # Apply and continue on Crop presses the crop-only path, which never runs a preset.
+    press = mw.split("def _press_apply_plan")[1].split("\n    def ")[0]
+    assert ('btn is getattr(self._panel, "apply_btn", None)):\n'
+            '                self._apply_plain_crop()') in press
+    plain = mw.split("def _apply_plain_crop")[1].split("\n    def ")[0]
+    assert "preset" not in plain.split('"""')[2]
+    assert "Apply and continue" in b and "crop only" in b
+
+
+def test_presets_help_auto_levels_re_measures_and_the_rest_is_as_saved():
+    """A preset's Levels saved as Auto reaches the run as the AUTO decision,
+    which LevelsStep derives from the picture in front of it; a chosen Levels
+    reaches it as its numbers."""
+    import nocturne.user_presets as up
+    from nocturne.core.image import AstroImage
+    from nocturne.core.levels import auto_levels
+    from nocturne.recipe import LEVELS_AUTO
+    from nocturne.settings import Settings
+    from nocturne.steps.levels import LevelsStep
+    b = _plain(_body("presets"))
+    assert "Auto black point" in b and "re-measures" in b and "values you saved" in b
+    auto = up.Preset(id="a", name="a", steps=({"stage": "levels", "option": LEVELS_AUTO},))
+    fixed = up.Preset(id="f", name="f", steps=({"stage": "levels", "option": [0.1, 1.0, 1.0]},))
+    assert up.preset_plan(auto, Settings()).plan == [("levels", LEVELS_AUTO)]
+    assert up.preset_plan(fixed, Settings()).plan == [("levels", (0.1, 1.0, 1.0))]
+    rng = np.random.default_rng(7)
+    dim = (0.10 + 0.01 * rng.standard_normal((32, 32, 3))).astype(np.float32)
+    bright = dim + np.float32(0.2)
+    for data in (dim, bright):
+        out = LevelsStep().apply(AstroImage(data, {}), LEVELS_AUTO).data
+        black = auto_levels(data)[0]
+        assert np.allclose(out, LevelsStep().apply(AstroImage(data, {}),
+                                                    auto_levels(data)).data)
+        assert black > 0
+    assert auto_levels(dim)[0] != auto_levels(bright)[0]   # re-measured, not carried
+
+
+def test_crop_and_enhancements_help_point_at_presets():
+    assert "Presets…" in _body("crop")
+    assert "Save as Preset…" in _body("enhancements")

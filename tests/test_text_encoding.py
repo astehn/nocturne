@@ -39,8 +39,10 @@ def _offences(path: Path, root: Path = ROOT) -> list[str]:
         f = n.func
         name = f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)
         where = f"{path.relative_to(root).as_posix()}:{n.lineno}"
-        if name in ("open", "fdopen") and (isinstance(f, ast.Name)
-                                           or ast.unparse(f.value) in ("os", "io")):
+        # os.open is the low-level call: it returns a file descriptor, has no
+        # encoding= to give, and the text layer is the os.fdopen that wraps it.
+        if (name == "fdopen" and ast.unparse(f.value) in ("os", "io")) or (
+                name == "open" and (isinstance(f, ast.Name) or ast.unparse(f.value) == "io")):
             mode = _mode(n, 1)
             if "encoding" not in kws and not (isinstance(mode, str) and "b" in mode):
                 bad.append(f"{where} {name}() without encoding=")
@@ -78,6 +80,8 @@ def test_the_check_sees_each_shape_it_claims_to(tmp_path):
         "q.read_text()\n"
         "q.write_text(s)\n"
         "subprocess.run(a, text=True)\n"
-        "subprocess.run(a, text=True, errors='replace')\n", encoding="utf-8")
+        "subprocess.run(a, text=True, errors='replace')\n"
+        "fd = os.open(p, os.O_WRONLY | os.O_CREAT, 0o666)\n"
+        "io.open(p, 'w')\n", encoding="utf-8")
     lines = sorted(int(b.split(":")[1].split()[0]) for b in _offences(src, tmp_path))
-    assert lines == [2, 3, 6, 7, 8, 9]
+    assert lines == [2, 3, 6, 7, 8, 9, 12]

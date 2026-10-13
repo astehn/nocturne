@@ -92,11 +92,12 @@ def card_info(meta: dict, mtime: float | None, now: float | None = None) -> str:
     return " · ".join(parts)
 
 
-def _card_pixmap(jpeg: bytes | None, dpr: float) -> QPixmap:
+def _card_pixmap(jpeg: bytes | None, dpr: float,
+                 size: tuple[int, int] = (CARD_W, CARD_H)) -> QPixmap:
     """The picture cropped to fill the card box, centred, so six cards make a
     clean grid whatever each frame's shape. With no preview (a project saved
     before thumbnails existed), the crescent."""
-    w, h = int(CARD_W * dpr), int(CARD_H * dpr)
+    w, h = int(size[0] * dpr), int(size[1] * dpr)
     out = QImage(w, h, QImage.Format.Format_ARGB32_Premultiplied)
     out.fill(_CARD_BG)
     p = QPainter(out)

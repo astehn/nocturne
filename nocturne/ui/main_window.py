@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import datetime
 import hashlib
@@ -29,25 +30,15 @@ from ..core.crop import (
 )
 from ..core.enhance import (ENHANCE_OPS, sharpen_nebulosity_layers,
                             star_colour_layers)
-from ..core.export import camera_cards, jpeg_bytes, save_fits, save_png, save_tiff, _to_uint
+from ..core.export import camera_cards, decimate_for_preview, jpeg_bytes, save_fits, save_png, save_tiff, _to_uint
 # The start page thumbnail saved inside a project: twice the card it is
 # drawn in (welcome.py), so it stays sharp on a Retina screen.
 PREVIEW_EDGE = 480
 
 
 def _preview_source(img):
-    """Every n-th pixel, down to about twice the preview's edge, BEFORE the
-    display stretch: stretching the whole frame first cost ~2.9 GB extra on a
-    33 MP drizzled save (review 2026-10-06), enough to swap an 8 GB Air.
-    Strided, not averaged — averaging would lower the noise the autostretch
-    measures, and a thumbnail should look like the canvas."""
-    from ..core.image import AstroImage
-    h, w = img.data.shape[:2]
-    k = max(1, max(h, w) // (2 * PREVIEW_EDGE))
-    if k == 1:
-        return img
-    return AstroImage(np.ascontiguousarray(img.data[::k, ::k]), is_linear=img.is_linear,
-                      metadata=img.metadata)
+    """The project thumbnail's source pixels; a preset's preview uses the same."""
+    return decimate_for_preview(img, PREVIEW_EDGE)
 from ..core.fits_io import format_integration, import_summary, resolve_integration
 from ..core.image_io import load_tiff
 from ..history.project import Project
@@ -59,6 +50,7 @@ from ..settings import (
     resolve_binary, save_settings, start_dir,
 )
 from ..recipe import recipe_from_entries, save_recipe, uncaptured_step_names
+from ..user_presets import PresetError, PresetLibrary, presets_dir
 from ..steps.star_split import preferred_splitter
 from ..steps.factory import make_step
 from ..steps.load import load_fits
@@ -153,6 +145,12 @@ def _clip_phrase(frac: float, channel: str, verb: str) -> str:
 
 _CLIP_AMBER_HI = 0.001     # 0.1% of highlights blown
 _CLIP_AMBER_LO = 0.0005    # 0.05% of shadows crushed
+
+_PRESET_TIP_ON = "Save this edit (everything after the crop) as a preset for similar pictures."
+_PRESET_TIP_OFF = ("Save as Preset — process a picture through to Enhancements first: "
+                   "a preset is made at the end of an edit.")
+_PRESET_TIP_EMPTY = ("Save as Preset — nothing to save yet: this picture has no steps "
+                     "a preset can carry. Apply a step after the crop first.")
 
 # What the confirm calls each geometry action, in the user's words rather than
 # the history's. The history stores "Flip H" because the provenance report and
@@ -486,6 +484,23 @@ def _remove_quietly(path: str) -> None:
         pass
 
 
+# The steps that split stars from the sky, and so are cleaner with a real star
+# tool: receipt's free-split fallbacks, Starless Levels (which has no fallback
+# entry, the split IS the step) and the two layered Enhancements taps.
+def _split_sets():
+    from ..core import receipt
+    from ..steps.enhance_step import _LAYERED
+    stages = {s for s, e in receipt._FALLBACKS.items() if e == receipt._FREE_SPLIT}
+    return frozenset(stages | {"starless_levels"}), frozenset(_LAYERED)
+
+
+_SPLIT_STAGES, _SPLIT_TAPS = _split_sets()
+
+
+def _uses_star_split(stage_id: str, option) -> bool:
+    return stage_id in _SPLIT_STAGES or (stage_id == "enhance" and option in _SPLIT_TAPS)
+
+
 def _and_join(words: list[str]) -> str:
     """"A", "A and B", "A, B and C"."""
     return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
@@ -528,6 +543,12 @@ class MainWindow(QMainWindow):
                                        # cache reuse so the result card can still say how
                                        # long the underlying solve originally took
         self._cache_dir = os.path.join(os.path.dirname(settings_path), "cache")
+        # Beside settings.json, as the cache is: tests get a sandboxed library.
+        self._presets = PresetLibrary(presets_dir(settings_path))
+        # The preset Crop's Apply will run after the crop. A choice, not an
+        # edit: nothing is applied until Apply is pressed.
+        self._chosen_preset = None
+        self._chip_thumb = (None, None)     # (preset id, QPixmap): read once, not per drag
         self._prune_staged()    # what a crash or kill mid-open left behind
         # How LINEAR data is DRAWN. A view preference, never image state: it is
         # a property of how you are looking, not of what you captured, so it
@@ -621,6 +642,7 @@ class MainWindow(QMainWindow):
         self._auto_signals = _AutoEnhanceSignals()
         self._auto_signals.progress.connect(self._on_auto_progress)
         self._auto_preset_name = PRESET_NAMES["natural"]   # for the progress label
+        self._auto_progress_label = None     # a user preset's own; None = Auto Enhance's
         self._save_signals = _SaveSignals()
         self._save_signals.progress.connect(
             lambda d, t: self._set_progress("Saving project", d, t))
@@ -1282,6 +1304,11 @@ class MainWindow(QMainWindow):
             "Close Project", self._close_project)   # back to the welcome screen
         self._provenance_act = project_menu.addAction(
             "Provenance report…", self._show_provenance)   # readable record of the edit pipeline
+        # Not on the toolbar (owner, 2026-10-13: it is full). Here so it is
+        # reachable from Export too; the Enhancements panel has a button.
+        self._save_preset_act = project_menu.addAction("Save as Preset…", self._save_preset)
+        self._save_preset_act.setEnabled(False)   # gated in _sync_preset_action
+        self._save_preset_act.setToolTip(_PRESET_TIP_OFF)
 
         view_menu = self.menuBar().addMenu("View")
         self._activity_act = view_menu.addAction("Activity")
@@ -1685,6 +1712,52 @@ class MainWindow(QMainWindow):
         save_recipe(recipe_from_entries(self.project.entries()), path)
         self._show_output(f"Saved recipe: {os.path.basename(path)}")
 
+    def _sync_preset_action(self) -> None:
+        """From Enhancements on AND stretched: a preset is "my look", which a
+        linear picture does not have, and navigation alone is not state (Trim).
+        Busy is the `_busy_lock` group's, so a refresh mid-job cannot strand it."""
+        ok = (self.project is not None
+              and self.current_stage_id() in ("enhancements", "export")
+              and not self.project.is_linear_at(self.project.position))
+        # A stretched TIFF or an Upscale result can be at Enhancements with no
+        # step of its own: the dialog could only say "Nothing to save yet".
+        # A walk over a handful of (name, option) pairs; no need to cache it.
+        empty = ok and not recipe_from_entries(self.project.entries(), scope="preset").steps
+        tip = _PRESET_TIP_EMPTY if empty else _PRESET_TIP_ON if ok else _PRESET_TIP_OFF
+        # The menu item and the Enhancements button: one gate, one tooltip.
+        for target in (self._save_preset_act, getattr(self._panel, "save_preset_btn", None)):
+            if target is not None:
+                target.setEnabled(ok and not empty)
+                target.setToolTip(tip)
+
+    def _save_preset(self) -> None:
+        if self.project is None or self._busy or not self._save_preset_act.isEnabled():
+            return
+        from ..core.filter_type import detect_data_type
+        from ..recipe import step_display_name
+        from ..user_presets import preview_jpeg, steps_for_preset
+        from .save_preset_dialog import SavePresetDialog
+        steps, left_out = steps_for_preset(self.project.entries())
+        meta = self.project.meta_at(self.project.position)
+        target = str(meta.get("target") or meta.get("target_solved") or "").strip()
+        preview = preview_jpeg(self.project.current(), linked=self._view_linked)
+        dlg = SavePresetDialog(
+            preview, target, [step_display_name(s["stage"], s["option"]) for s in steps],
+            left_out, existing=lambda n: self._presets.find(n) is not None, parent=self)
+        # A failed save brings the same dialog back, name and all.
+        while dlg.exec():
+            try:
+                p = self._presets.save(dlg.chosen_name(), steps, preview, target=target,
+                                       data_type=detect_data_type(meta), left_out=left_out)
+            except (OSError, PresetError, ValueError) as exc:
+                msg = f"Couldn't save the preset: {exc}"
+                self._show_warning(msg)
+                dlg.show_error(msg)
+                continue
+            self._show_output(f"Saved preset {p.name} — {p.step_count} steps.")
+            self._resolve_held_preset()      # it may have replaced the held one
+            return
+
     def _open_batch(self) -> None:
         BatchDialog(self.settings, self).exec()
 
@@ -2056,7 +2129,9 @@ class MainWindow(QMainWindow):
         self._refresh()
 
     def _on_auto_progress(self, i: int, n: int, name: str) -> None:
-        self._busy_label_text = f"Auto-enhancing ({self._auto_preset_name}) — {name} ({i}/{n})…"
+        # Auto Enhance and a user preset share the runner and this signal.
+        lead = self._auto_progress_label or f"Auto-enhancing ({self._auto_preset_name})"
+        self._busy_label_text = f"{lead} — {name} ({i}/{n})…"
         if self._busy_shown:
             self._busy_label.setText(self._busy_label_text)
         self._set_progress(name, i, n)
@@ -2132,6 +2207,7 @@ class MainWindow(QMainWindow):
         # and the summary must describe what was built, not what is set up later.
         left_out = stages_left_out(self.settings)
         shown = self._auto_preset_name = PRESET_NAMES[preset]
+        self._auto_progress_label = None
         self._clear_warning()
 
         def work():
@@ -2143,21 +2219,7 @@ class MainWindow(QMainWindow):
 
         def on_result(run) -> None:
             results = run.results
-            stage_of = {v: k for k, v in STEP_NAME.items()}
-            for (name, option, img), engine in zip(results, run.engines):
-                self.project.record_precomputed(name, option, img)
-                label = str(self._step_log_label(stage_of.get(name, ""), option, engine) or "")
-                # Its own line per stage, naming the preset: the next line (an
-                # Export, a Reset) would otherwise be taken as this stage's.
-                self.log_panel.append_entry(
-                    format_log_entry(name, label, None) + f" \u2014 Auto Enhance ({shown})")
-                # And to the file, as _log_step does for a manual apply.
-                sessionlog.write(f"step  {name}" + (f" ({label})" if label else "")
-                                 + f" \u2014 Auto Enhance ({shown})")
-            for (name, _reason), detail in zip(run.failures, run.failure_details):
-                sessionlog.write(f"ERROR Auto Enhance ({shown}): {name} failed\n{detail}")
-            if results:
-                self._mark_dirty()
+            self._record_auto_run(run, f"Auto Enhance ({shown})")
             self._rebuild_panel()
             self._refresh()
             msg = f"Auto-enhanced ({shown}) \u2014 {len(results)} steps."
@@ -2175,14 +2237,261 @@ class MainWindow(QMainWindow):
             for note in dict.fromkeys(run.notes):
                 msg += " " + note
             self._show_output(msg)
-            if run.failures:
-                planned = len(results) + len(run.failures)
-                failed = _and_join([n for n, _r in run.failures])
-                reasons = "; ".join(r for _n, r in run.failures)
-                self._show_warning(f"Auto Enhance ({shown}): {len(results)} of {planned} "
-                                   f"steps \u2014 {failed} failed: {reasons}")
+            self._warn_auto_failures(f"Auto Enhance ({shown})", run)
 
         self._run_busy(work, on_result, f"Auto-enhancing ({shown})\u2026", "Auto Enhance failed")
+
+    def _record_auto_run(self, run, suffix: str) -> None:
+        """Fold a run_auto_plan result into history, one ordinary undoable step
+        each, with a log line and a session-log line per step. Shared by Auto
+        Enhance and a user preset; `suffix` names which ("Auto Enhance
+        (Natural)", "Preset (M 8)")."""
+        stage_of = {v: k for k, v in STEP_NAME.items()}
+        for (name, option, img), engine in zip(run.results, run.engines):
+            self.project.record_precomputed(name, option, img)
+            label = str(self._step_log_label(stage_of.get(name, ""), option, engine) or "")
+            # Its own line per stage, naming the run: the next line (an
+            # Export, a Reset) would otherwise be taken as this stage's.
+            self.log_panel.append_entry(format_log_entry(name, label, None) + f" \u2014 {suffix}")
+            # And to the file, as _log_step does for a manual apply.
+            sessionlog.write(f"step  {name}" + (f" ({label})" if label else "")
+                             + f" \u2014 {suffix}")
+        for (name, _reason), detail in zip(run.failures, run.failure_details):
+            sessionlog.write(f"ERROR {suffix}: {name} failed\n{detail}")
+        if run.results:
+            self._mark_dirty()
+
+    def _warn_auto_failures(self, prefix: str, run) -> None:
+        if run.failures:
+            planned = len(run.results) + len(run.failures)
+            failed = _and_join([n for n, _r in run.failures])
+            reasons = "; ".join(r for _n, r in run.failures)
+            self._show_warning(f"{prefix}: {len(run.results)} of {planned} "
+                               f"steps \u2014 {failed} failed: {reasons}")
+
+    # --- user presets: chosen in Crop, run by its Apply ---
+    def _choose_preset(self, p) -> None:
+        self._chosen_preset = p
+        self._sync_step_controls()
+
+    def _clear_preset(self) -> None:
+        self._chosen_preset = None
+        self._sync_step_controls()
+
+    def _open_presets(self) -> None:
+        if self.project is None or self._busy:
+            return
+        from ..core.filter_type import detect_data_type
+        from .preset_browser import PresetBrowser
+        held = self._chosen_preset
+        dlg = PresetBrowser(
+            self._presets,
+            picture_type=detect_data_type(self.project.meta_at(self.project.position)),
+            settings=self.settings, on_settings_changed=self._save_settings,
+            current_id=held.id if held is not None else None,
+            base_linear=self._preset_base_linear(), parent=self)
+        dlg.exec()
+        if dlg.chosen() is not None:
+            self._choose_preset(dlg.chosen())
+        elif dlg.deleted_current or dlg.cleared:
+            self._clear_preset()
+        elif held is not None:
+            # Renamed, replaced or deleted in the browser: read it back.
+            self._resolve_held_preset()
+            self._sync_step_controls()
+        dlg.deleteLater()
+
+    def _resolve_held_preset(self) -> None:
+        """The held choice, read back from the library: by id (a rename keeps
+        it), else by name (Save as Preset replaced it, which makes a new id),
+        else gone (deleted). Not on every sync: that runs per crop-box drag."""
+        held = self._chosen_preset
+        if held is None:
+            return
+        from ..user_presets import same_name
+        every = self._presets.list()
+        self._chosen_preset = (next((q for q in every if q.id == held.id), None)
+                               or next((q for q in every if same_name(q.name, held.name)),
+                                       None))
+
+    def _preset_base_linear(self) -> bool:
+        """Is the picture a preset would run on linear? That is the CROPPED
+        base: Apply discards everything after the leading geometry first."""
+        kept = self._leading_kept(self.project.entries(), set(GEOMETRY_NAMES))
+        return bool(self.project.is_linear_at(kept))
+
+    def _sync_crop_preset(self) -> None:
+        """Crop's chip, Presets… and Apply's label and enabling, from the
+        chosen preset. Run on every Crop re-sync (box shown, dragged, busy)."""
+        panel = self._panel
+        chip = getattr(panel, "preset_chip", None)
+        btn = getattr(panel, "apply_btn", None)
+        if chip is None or not isinstance(btn, ApplyButton):
+            return
+        from PySide6.QtGui import QFontMetrics, QPixmap
+        from ..user_presets import saved_label
+        p = self._chosen_preset
+        loaded = self.project is not None
+        panel.presets_btn.setEnabled(loaded and not self._busy)
+        chip.setVisible(p is not None)
+        box = self.image_view.crop_box_visible()
+        if p is None:
+            btn.set_label("Apply Crop")
+            btn.setEnabled(loaded and not self._busy and box)
+            return
+        if self._chip_thumb[0] != p.id:
+            pix = QPixmap(p.preview_path) if p.has_preview else QPixmap()
+            if not pix.isNull():
+                pix = pix.scaled(48, 32, Qt.AspectRatioMode.KeepAspectRatio,
+                                 Qt.TransformationMode.SmoothTransformation)
+            self._chip_thumb = (p.id, pix)
+        panel.preset_chip_thumb.setPixmap(self._chip_thumb[1])
+        panel.preset_chip_name.setText(saved_label(p))
+        panel.preset_chip_name.setToolTip(p.name)
+        # Says exactly what the press will do: no real crop pending means the
+        # preset alone, on the picture's current geometry.
+        prefix = "Apply Crop + " if box and not self._crop_box_is_full_frame() else "Apply "
+        fm = QFontMetrics(btn._fonts()[0])
+        room = max(220 - fm.horizontalAdvance(prefix), fm.horizontalAdvance("M…"))
+        btn.set_label(prefix + fm.elidedText(p.name, Qt.TextElideMode.ElideRight, room),
+                      full=prefix + p.name)
+        btn.setEnabled(loaded and not self._busy)
+
+    def _apply_crop_and_preset(self) -> None:
+        from ..core.filter_type import detect_data_type
+        from ..user_presets import STRETCHED_NOTE, UNSTRETCHED_NOTE, can_apply, preset_plan
+        shown = self._chosen_preset.name
+        self._resolve_held_preset()          # replaced or deleted since it was chosen
+        p = self._chosen_preset
+        if p is None:
+            self._sync_step_controls()
+            self._show_warning(f"The preset {shown} no longer exists.")
+            return
+        # Every refusal comes before anything is touched. The browser greys
+        # these out by the same rule, so reaching one means the picture changed
+        # under a held choice.
+        ok, note = can_apply(p, detect_data_type(self.project.meta_at(self.project.position)),
+                             self._preset_base_linear())
+        if not ok:
+            refusals = {
+                STRETCHED_NOTE: "This preset was made on an already-stretched picture, so "
+                                "it can only be used on pictures that open already stretched.",
+                UNSTRETCHED_NOTE: "This preset was made on an unstretched picture, so it "
+                                  "can only be used on pictures that aren't stretched yet.",
+            }
+            self._show_warning(refusals.get(
+                note, f"\u201c{p.name}\u201d is for dual-band (LP filter) data."))
+            return
+        plan = preset_plan(p, self.settings)
+        if not plan.plan:
+            reasons = "; ".join(dict.fromkeys(r.rstrip(".") for _n, r in plan.left_out))
+            self._show_warning(f"Preset {p.name}: none of its steps can run here"
+                               + (f" \u2014 {reasons}." if reasons else "."))
+            return
+        if self.image_view.crop_box_visible() and not self._crop_box_is_full_frame():
+            top, bottom, left, right = self.image_view.crop_bounds()
+            # Its own confirm asks before discarding processing; declined, nothing runs.
+            if not self._apply_geometry("Crop", CropParams(bounds=(top, bottom, left, right)),
+                                        shape=self._crop_shape()):
+                return
+            self.image_view.hide_crop_box()
+            if hasattr(self._panel, "crop_size_label"):
+                self._panel.crop_size_label.setText("\u2014")
+        entries = self.project.entries()
+        kept = self._leading_kept(entries, set(GEOMETRY_NAMES))
+        if len(entries) > kept:
+            resp = QMessageBox.question(
+                self, "Apply Preset",
+                f"This discards your current processing and applies the preset "
+                f"\u201c{p.name}\u201d to your cropped picture. Your crop is kept. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel)
+            if resp != QMessageBox.StandardButton.Yes:
+                self._sync_step_controls()
+                return
+        if len(entries) > kept:
+            # A confirmed discard is an unsaved change whatever the run does
+            # next: it stands even if every step then fails or is cancelled.
+            self.project.jump_back(kept)
+            self._mark_dirty()
+        self._run_preset(p, plan, note)
+
+    def _run_preset(self, p, plan=None, note: str = "") -> None:
+        """Auto Enhance's runner on the preset's saved steps: one history entry
+        per step, each an ordinary undoable step. Cancel is all-or-nothing for
+        the preset's steps (a crop already applied stays), and keeps the choice
+        so pressing again retries."""
+        from ..user_presets import preset_plan
+        if plan is None:
+            plan = preset_plan(p, self.settings)
+        base = self.project.current()
+        shown = p.name
+        lib, pid = self._presets, p.id
+        self._auto_progress_label = f"Applying preset \u201c{shown}\u201d"
+        self._clear_warning()
+
+        def work():
+            return run_auto_plan(base, plan.plan, self.settings,
+                                 bg_runner=self._bg_runner, rc_runner=self._rc_runner,
+                                 on_progress=lambda i, n, name:
+                                     self._auto_signals.progress.emit(i, n, name),
+                                 levels_auto=False)
+
+        def on_result(run) -> None:
+            self._record_auto_run(run, f"Preset ({shown})")
+            if not run.results:
+                # Nothing landed: not a success. The choice stays for a retry,
+                # last_used is not stamped, and the picture stays where it was.
+                # Rebuilt: a discard before the run changed what Crop's derived
+                # controls (Reset step, Apply's state) should say.
+                self._rebuild_panel()
+                self._refresh()
+                self._warn_auto_failures(f"Preset {shown}", run)
+                return
+            n = len(run.results)
+            msg = f"Applied preset {shown} \u2014 {n} step{'' if n == 1 else 's'}."
+            if note:
+                msg += f" {note}."
+            if plan.left_out:
+                names = [n for n, _r in plan.left_out]
+                were = "was" if len(names) == 1 else "were"
+                reasons = "; ".join(dict.fromkeys(r.rstrip(".") for _n, r in plan.left_out))
+                msg += f" {_and_join(names)} {were} left out: {reasons}."
+            used: dict = {}
+            for name, engine, reason in plan.substitutes:
+                used.setdefault((engine, reason.rstrip(".")), []).append(name)
+            for (engine, reason), names in used.items():
+                msg += f" {_and_join(names)} used {engine}" + (f": {reason}." if reason else ".")
+            if (preferred_splitter(self.settings) is None
+                    and any(_uses_star_split(sid, opt) for sid, opt in plan.plan)):
+                msg += " StarNet2 (free) or StarXTerminator gives cleaner stars."
+            for n in dict.fromkeys(run.notes):
+                msg += " " + n
+            with contextlib.suppress(Exception):     # a stamp, never worth a failed apply
+                found = next((q for q in lib.list() if q.id == pid), None)
+                if found is not None:
+                    lib.touch(found)
+            self._chosen_preset = None
+            if not self.project.current().is_linear:
+                # Enhancements: the preset's own endpoint, and where Save as
+                # Preset lives. Crop would show a crop tool over a finished
+                # picture. A run that stayed linear (its Stretch failed) has
+                # no business on a post-stretch step.
+                self._go_to_id("enhancements", user_initiated=False)
+            else:
+                self._rebuild_panel()
+            self._refresh()
+            self._show_output(msg)
+            self._warn_auto_failures(f"Preset {shown}", run)
+
+        def on_error(_exc) -> None:
+            # Failed or cancelled as a whole: same reason as the zero-success
+            # branch, a discard may already have happened.
+            self._rebuild_panel()
+            self._refresh()
+
+        self._run_busy(work, on_result, f"Applying preset \u201c{shown}\u201d\u2026",
+                       "Preset failed", on_error=on_error)
 
     def _solve_current(self, img):
         """Blocking solve of a snapshotted display image; returns (SolveResult, objects)."""
@@ -3221,7 +3530,11 @@ class MainWindow(QMainWindow):
             if not self._button_step_pending(btn):
                 continue            # already committed by an earlier press
             before = self._last_entry()
-            btn.click()
+            if (self.current_stage_id() == "crop"
+                    and btn is getattr(self._panel, "apply_btn", None)):
+                self._apply_plain_crop()
+            else:
+                btn.click()
             if self._busy:
                 self._apply_run = (self.project, self._panel,
                                    self._expected_entry(btn), before, plan)
@@ -4233,6 +4546,10 @@ class MainWindow(QMainWindow):
             # Not a Next prompt — an untouched fresh box still has no work to
             # lose (`_pending_sources`) — but Apply is live and green.
             return "pending"
+        if (sid == "crop" and sid == self.current_stage_id()
+                and self._chosen_preset is not None and self.project is not None):
+            # A chosen preset is work Apply will do, box or no box.
+            return "not_run"
         # load/export have no Apply and no place in the truncation order.
         if sid not in ("load", "export") and self._step_has_commit(sid):
             return "applied"
@@ -4389,6 +4706,8 @@ class MainWindow(QMainWindow):
         wall_sync = getattr(self._panel, "wall_sync", None)
         if wall_sync is not None:
             wall_sync()          # re-derived, then swept below if busy
+        if sid == "crop":
+            self._sync_crop_preset()     # before set_state, which narrows its enabling
         apply_btn = getattr(self._panel, "apply_btn", None)
         if isinstance(apply_btn, ApplyButton):
             state = self._step_state(sid)
@@ -4412,6 +4731,7 @@ class MainWindow(QMainWindow):
             # Curves. The tail past the truncation point has to actually
             # contain one of THIS step's own names.
             reset_btn.setEnabled(pending or self._step_has_commit(sid))
+        self._sync_preset_action()
         self._sync_next_light()
         if self._busy:
             # Anything above may have switched a control on, and a panel built
@@ -5080,7 +5400,7 @@ class MainWindow(QMainWindow):
         else:
             try:
                 result = wrapped()
-            except Exception as exc:  # mirror the async error path
+            except (Exception, Cancelled) as exc:  # mirror the async error path (worker.py)
                 err(exc)
             else:
                 done(result)          # an on_result throw propagates after the finally
@@ -5161,6 +5481,8 @@ class MainWindow(QMainWindow):
         # picture's star tool (review 2026-10-05).
         self._sat_layers = self._sat_mask = None
         self._sat_failed = None
+        # A preset chosen for one picture is not a choice for the next.
+        self._chosen_preset = None
         self._recover_prep = self._lc_prep = None
         self._last_export = None
         self._solve = None
@@ -5225,7 +5547,8 @@ class MainWindow(QMainWindow):
             self._auto_enhance_act, self._stack_act, self._haoiii_act,
             self._combine_act, self._narrowband_act, self._cb_act, self._spikes_act,
             self._starless_levels_act, self._trim_act, self._upscale_act,
-            self._share_act, self._save_recipe_act, self._batch_act,
+            self._share_act, self._save_recipe_act, self._save_preset_act,
+            self._batch_act,
             self._open_project_menu_act, self._save_project_menu_act,
             self._save_project_as_act, self._recent_menu.menuAction(),
             self._close_project_act,
@@ -5380,6 +5703,10 @@ class MainWindow(QMainWindow):
                 self._panel.apply_btn.setEnabled(False)
             if hasattr(self._panel, "crop_size_label"):
                 self._panel.crop_size_label.setText("—")
+            if self._chosen_preset is not None:
+                # Apply stays live with no box when a preset is chosen (a
+                # Rotate lands here last).
+                self._sync_step_controls()
         else:
             self.image_view.set_crop_overlay(False)
 
@@ -5494,16 +5821,17 @@ class MainWindow(QMainWindow):
 
         self._run_busy(work, on_result, f"{op}…", f"{op} failed")
 
-    def _apply_geometry(self, name: str, params, shape: str | None = None) -> None:
+    def _apply_geometry(self, name: str, params, shape: str | None = None) -> bool:
         """`shape` is the Crop panel's stored shape name. It is RECORDED, not
         applied: the box already has that shape, and centre-cutting its
         whole-pixel bounds to the exact ratio again could shave a row the
-        preview showed."""
+        preview showed. True when it committed: Apply Crop + preset must not
+        run the preset after a declined confirm."""
         if self.project is None or self._busy:
-            return
+            return False
         target = self._leading_kept(self.project.entries(), set(GEOMETRY_NAMES))
         if not self._confirm_geometry(_GEOMETRY_LABEL.get(name, name), target):
-            return
+            return False
         self.project.jump_back(target)
         result = self._step_for("crop").apply(self.project.current(), params)
         option = "" if shape is None else dataclasses.replace(params, aspect=shape)
@@ -5514,6 +5842,7 @@ class MainWindow(QMainWindow):
         self._clear_warning()
         self._refresh()
         self._setup_crop_overlay()
+        return True
 
     def _rotate(self) -> None:
         self._apply_geometry("Rotate", CropParams(rotate=90))
@@ -5618,6 +5947,16 @@ class MainWindow(QMainWindow):
                               lambda: _display(remove_green(base, strength).data))
 
     def _apply_crop(self) -> None:
+        if self.project is None or self._busy:
+            return
+        if self._chosen_preset is not None:
+            self._apply_crop_and_preset()
+            return
+        self._apply_plain_crop()
+
+    def _apply_plain_crop(self) -> None:
+        """The box alone. Next's "Apply and continue" lands here even with a
+        preset chosen: the preset only runs from the button that names it."""
         if self.project is None or self._busy:
             return
         top, bottom, left, right = self.image_view.crop_bounds()
@@ -7458,6 +7797,8 @@ class MainWindow(QMainWindow):
             on_apply=self.apply_current,
             on_crop_apply=self._apply_crop,
             on_crop_change=self._on_crop_change,
+            on_presets=self._open_presets,
+            on_clear_preset=self._clear_preset,
             on_guides_change=self._on_guides_change,
             on_rotate=self._rotate,
             on_flip_h=self._flip_h,
@@ -7471,6 +7812,7 @@ class MainWindow(QMainWindow):
             on_tint_change=self._on_tint_change,
             on_apply_tint=self._apply_tint_step,
             on_enhance=self._enhance,
+            on_save_preset=self._save_preset,
             on_stretch_change=self._on_stretch_change,
             on_visual_stretch=self._open_stretch_picker,
             on_view_linked=self._set_view_linked,
@@ -7566,6 +7908,8 @@ class MainWindow(QMainWindow):
         if stage.id == "saturation":
             self._setup_saturation()
         self._update_explainer()
+        if stage.id == "crop":
+            self._resolve_held_preset()      # a Save as Preset or delete since
         # The new Apply starts at the component's own default state; decide
         # its real one now rather than wait for a caller's _refresh (a
         # star-split setup above may also have switched it on directly).

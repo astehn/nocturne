@@ -5,7 +5,8 @@ import sys
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QStyle,
-    QLineEdit, QPushButton, QRadioButton, QSlider, QVBoxLayout, QWidget,
+    QLineEdit, QPushButton, QRadioButton, QSlider, QToolButton, QVBoxLayout,
+    QWidget,
 )
 
 from .option_buttons import OptionButtons
@@ -230,6 +231,46 @@ DEFAULT_ENGINE = "Default"
 DEFAULT_BUILTIN = "Default (built-in)"
 
 
+def _add_preset_controls(w, controls, on_presets, on_clear_preset) -> None:
+    """Crop's "Presets…" and the chosen preset's chip, under Guides. Crop only:
+    the panel builder is shared by every step, so this is opt-in by
+    construction.
+
+    A real button, as Stretch's "Visual stretch…" is (Andreas, 2026-10-13,
+    his description in the spec). At 1280×800 it and the chip sit below the
+    card's ~208 px fold; what the chip says is always on the Apply button."""
+    btn = QPushButton("Presets…")
+    btn.setToolTip("Choose a saved preset to apply after the crop")
+    if on_presets is not None:
+        btn.clicked.connect(lambda: on_presets())
+    controls.addWidget(btn)
+
+    chip = QWidget()
+    row = QHBoxLayout(chip)
+    row.setContentsMargins(0, 2, 0, 0)
+    thumb = QLabel()
+    thumb.setFixedSize(48, 32)
+    thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    name = QLabel("")
+    name.setObjectName("stepDesc")
+    clear = QToolButton()
+    clear.setText("\u2715")
+    clear.setToolTip("Don't apply a preset")
+    clear.setAutoRaise(True)
+    if on_clear_preset is not None:
+        clear.clicked.connect(lambda: on_clear_preset())
+    row.addWidget(thumb)
+    row.addWidget(name, 1)
+    row.addWidget(clear)
+    chip.setVisible(False)
+    controls.addWidget(chip)
+    w.presets_btn = btn
+    w.preset_chip = chip
+    w.preset_chip_thumb = thumb
+    w.preset_chip_name = name
+    w.preset_chip_clear = clear
+
+
 def build_panel(
     stage,
     *,
@@ -237,6 +278,8 @@ def build_panel(
     on_apply=None,
     on_crop_apply=None,
     on_crop_change=None,
+    on_presets=None,
+    on_clear_preset=None,
     on_guides_change=None,
     on_rotate=None,
     on_flip_h=None,
@@ -246,6 +289,7 @@ def build_panel(
     on_remove_green=None,
     on_removegreen_change=None, on_tint_change=None, on_apply_tint=None,
     on_enhance=None,
+    on_save_preset=None,
     on_stretch_change=None,
     on_visual_stretch=None,
     on_view_linked=None,
@@ -453,6 +497,7 @@ def build_panel(
         w.flip_v_btn = flip_v
         w.apply_btn = w.primary_action = apply_btn
         w.crop_size_label = size
+        _add_preset_controls(w, controls, on_presets, on_clear_preset)
 
     elif stage.kind == "process":
         # Joined buttons, not a dropdown: every level visible, one click
@@ -597,6 +642,18 @@ def build_panel(
             ("soft_glow_btn", "Soft Glow", "Soft Glow"),
             ("sharpen_btn", "Sharpen Nebulosity", "Sharpen Nebulosity"),
         ]
+        # First, not after the taps: the taps already scroll at 1280x800 (464 px
+        # in a 208 px zone), so below them it would be out of sight; the action
+        # row is Apply/Reset only (owner, 2026-10-13: not on the toolbar). The
+        # icon tells it apart from the taps. MainWindow gates it with the menu item.
+        from .icons import load_icon
+        w.save_preset_btn = QPushButton(load_icon("save-preset"), "Save as Preset…")
+        w.save_preset_btn.setObjectName("savePreset")
+        w.save_preset_btn.setEnabled(False)
+        if on_save_preset is not None:
+            w.save_preset_btn.clicked.connect(lambda: on_save_preset())
+        controls.addWidget(w.save_preset_btn)
+        controls.addSpacing(6)
         for attr, label, op in _specs:
             btn = QPushButton(label)
             if on_enhance is not None:

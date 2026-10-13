@@ -206,8 +206,8 @@ class AutoRun(NamedTuple):
     """What `run_auto_plan` did. `results` and `engines` are aligned: one entry
     per applied stage; `failures` names every stage that raised."""
 
-    results: list[tuple[str, object, AstroImage]]   # (step.name, serialized option, image after)
-    failures: list[tuple[str, str]]                 # (step.name, short reason)
+    results: list[tuple[str, object, AstroImage]]   # (display name, serialized option, image after)
+    failures: list[tuple[str, str]]                 # (display name, short reason)
     engines: list[str | None]                       # step.last_engine per result (None: no engine)
     # A step's own message for the person (Color's sky-balance fallback or its
     # dual-band step-aside): the steps are built here, so the caller cannot ask them.
@@ -230,7 +230,7 @@ def _short_reason(exc: BaseException) -> str:
 
 
 def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runner=run_cli,
-                   on_progress=None) -> AutoRun:
+                   on_progress=None, levels_auto: bool = True) -> AutoRun:
     """Apply an auto-enhance plan (as built by build_auto_plan) in order,
     starting from `base` and threading the image forward through each stage.
 
@@ -243,7 +243,10 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
     per-image auto-detection instead of trusting a possibly-stale bounds
     computed when the plan was built.
 
-    Returns an AutoRun. Its `results` hold (step.name, serialized_option,
+    `levels_auto` is Auto Enhance's: its Levels is re-derived per image. A
+    user preset passes False, so the Levels the person saved is applied as saved.
+
+    Returns an AutoRun. Its `results` hold (display name, serialized_option,
     image_after_step) per successfully-applied step -- the display name and a
     serialize_option() encoding (fine for recording/display; only the apply
     above must use the native option) so the caller can fold each stage into
@@ -253,7 +256,7 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
     Robust to a single stage failing (e.g. an external tool subprocess
     errors): that stage is skipped -- not recorded, image left unchanged --
     and the rest of the chain still runs. It is no longer silent: each one is
-    in `failures` as (step.name, short reason), for the caller to show, and
+    in `failures` as (display name, short reason), for the caller to show, and
     its whole text in `failure_details`, for the session log.
     Cancelled is a BaseException and propagates; it is never a failure."""
     from .tasks import Cancelled, current
@@ -271,10 +274,18 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
             raise Cancelled()      # stop the chain cleanly between steps (a mid-step
                                    # subprocess is already killed via run_cli's token)
         step = make_step(stage_id, settings, bg_runner=bg_runner, rc_runner=rc_runner)
+        name = step.name           # until display_name answers, inside the try
         try:
+            # A tap is named by the tap ("Vibrance"), not by its step ("Enhancements").
+            name = step.display_name(option)
+            # Announced BEFORE it runs: the busy label names the stage that is
+            # working now. Called after, it named the previous one, so a slow
+            # Noise Reduction showed "De-green Stars" over NR's own tile counter.
+            if on_progress is not None:
+                on_progress(i + 1, n, name)
             if stage_id == "crop":
                 option = _auto_crop_option(img)
-            elif stage_id == "levels":
+            elif stage_id == "levels" and levels_auto:
                 # Was black-point-only here because auto_levels' adaptive gamma
                 # lifted midtones and produced a milky look. That is fixed at
                 # source (2026-08-20) — auto_levels now returns gamma and white
@@ -289,17 +300,13 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
                 option = LEVELS_AUTO
             result = step.apply(img, option)
         except Exception as exc:
-            failures.append((step.name, _short_reason(exc)))
+            failures.append((name, _short_reason(exc)))
             details.append("".join(traceback.format_exception(exc)).rstrip())
-            if on_progress is not None:
-                on_progress(i + 1, n, step.name)
             continue
         img = result
         recorded = getattr(step, "recorded_option", lambda o: o)(option)
-        results.append((step.name, serialize_option(stage_id, recorded), img))
+        results.append((name, serialize_option(stage_id, recorded), img))
         engines.append(getattr(step, "last_engine", None))
         if getattr(step, "last_message", ""):
             notes.append(step.last_message)
-        if on_progress is not None:
-            on_progress(i + 1, n, step.name)
     return AutoRun(results, failures, engines, tuple(notes), tuple(details))

@@ -88,4 +88,17 @@ def make_step(stage_id: str, settings: Settings, *, bg_runner=run_cli, rc_runner
         step = NarrowbandStep(_splitter(settings))
         step._runner = rc_runner
         return step
+    if stage_id == "enhance":
+        from .enhance_step import EnhanceTapStep
+        step = EnhanceTapStep(_splitter(settings))
+        step._runner = rc_runner
+        return step
+    if stage_id == "star_spikes":
+        from .star_spikes_step import StarSpikesStep
+        return StarSpikesStep()
+    if stage_id == "starless_levels":
+        from .starless_levels_step import StarlessLevelsStep
+        step = StarlessLevelsStep(_splitter(settings))
+        step._runner = rc_runner
+        return step
     raise ValueError(stage_id)
