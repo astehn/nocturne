@@ -234,6 +234,8 @@ def test_run_auto_plan_reports_progress():
 def test_run_auto_plan_skips_failing_step_and_continues():
     class _Boom:
         name = "Boom"
+        def display_name(self, option):
+            return self.name
         def apply(self, img, option):
             raise RuntimeError("external tool exploded")
 

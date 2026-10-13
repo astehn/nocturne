@@ -12,6 +12,7 @@ from nocturne.core.image import AstroImage
 from nocturne.core.narrowband import GOLD_BLUE, palette_defaults
 from nocturne.recipe import LEVELS_AUTO
 from nocturne.settings import Settings
+from nocturne.steps.factory import make_step
 from nocturne.steps.stretch_step import new_stretch_option
 
 
@@ -367,3 +368,32 @@ def test_gold_and_blue_runs_end_to_end_on_dualband(tmp_path):
     assert run.failures == []
     assert [n for n, _o, _im in run.results][-2:] == ["Star Reduction", "Narrowband"]
     assert run.results[-1][1]["palette"] == GOLD_BLUE
+
+
+def test_levels_auto_false_applies_saved_levels_as_saved():
+    from nocturne.core.levels import apply_levels
+    img = _img()
+    stretched = make_step("stretch", Settings()).apply(img, {"amount": 0.3, "linked": True})
+    run = run_auto_plan(stretched, [("levels", (0.05, 1.0, 0.9))], Settings(), levels_auto=False)
+    (name, option, out), = run.results
+    assert name == "Levels" and option == [0.05, 1.0, 0.9]
+    import numpy as np
+    np.testing.assert_array_equal(out.data, apply_levels(stretched, 0.05, 1.0, 0.9).data)
+
+
+def test_levels_auto_default_is_unchanged_for_auto_enhance():
+    from nocturne.recipe import LEVELS_AUTO
+    img = _img()
+    run = run_auto_plan(img, [("levels", (0.05, 1.0, 0.9))], Settings())
+    assert run.results[0][1] == LEVELS_AUTO
+
+
+def test_a_tap_is_recorded_under_its_own_name_with_an_empty_option():
+    img = _img()
+    run = run_auto_plan(img, [("enhance", "Vibrance")], Settings())
+    assert [(n, o) for n, o, _ in run.results] == [("Vibrance", "")]
+
+
+def test_a_failing_tap_is_named_by_the_tap():
+    run = run_auto_plan(_img(), [("enhance", "Nonsense")], Settings())
+    assert run.failures[0][0] == "Nonsense"

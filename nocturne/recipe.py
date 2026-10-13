@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from .core.color import ColorSettings
 from .core.crop import CropParams
-from .ui.pipeline import STEP_NAME, ENHANCE_NAMES
+from .ui.pipeline import STEP_NAME, ENHANCE_NAMES, GEOMETRY_NAMES
 
 _NAME_TO_STAGE = {name: sid for sid, name in STEP_NAME.items()}
 from .core.levels import AUTO as LEVELS_AUTO   # re-exported: the one definition
@@ -52,6 +52,18 @@ RETIRED_STAGES = {"ai_denoise": "Linear Denoise"}   # retired 2026-10-05
 
 def retired_reason(stage_id) -> str:
     return f"{RETIRED_STAGES[stage_id]} is no longer part of Nocturne — skipped"
+
+
+# Steps a PRESET carries and a recipe does not. Starless Levels' two values come
+# from a person looking at one picture, so a batch over different targets must
+# not replay them (the same argument serialize_option makes for Colour Balance's
+# measured band); a preset is applied to a similar target, on screen, as an
+# editable starting point. Star Spikes is here because Save Recipe stays as it
+# is (presets spec, 2026-10-13). Kept out of _NAME_TO_STAGE on purpose.
+PRESET_ONLY_STAGES = {"Star Spikes": "star_spikes", "Starless Levels": "starless_levels"}
+# Each picture's own geometry and finishing crop: never part of a preset (spec).
+PRESET_EXCLUDED_NAMES = frozenset(GEOMETRY_NAMES)
+_SPIKE_KEYS = ("length", "count", "angle", "intensity", "variation", "colour")
 
 
 @dataclass
@@ -158,6 +170,14 @@ def serialize_option(stage_id, option):
             "protect_background": p.protect_background, "scnr": p.scnr,
             "gold_strength": p.gold_strength, "blue_strength": p.blue_strength,
         }
+    if stage_id == "star_spikes":
+        o = option if isinstance(option, dict) else {}
+        return {"length": float(o["length"]), "count": int(o["count"]),
+                "angle": float(o["angle"]), "intensity": float(o["intensity"]),
+                "variation": float(o["variation"]), "colour": float(o["colour"])}
+    if stage_id == "starless_levels":
+        b, w = option
+        return [float(b), float(w)]
     return option  # background / noise_sharpen: str
 
 
@@ -224,30 +244,51 @@ def deserialize_option(stage_id, value):
         # takes its palette's own defaults, not HOO's.
         from .steps.narrowband_step import parse_narrowband_option
         return parse_narrowband_option(value)
+    if stage_id == "starless_levels":
+        return (float(value[0]), float(value[1]))
     return value
 
 
-def recipe_from_entries(entries) -> Recipe:
+def _classify(name, option, scope) -> str | None:
+    """The stage id an entry is stored under, "" when the scope excludes it by
+    design, or None when it cannot be captured (and must be named). One rule
+    for both public functions, so what is stored and what is named as left out
+    cannot disagree."""
+    if scope == "preset" and name in PRESET_EXCLUDED_NAMES:
+        return ""
+    if name in ENHANCE_NAMES:
+        return "enhance"
+    sid = _NAME_TO_STAGE.get(name)
+    if sid is None and scope == "preset":
+        sid = PRESET_ONLY_STAGES.get(name)
+        # An entry recorded before the step kept its values (Star Spikes before
+        # 2026-09-17 recorded "") cannot be replayed, so it is named instead.
+        if sid == "star_spikes" and not (isinstance(option, dict)
+                                         and all(k in option for k in _SPIKE_KEYS)):
+            return None
+        if sid == "starless_levels" and not (isinstance(option, (list, tuple))
+                                             and len(option) == 2):
+            return None
+    return sid
+
+
+def recipe_from_entries(entries, *, scope: str = "recipe") -> Recipe:
     steps = []
     for name, option in entries:
-        if name in ENHANCE_NAMES:
-            steps.append({"stage": "enhance", "option": name})
+        sid = _classify(name, option, scope)
+        if not sid:
             continue
-        sid = _NAME_TO_STAGE.get(name)
-        if sid is None:
-            continue
-        steps.append({"stage": sid, "option": serialize_option(sid, option)})
+        steps.append({"stage": "enhance", "option": name} if sid == "enhance"
+                     else {"stage": sid, "option": serialize_option(sid, option)})
     return Recipe(steps=steps)
 
 
-def uncaptured_step_names(entries) -> list[str]:
-    """Distinct applied-step names a recipe can't serialize yet (e.g. the
-    Enhancements taps), in first-seen order. Empty when everything the
-    user applied is representable in a recipe."""
+def uncaptured_step_names(entries, *, scope: str = "recipe") -> list[str]:
+    """Distinct applied-step names the scope can't carry, in first-seen order.
+    A step a preset excludes by design (geometry, Trim) is not "left out"."""
     seen: list[str] = []
-    for name, _ in entries:
-        if (_NAME_TO_STAGE.get(name) is None and name not in ENHANCE_NAMES
-                and name not in seen):
+    for name, option in entries:
+        if _classify(name, option, scope) is None and name not in seen:
             seen.append(name)
     return seen
 
@@ -290,7 +331,7 @@ class StepPlan:
         return self.outcome != "fail"
 
 
-def _step_display_name(stage_id) -> str:
+def step_display_name(stage_id, option=None) -> str:
     """The name the user knows a step by.
 
     STEP_NAME only covers the STEPPER stages, so every tool and geometry step —
@@ -302,12 +343,20 @@ def _step_display_name(stage_id) -> str:
 
     if not stage_id:
         return "?"
+    if stage_id == "enhance":
+        return str(option)
     if stage_id in STEP_NAME:
         return STEP_NAME[stage_id]
     for name, sid in _NAME_TO_STAGE.items():
         if sid == stage_id:
             return name
+    for name, sid in PRESET_ONLY_STAGES.items():
+        if sid == stage_id:
+            return name
     return stage_id
+
+
+_step_display_name = step_display_name   # existing callers
 
 
 
