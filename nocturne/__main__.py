@@ -12,6 +12,7 @@ from .core.applog import configure_logging
 from .core.certs import configure_ssl
 from .core import sessionlog
 from .settings import autoconfigure_tools, resolve_settings_path
+from .ui import single_instance
 from .ui.fonts import load_bundled_fonts
 from .ui.main_window import MainWindow, write_environment
 from .ui.splash import MIN_SPLASH_SECONDS, make_splash
@@ -281,6 +282,13 @@ def main() -> None:
     # every HTTPS call then fails silently — see core/certs.py.
     configure_ssl()
 
+    # A file opened while Nocturne already runs goes to that window (Windows,
+    # Linux; macOS routes documents itself). FIRST, before the log and the
+    # session log are opened: this launch must not rotate session.log under the
+    # running window, and it leaves without a window of its own.
+    if single_instance.hand_over(sys.argv):
+        raise SystemExit(0)
+
     # A packaged app has no console, so the stacking phase timings had nowhere
     # to go: they were logged at INFO on a logger with no handler, and Python's
     # last-resort handler drops anything below WARNING. A 1233-frame drizzle ran
@@ -335,8 +343,13 @@ def main() -> None:
     app.setApplicationName(APP_NAME)
     # Straight after the QApplication: macOS sends a double-clicked document
     # as an event as soon as the app can take one, before any window exists.
-    from .ui.open_requests import OpenRequests, path_from_argv
+    from .ui.open_requests import OpenRequests
     open_requests = OpenRequests(app)
+    # The running instance's half of hand_over above. Early, so a file opened
+    # while this window is still being built waits for it like a macOS one.
+    # Where it runs it also requests this launch's own file, before listening,
+    # so a file forwarded during startup is the later request and is kept.
+    instance_server = single_instance.serve(open_requests, sys.argv)  # noqa: F841 — kept alive
 
     # After the QApplication (addApplicationFont needs one) and before any
     # window: a plate drawn before these families register silently substitutes
@@ -417,7 +430,7 @@ def main() -> None:
 
     # `Nocturne image.fits` opens it, on both platforms; then any file macOS
     # sent while the window was being built.
-    argv_path = path_from_argv(sys.argv)
+    argv_path = single_instance.argv_path_after_window(sys.argv)
     if argv_path:
         open_requests.request(argv_path)
     open_requests.attach(win)
