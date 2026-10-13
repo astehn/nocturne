@@ -2318,7 +2318,7 @@ class MainWindow(QMainWindow):
         """Is the picture a preset would run on linear? That is the CROPPED
         base: Apply discards everything after the leading geometry first."""
         kept = self._leading_kept(self.project.entries(), set(GEOMETRY_NAMES))
-        return self.project.is_linear_at(kept)
+        return bool(self.project.is_linear_at(kept))
 
     def _sync_crop_preset(self) -> None:
         """Crop's chip, Presets… and Apply's label and enabling, from the
