@@ -59,8 +59,9 @@ QToolBar::separator {{ background: {BORDER}; width: 1px; margin: 4px 6px; }}
 /* 8 px sides, not 10: with text, the never-leave tools + More then fit a
    1280 window (measured 2026-09-26: ~20 px short at 10). */
 QToolBar QToolButton {{ padding: 6px 8px; border-radius: 8px; color: {TEXT_DIM}; }}
-/* Icons only (Settings ▸ General): tighter, so the whole bar fits at 1280. */
-QToolBar[iconsOnly="true"] QToolButton {{ padding: 6px 5px; }}
+/* Icons only (Settings ▸ General): tighter, so the whole bar fits at 1280.
+   4 px, not 5: Save as Preset made it ~30 px short (2026-10-13; 17 px spare at 4). */
+QToolBar[iconsOnly="true"] QToolButton {{ padding: 6px 4px; }}
 QToolBar QToolButton:hover {{ background: {BG_3}; color: {TEXT}; }}
 QToolBar QToolButton:pressed {{ background: {BORDER}; }}
 QToolBar QToolButton:checked {{ background: {BG_3}; color: {ACCENT}; }}
