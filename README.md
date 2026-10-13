@@ -73,7 +73,8 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
 ## Requirements
 
 - **macOS on Apple Silicon** (M1 or newer) — a prebuilt `Nocturne.app`; see below. No Intel-Mac build yet.
-- **Linux on x86-64** — a prebuilt tarball, built on Ubuntu 24.04 so it needs glibc 2.39 or newer. Unpack it anywhere and run `Nocturne/Nocturne`; there is nothing to install. Windows is possible from source — see [Building](#building).
+- **Linux on x86-64** — a prebuilt tarball, built on Ubuntu 24.04 so it needs glibc 2.39 or newer. Unpack it anywhere and run `Nocturne/Nocturne`; there is nothing to install.
+- **Windows 11, 64-bit** — a prebuilt installer that needs no administrator rights; see below. Tested on Windows 11 Pro; Windows 10 has not been tried.
 - **[GraXpert](https://www.graxpert.com/)** — free. Powers background/gradient extraction and one of the denoise engines; the one tool worth installing first. Point Nocturne at it in **Settings**.
 - **[StarNet2](https://starnetastro.com/cli-tools/starnet/)** — free. Splits an image into starless and stars, which ten steps and tools depend on (Star Reduction, De-green Stars, Nebula Saturation, Narrowband, Starless Levels, Star Colour, Sharpen Nebulosity, Upscale Crop, Auto Enhance and Colour Balance). Take the **CLI** package, not the PixInsight module. Without it those fall back to Nocturne's own separator, which leaves roughly twice as much star flux behind.
 - **[ASTAP](https://www.hnsky.org/astap.htm)** — free, **optional**. Adds plate-solving, target identification and annotation. Install it *and its D05 star database* (from the ASTAP page), then set the path in Settings.
@@ -85,7 +86,7 @@ Nocturne drives these as separate installs and does not bundle them.
 
 ### Download
 
-Every release, for both platforms, is on the [downloads page](https://nocturneastro.com/download.html) or in [Releases](../../releases).
+Every release, for every platform, is on the [downloads page](https://nocturneastro.com/download.html) or in [Releases](../../releases).
 
 **macOS** — grab `Nocturne.app` (**Apple Silicon**, M1 or newer), drag it to Applications, and open it.
 
@@ -102,13 +103,20 @@ tar -xzf Nocturne-<version>-linux-x86_64.tar.gz
 > [!NOTE]
 > Built on Ubuntu 24.04, so it needs **glibc 2.39 or newer** (`ldd --version`). It will not start on Ubuntu 22.04.
 
+**Windows** — grab `Nocturne-<version>-windows-x64-setup.exe` and run it. It installs for your user only, into `%LOCALAPPDATA%\Programs\Nocturne`, so it needs no administrator rights. It adds a Start menu entry and offers a desktop icon. Double-clicking a `.nocturne` project opens it in Nocturne, and `.fits` / `.fit` / `.fts` files list Nocturne under **Open with** without changing their default program. To update, run the newer installer; to remove Nocturne, use **Settings → Apps → Installed apps**. Your settings and images are left in place.
+
+> [!NOTE]
+> The installer isn't signed yet, so Windows may show **Windows protected your PC**. Click **More info**, then **Run anyway**. Each new version is a new unsigned file, so the warning comes back with every update.
+
+On Windows, Nocturne finds GraXpert, StarNet2 and ASTAP in their usual install locations. It has not been checked against an RC-Astro install there yet, so set RC-Astro's path in **Settings** with **Browse…**.
+
 ### Run from source
 
 ```bash
 git clone https://github.com/astehn/nocturne.git
 cd nocturne
 python3.11 -m venv .venv           # Python 3.11+
-source .venv/bin/activate
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -e .
 python -m nocturne
 ```
@@ -136,7 +144,11 @@ pip install pyinstaller matplotlib      # matplotlib is a build-only dep (astrop
 pyinstaller packaging/nocturne.spec --noconfirm --workpath build/pyi --distpath dist
 ```
 
-PyInstaller can't cross-compile, so a Windows `.exe` must be built on Windows (a GitHub Actions `windows-latest` runner is the intended path).
+PyInstaller can't cross-compile, so each platform is built on its own machine. Linux uses `packaging/build_linux.sh`. Windows uses `packaging/build_windows.ps1`, run on a Windows machine in a checkout with its `.venv`: it builds with PyInstaller, runs the frozen app's self-tests, and compiles the installer from `packaging/nocturne.iss` with [Inno Setup](https://jrsoftware.org/isinfo.php) 6.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File packaging\build_windows.ps1
+```
 
 ## Built with
 
