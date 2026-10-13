@@ -116,21 +116,55 @@ a = Analysis(
               "onnx", "torch"],   # matplotlib intentionally NOT excluded (see top-of-file note)
     noarchive=False,
 )
-# One spec, two platforms. The Analysis above is the valuable part — the prune
-# list, the named assets, the excludes, each with a scar behind it — and a
-# second spec for Linux would be a copy of all of it, free to drift. Only the
-# packaging tail differs: macOS wants a .app BUNDLE, Linux wants the COLLECT
-# directory, which build_linux.sh tars up.
+# One spec, three platforms. The Analysis above is the valuable part — the
+# prune list, the named assets, the excludes, each with a scar behind it — and a
+# second spec per OS would be a copy of all of it, free to drift. Only the
+# packaging tail differs: macOS wants a .app BUNDLE, Linux and Windows want the
+# COLLECT directory, which build_linux.sh tars and build_windows.ps1 packs
+# into an installer (nocturne.iss).
 _MAC = sys.platform == "darwin"
+_WIN = sys.platform == "win32"
+
+
+def _windows_exe_kwargs():
+    """Icon and version resource for Nocturne.exe — what Explorer's Properties ▸
+    Details and the taskbar show. Built from __version__ for the same reason the
+    Info.plist is: a hardcoded number drifts from the About dialog."""
+    from PyInstaller.utils.win32.versioninfo import (
+        FixedFileInfo, StringFileInfo, StringStruct, StringTable, VarFileInfo,
+        VarStruct, VSVersionInfo)
+    nums = [int(n) for n in _re.findall(r"\d+", APP_VERSION)[:4]]
+    quad = tuple(nums + [0] * (4 - len(nums)))
+    strings = [StringStruct(k, v) for k, v in (
+        ("CompanyName", "Nocturne"),
+        ("FileDescription", "Nocturne"),
+        ("FileVersion", APP_VERSION),
+        ("InternalName", "Nocturne"),
+        ("OriginalFilename", "Nocturne.exe"),
+        ("ProductName", "Nocturne"),
+        ("ProductVersion", APP_VERSION),
+    )]
+    version = VSVersionInfo(
+        ffi=FixedFileInfo(filevers=quad, prodvers=quad),
+        kids=[StringFileInfo([StringTable("040904B0", strings)]),
+              VarFileInfo([VarStruct("Translation", [0x0409, 1200])])])
+    return {"icon": os.path.join(SPECPATH, "nocturne.ico"), "version": version}
+
 
 pyz = PYZ(a.pure)
 exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Nocturne",
+          # Windowed on every OS. On Windows that means the GUI subsystem: no
+          # console window behind the app, and none flashing up for the
+          # --stack-job child or a pool worker either. The --check-* self tests
+          # still print, because a GUI-subsystem process inherits a REDIRECTED
+          # stdout (a pipe, a file) — see build_windows.ps1.
           console=False,
           # OFF since 2026-10-06. It turned a document macOS asked us to open
           # into argv at launch — which nothing ever read — and by consuming
           # that Apple event it kept Qt from delivering the QFileOpenEvent that
           # nocturne/ui/open_requests.py now handles, at launch AND while running.
-          argv_emulation=False)
+          argv_emulation=False,
+          **(_windows_exe_kwargs() if _WIN else {}))
 coll = COLLECT(exe, a.binaries, a.datas, name="Nocturne")
 app = _MAC and BUNDLE(
     coll,

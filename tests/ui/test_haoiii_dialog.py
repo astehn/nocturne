@@ -553,3 +553,21 @@ def test_a_new_user_opens_haoiii_with_the_options_folded(qtbot):
     kept = HaOIIIDialog(Settings(frame_options_folded=False))
     qtbot.addWidget(kept)
     assert not kept.options_band.is_folded()
+
+
+def test_it_opens_at_700_when_the_layout_fits(qtbot):
+    dlg = HaOIIIDialog(Settings())
+    qtbot.addWidget(dlg)
+    assert dlg.minimumSizeHint().height() < 700       # the precondition
+    assert (dlg.width(), dlg.height()) == (1100, 700)
+
+
+def test_it_never_opens_below_its_own_layout_minimum(qtbot, monkeypatch):
+    """Windows, Segoe UI: the layout wanted 701 px and a fixed 700 made Windows
+    refuse the geometry. Taller fonts are simulated by a taller minimum."""
+    from PySide6.QtCore import QSize
+
+    monkeypatch.setattr(HaOIIIDialog, "minimumSizeHint", lambda self: QSize(560, 840))
+    dlg = HaOIIIDialog(Settings())
+    qtbot.addWidget(dlg)
+    assert dlg.height() == 840

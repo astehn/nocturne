@@ -122,6 +122,85 @@ def _check_codecs() -> int:
     return 2 if bad else 0
 
 
+def _starnet_probe_image():
+    """A small frame StarNet2 can work on: a soft gradient plus Gaussian stars,
+    non-linear like the stretched image the app hands it. Colour, because a grey
+    one takes StarNet2's mono path; 512 px, because at 256 it refuses ("Image
+    size is too small for the window"). Seconds, not a master's minutes."""
+    import numpy as np
+
+    from .core.image import AstroImage
+
+    n = 512
+    yy, xx = np.mgrid[0:n, 0:n].astype(np.float32)
+    base = 0.12 + 0.05 * (xx / n)
+    rng = np.random.default_rng(1)
+    stars = np.zeros((n, n), np.float32)
+    for x, y in rng.uniform(16, n - 16, (40, 2)):
+        stars += 0.8 * np.exp(-((xx - x) ** 2 + (yy - y) ** 2) / (2 * 1.6 ** 2))
+    tint = np.array([1.0, 0.85, 0.7], np.float32)       # warm stars, a red-ish sky
+    sky = np.stack([base * 1.2, base, base * 0.9], axis=2)
+    rgb = sky + stars[..., None] * tint + rng.normal(0, 0.005, (n, n, 3))
+    return AstroImage(np.clip(rgb, 0, 1).astype(np.float32), is_linear=False), stars
+
+
+def _check_tools() -> int:
+    """Where this build finds the external tools, and whether what only the
+    BUNDLE can get wrong works: StarNet2 run for real when it is installed (a
+    child process, and its LZW+predictor TIFF read back through the bundle's own
+    imagecodecs), sep's Windows seeding, onnxruntime's deliberate absence.
+
+    Exit codes:
+
+        0  everything that could be checked on this machine worked.
+        2  something that IS checkable failed: StarNet2 is installed and the
+           split did not work, or sep is unseeded on Windows.
+
+    A tool that is not installed is not a failure — a build machine need not
+    own GraXpert — so it prints "(not found)" and moves on.
+    """
+    import time
+
+    import numpy as np
+
+    from .core import nr_models
+    from .settings import TOOL_CANDIDATES, Settings, detect_tool_paths
+
+    print(f"frozen        : {getattr(sys, 'frozen', False)}")
+    found = detect_tool_paths(Settings())
+    for field in TOOL_CANDIDATES:
+        print(f"{field:14}: {found.get(field, '(not found)')}")
+    bad = []
+    if os.name == "nt":
+        import sep
+        seeded = hasattr(sep.extract, "__wrapped__")
+        print(f"sep seeded    : {seeded}")
+        if not seeded:
+            bad.append("sep")
+    print(f"onnxruntime   : {nr_models.runtime_available()}")
+    starnet = found.get("starnet_path")
+    if starnet:
+        from .tools.starnet import StarNet
+        img, stars = _starnet_probe_image()
+        t0 = time.monotonic()
+        try:
+            starless, stars_only = StarNet(starnet).remove_stars(img)
+            # Where the stars were, the starless image must have lost them.
+            peak = stars > 0.4
+            lum = lambda a: a.mean(axis=2) if a.ndim == 3 else a   # noqa: E731
+            drop = float(np.mean(lum(img.data)[peak] - lum(starless.data)[peak]))
+            ok = starless.data.shape == img.data.shape and drop > 0.1
+            print(f"starnet split : {'OK' if ok else 'STARS NOT REMOVED'} "
+                  f"({time.monotonic() - t0:.1f} s, star peaks down {drop:.2f})")
+            if not ok:
+                bad.append("starnet")
+        except Exception as exc:                  # noqa: BLE001 - reporting tool
+            print(f"starnet split : FAILED {type(exc).__name__}: {exc}")
+            bad.append("starnet")
+    print(f"tools         : {'OK' if not bad else 'BROKEN ' + ', '.join(bad)}")
+    return 2 if bad else 0
+
+
 # Height only. The WIDTH is asked of the window itself at startup — see
 # preferred_size. Two hardcoded guesses at it were wrong in a row (1280 shipped
 # for months; 1600 and 1760 were measured on the offscreen platform, which
@@ -229,6 +308,10 @@ def main() -> None:
     # release can run it headless on the artifact it is about to publish.
     if "--check-codecs" in sys.argv:
         raise SystemExit(_check_codecs())
+
+    # External tools as THIS build sees them, StarNet2 run for real if found.
+    if "--check-tools" in sys.argv:
+        raise SystemExit(_check_tools())
 
     # A backgrounded stack runs as a child of this same executable, and is
     # dispatched HERE for the same reason --check-network is: the child has no

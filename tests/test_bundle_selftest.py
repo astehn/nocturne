@@ -171,3 +171,59 @@ def test_the_dependency_guard_would_have_caught_imagecodecs():
     package that actually shipped broken."""
     assert _risky("imagecodecs"), \
         "the guard no longer sees imagecodecs as capable of shipping half-present"
+
+
+# --- --check-tools ---------------------------------------------------------
+
+def _tools_check(monkeypatch, capsys, found, remove_stars=None):
+    import nocturne.__main__ as entry
+    import nocturne.settings as settings_mod
+    from nocturne.tools import starnet
+
+    monkeypatch.setattr(settings_mod, "detect_tool_paths", lambda s, *a, **k: dict(found))
+    if remove_stars is not None:
+        monkeypatch.setattr(starnet.StarNet, "remove_stars",
+                            lambda self, img: remove_stars(img))
+    code = entry._check_tools()
+    return code, capsys.readouterr().out
+
+
+def test_the_tools_check_passes_a_starnet_that_removes_the_stars(monkeypatch, capsys):
+    import nocturne.__main__ as entry
+    from nocturne.core.image import AstroImage
+
+    def split(img):
+        _, stars = entry._starnet_probe_image()
+        return AstroImage(img.data - stars[..., None], False), img
+    code, out = _tools_check(monkeypatch, capsys, {"starnet_path": "/x/starnet2"}, split)
+    assert code == 0, out
+    assert "starnet split : OK" in out
+
+
+def test_the_tools_check_fails_a_starnet_that_leaves_the_stars(monkeypatch, capsys):
+    """Teeth: an output that comes back is not an output that worked."""
+    code, out = _tools_check(monkeypatch, capsys, {"starnet_path": "/x/starnet2"},
+                             lambda img: (img, img))
+    assert code == 2, out
+    assert "STARS NOT REMOVED" in out
+
+
+def test_the_tools_check_fails_a_starnet_that_raises(monkeypatch, capsys):
+    def boom(img):
+        raise ImportError("could not import name 'lzw_decode' from 'imagecodecs'")
+    code, out = _tools_check(monkeypatch, capsys, {"starnet_path": "/x/starnet2"}, boom)
+    assert code == 2
+    assert "lzw_decode" in out
+
+
+def test_a_tool_that_is_not_installed_is_not_a_failure(monkeypatch, capsys):
+    code, out = _tools_check(monkeypatch, capsys, {})
+    assert "starnet_path  : (not found)" in out
+    if sys.platform != "win32":
+        assert code == 0, out
+
+
+def test_the_tools_check_returns_before_a_window_is_created():
+    src = (ROOT / "nocturne" / "__main__.py").read_text(encoding="utf-8")
+    body = src.split("def main()")[1]
+    assert body.index('"--check-tools" in sys.argv') < body.index("QApplication(sys.argv)")

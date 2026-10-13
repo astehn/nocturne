@@ -56,16 +56,15 @@ def _picker_row(edit: QLineEdit, on_browse) -> QWidget:
     return row
 
 
+_OPEN_HEIGHT = 700
+
+
 class HaOIIIDialog(QDialog):
     def __init__(self, settings, parent=None, on_master=None,
                  on_settings_changed=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Ha/OIII extract")
         self.setMinimumWidth(560)
-        # Stack's opening size. Left to its size hint it opened 832 px wide
-        # (cocoa), a 351 px list with Verdict behind a scrollbar; 700 tall
-        # fits the 800 px laptop with the options open (688 px needed, cocoa).
-        self.resize(1100, 700)
         self._settings = settings
         self._on_master = on_master
         self._on_settings_changed = on_settings_changed
@@ -214,6 +213,15 @@ class HaOIIIDialog(QDialog):
         root.addWidget(self.progress)
         root.addWidget(self.status)
         root.addLayout(buttons)
+
+        # Stack's opening size. Left to its size hint it opened 832 px wide
+        # (cocoa), a 351 px list with Verdict behind a scrollbar; 700 tall
+        # fits the 800 px laptop with the options open (688 px needed, cocoa).
+        # Never below the layout's own minimum, though, which is why this sits
+        # AFTER the layout: Segoe UI is taller than the Mac's font, and a fixed
+        # 700 under a 701 px minimum had Windows refuse the geometry
+        # ("QWindowsWindow::setGeometry: Unable to set geometry 1100x701").
+        self.resize(1100, max(_OPEN_HEIGHT, self.minimumSizeHint().height()))
 
     # --- the option band's and the chart's folds ---
     def _on_options_folded(self, folded: bool) -> None:
