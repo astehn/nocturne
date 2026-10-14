@@ -156,7 +156,7 @@ def test_delete_asks_and_removes(qtbot, tmp_path):
 def test_empty_state_explains_how_presets_are_made(qtbot, tmp_path):
     b = _browser(qtbot, up.PresetLibrary(str(tmp_path / "none")))
     assert b.empty_label.isVisibleTo(b) and "Save as Preset" in b.empty_label.text()
-    assert "Enhancements" in b.empty_label.text()
+    assert "through to Export" in b.empty_label.text()   # where the button is
 
 
 def test_use_no_preset_clears(qtbot, tmp_path):

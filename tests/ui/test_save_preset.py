@@ -42,7 +42,8 @@ def test_disabled_on_a_linear_picture_even_at_enhancements(qtbot, tmp_path):
     assert win.current_stage_id() == "enhancements"
     assert win.project.is_linear_at(win.project.position)
     assert not win._save_preset_act.isEnabled()
-    assert "Enhancements first" in win._save_preset_act.toolTip()
+    # The real reason: it is at the step, it is not stretched (review 2026-10-14).
+    assert "Stretch the picture first" in win._save_preset_act.toolTip()
     _to(win, "export")                                # no auto-stretch on the way
     assert win.project.is_linear_at(win.project.position)
     assert not win._panel.save_preset_btn.isEnabled()

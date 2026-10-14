@@ -257,11 +257,9 @@ class _GalleryDialog(QDialog):
         self.setWindowTitle("Share to the gallery")
         self.setModal(True)
         self.setMinimumWidth(420)
+        # No title label: the window's own title bar says it (a window-modal
+        # QDialog is a titled window on macOS too, not a sheet).
         lay = QVBoxLayout(self)
-        title = QLabel("Share to the gallery")
-        title.setObjectName("stageTitle")
-        title.setIndent(0)
-        lay.addWidget(title)
         self.body = QVBoxLayout()
         lay.addLayout(self.body)
         lay.addSpacing(8)
@@ -339,7 +337,7 @@ def build_panel(
     on_flip_h=None,
     on_flip_v=None,
     on_export=None,
-    wall_fields=None, wall_handle="", on_wall_submit=None,
+    wall_fields=None, wall_handle="", on_wall_submit=None, wall_state=None,
     on_remove_green=None,
     on_removegreen_change=None, on_tint_change=None, on_apply_tint=None,
     on_enhance=None,
@@ -1320,8 +1318,10 @@ def build_panel(
         #
         # Behind its own button since 2026-10-14: the block made the panel
         # "busy compared to other screens". The dialog is the panel's child,
-        # built once, so what it holds — a spent send above all — lives as long
-        # as the panel does, and the busy gate sweeps it with the rest.
+        # so the busy gate sweeps it with the rest — and it dies with the
+        # panel, which is rebuilt often (a plate solve landing, among a dozen
+        # callers). So a send's state is NOT kept here: MainWindow holds it
+        # per picture and hands it back as `wall_state` to every rebuild.
         #
         # The panel RECEIVES the facts and a callback. It never touches the
         # image: composing here would be the second compose path all over again,
@@ -1402,6 +1402,7 @@ def build_panel(
                 w._wall_sending = True
                 _wall_state()
                 w.wall_note.setText("Sending…")
+                w.gallery_hint.setText("Sending…")   # seen with the window closed
                 target = w.wall_target.text().strip() if w.wall_target else ""
                 if on_wall_submit is not None:
                     on_wall_submit(target)
@@ -1423,6 +1424,14 @@ def build_panel(
             w.gallery_btn.clicked.connect(dlg.open)
             w.wall_finished = _wall_finished
             w.wall_sync = _wall_state
+            # A rebuilt panel starts from the picture's send, not from scratch.
+            state = (wall_state or {}).get("state")
+            if state in ("sending", "sent", "failed"):
+                w._wall_sending = state == "sending"
+                w._wall_sent = state == "sent"
+                msg = (wall_state or {}).get("message", "")
+                w.wall_note.setText(msg)
+                w.gallery_hint.setText(msg)
             _wall_state()
 
         # Save as Preset… — here, not on Enhancements, where it read as an

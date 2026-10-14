@@ -149,6 +149,7 @@ _CLIP_AMBER_LO = 0.0005    # 0.05% of shadows crushed
 _PRESET_TIP_ON = "Save this edit (everything after the crop) as a preset for similar pictures."
 _PRESET_TIP_OFF = ("Save as Preset — process a picture through to Enhancements first: "
                    "a preset is made at the end of an edit.")
+_PRESET_TIP_LINEAR = "Stretch the picture first — a preset starts from a finished look."
 _PRESET_TIP_EMPTY = ("Save as Preset — nothing to save yet: this picture has no steps "
                      "a preset can carry. Apply a step after the crop first.")
 
@@ -531,6 +532,11 @@ class MainWindow(QMainWindow):
         self._project_path: str | None = None   # current .nocturne bundle path, if saved/opened
         self._dirty = False   # True once the project has un-saved edits
         self._solve = None  # (sig, SolveResult, objects) once a plate-solve lands
+        # This picture's gallery send: None, or {"state": "sending"|"sent"|
+        # "failed", "message": str}. On the WINDOW, not the panel: a plate
+        # solve landing (or any _rebuild_panel) builds a fresh panel mid-send,
+        # and that one must not offer Send again (review 2026-10-14).
+        self._gallery_send = None
         # (shown name, path to reveal) of the last export from THIS image, for
         # the Export step's "Saved … · Show in Finder" line. Cleared with the
         # workspace, so an old file is never announced over new work.
@@ -1723,7 +1729,12 @@ class MainWindow(QMainWindow):
         # step of its own: the dialog could only say "Nothing to save yet".
         # A walk over a handful of (name, option) pairs; no need to cache it.
         empty = ok and not recipe_from_entries(self.project.entries(), scope="preset").steps
-        tip = _PRESET_TIP_EMPTY if empty else _PRESET_TIP_ON if ok else _PRESET_TIP_OFF
+        # The REAL reason when off: at the right step an unstretched picture
+        # is told to stretch, not sent back to Enhancements (review 2026-10-14).
+        linear = (not ok and self.project is not None
+                  and self.current_stage_id() in ("enhancements", "export"))
+        tip = (_PRESET_TIP_EMPTY if empty else _PRESET_TIP_ON if ok
+               else _PRESET_TIP_LINEAR if linear else _PRESET_TIP_OFF)
         # The menu item and the Export button: one gate, one tooltip.
         for target in (self._save_preset_act, getattr(self._panel, "save_preset_btn", None)):
             if target is not None:
@@ -5485,6 +5496,8 @@ class MainWindow(QMainWindow):
         self._chosen_preset = None
         self._recover_prep = self._lc_prep = None
         self._last_export = None
+        # A gallery send belongs to the picture it was made from.
+        self._gallery_send = None
         self._solve = None
         self._solve_freshness = None
         self._solve_elapsed = 0.0
@@ -7498,21 +7511,30 @@ class MainWindow(QMainWindow):
         # exactly this and says so: "otherwise PySide may garbage-collect the
         # QRunnable (and its signals) before QThreadPool runs it." Every other
         # background call in this window already goes through it.
+        gen = self._project_gen
+        self._gallery_send = {"state": "sending", "message": "Sending…"}
+
+        def _land(ok: bool, message: str) -> None:
+            # To whatever panel is CURRENT: the one that sent may have been
+            # rebuilt (and deleted) while the send was in flight. And only for
+            # the picture that sent it — a new image retires the state.
+            if gen != self._project_gen:
+                return
+            self._gallery_send = {"state": "sent" if ok else "failed", "message": message}
+            panel = self._panel
+            if hasattr(panel, "wall_finished"):
+                panel.wall_finished(ok, message)
+                self._sync_step_controls()   # re-gates it if another job runs
+
         def _done(result) -> None:
             ok, message = result
-            if hasattr(panel, "wall_finished"):
-                panel.wall_finished(bool(ok), str(message))
-                if panel is self._panel:
-                    self._sync_step_controls()   # re-gates it if another job runs
+            _land(bool(ok), str(message))
 
         def _failed(exc) -> None:
             # submit() is documented never to raise, so this is belt and braces
             # — but a panel left saying "Sending…" for ever is the one outcome
             # worse than a refusal.
-            if hasattr(panel, "wall_finished"):
-                panel.wall_finished(False, f"Could not send: {exc}")
-                if panel is self._panel:
-                    self._sync_step_controls()   # re-gates it if another job runs
+            _land(False, f"Could not send: {exc}")
 
         run_async(self._pool, lambda: _submit(data, meta, handle), _done, _failed)
 
@@ -7807,6 +7829,7 @@ class MainWindow(QMainWindow):
             wall_fields=self._wall_fields(stage),
             wall_handle=(getattr(self.settings, "handle", "") or "").strip(),
             on_wall_submit=self._submit_to_wall,
+            wall_state=self._gallery_send,
             on_remove_green=self._remove_green,
             on_removegreen_change=self._on_removegreen_change,
             on_tint_change=self._on_tint_change,

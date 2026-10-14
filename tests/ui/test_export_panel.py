@@ -346,3 +346,137 @@ def test_the_layers_sub_label_fits_its_tile(qtbot, tmp_path):
             assert fm.horizontalAdvance(t.sub) <= t.width() - 4, (t.sub, t.width())
     finally:
         app.setStyleSheet(before)
+
+
+# --- fix round 1 (adversarial review 2026-10-14) ---------------------------------------
+
+def _export_win(qtbot, tmp_path, stretched=True):
+    from tests.ui.test_main_window import _make_fits, _window
+    win = _window(qtbot, tmp_path)
+    win.settings.handle = "@tester"
+    win.open_fits(_make_fits(tmp_path))
+    if stretched:
+        win._go_to_id("stretch", user_initiated=False)
+        win._panel.apply_btn.click()
+    win._go_to_id("export", user_initiated=False)
+    return win
+
+
+def _held_submit(monkeypatch):
+    """Replace the network send with one that waits to be released."""
+    import threading
+    gate, answer = threading.Event(), {}
+    def fake(*a, **k):
+        gate.wait(5)
+        return answer.get("r", (True, "Sent. It will appear once it has been looked at."))
+    monkeypatch.setattr("nocturne.core.submit.submit", fake)
+    return gate, answer
+
+
+def test_a_rebuild_mid_send_cannot_send_twice_and_the_answer_lands(qtbot, tmp_path, monkeypatch):
+    """A plate solve landing (or any _rebuild_panel) mid-send built a fresh
+    panel with Send live again, and the answer then wrote to a deleted one."""
+    win = _export_win(qtbot, tmp_path)
+    win._async_enabled = True
+    gate, _ = _held_submit(monkeypatch)
+    old = win._panel
+    old.wall_consent.setChecked(True)
+    old.wall_btn.click()
+    win._rebuild_panel(); qtbot.wait(20)
+    new = win._panel
+    assert new is not old
+    new.wall_consent.setChecked(True)
+    assert not new.wall_btn.isEnabled(), "Send came back on the rebuilt panel mid-send"
+    assert new.gallery_hint.text() == "Sending…"
+    gate.set()
+    qtbot.waitUntil(lambda: "looked at" in new.gallery_hint.text(), timeout=4000)
+    assert "looked at" in new.wall_note.text()
+    assert not new.wall_btn.isEnabled() and not new.wall_consent.isEnabled(), "spent"
+    win._rebuild_panel()
+    p = win._panel
+    p.wall_consent.setChecked(True)
+    assert not p.wall_btn.isEnabled(), "a sent picture is spent across rebuilds"
+    assert "looked at" in p.gallery_hint.text()
+
+
+def test_a_failed_send_survives_a_rebuild_and_can_be_retried(qtbot, tmp_path, monkeypatch):
+    win = _export_win(qtbot, tmp_path)
+    win._async_enabled = True
+    gate, answer = _held_submit(monkeypatch)
+    answer["r"] = (False, "Could not reach the gallery: timed out")
+    win._panel.wall_consent.setChecked(True)
+    win._panel.wall_btn.click()
+    gate.set()
+    qtbot.waitUntil(lambda: "Could not" in win._panel.gallery_hint.text(), timeout=4000)
+    win._rebuild_panel()
+    p = win._panel
+    assert "Could not" in p.gallery_hint.text()
+    p.wall_consent.setChecked(True)
+    assert p.wall_btn.isEnabled(), "a failure must leave the retry"
+
+
+def test_the_send_state_belongs_to_one_picture(qtbot, tmp_path, monkeypatch):
+    from tests.ui.test_main_window import _make_fits
+    win = _export_win(qtbot, tmp_path)
+    win._async_enabled = True
+    gate, _ = _held_submit(monkeypatch)
+    win._panel.wall_consent.setChecked(True)
+    win._panel.wall_btn.click()
+    win._dirty = False
+    (tmp_path / "b").mkdir()
+    gen = win._project_gen
+    win.open_fits(_make_fits(tmp_path / "b"))    # a new picture while the old one sends
+    qtbot.waitUntil(lambda: win._project_gen != gen, timeout=4000)   # opened, THEN it lands
+    gate.set(); qtbot.wait(300)
+    win._go_to_id("export", user_initiated=False)
+    p = win._panel
+    p.wall_consent.setChecked(True)
+    assert p.wall_btn.isEnabled(), "the old picture's send spent the new one"
+    assert "looked at" not in p.gallery_hint.text()
+
+
+def test_the_panel_line_says_sending_while_in_flight(qtbot):
+    p = _panel(qtbot, wall_fields=dict(FACTS), wall_handle="@a", on_wall_submit=lambda t: None)
+    p.wall_consent.setChecked(True)
+    p.wall_btn.click()
+    assert p.gallery_hint.text() == "Sending…"
+
+
+def test_the_dialog_does_not_repeat_its_title(qtbot):
+    p = _panel(qtbot, wall_fields=dict(FACTS), wall_handle="@a")
+    assert p.gallery_dialog.windowTitle() == "Share to the gallery"
+    assert "Share to the gallery" not in [l.text() for l in p.gallery_dialog.findChildren(QLabel)]
+
+
+@pytest.mark.parametrize("why", ["linear", "empty", "ok"])
+def test_the_preset_tooltip_gives_the_real_reason_on_export(qtbot, tmp_path, why):
+    from nocturne.ui import main_window as mw
+    if why == "empty":
+        from tests.ui.test_main_window import _window
+        from tests.ui.test_open_tiff import _write_stretched_tiff
+        win = _window(qtbot, tmp_path)
+        win.open_any(_write_stretched_tiff(tmp_path))
+        win._go_to_id("export", user_initiated=False)
+    else:
+        win = _export_win(qtbot, tmp_path, stretched=(why == "ok"))
+    assert win.current_stage_id() == "export"
+    btn = win._panel.save_preset_btn
+    want = {"linear": mw._PRESET_TIP_LINEAR, "empty": mw._PRESET_TIP_EMPTY,
+            "ok": mw._PRESET_TIP_ON}[why]
+    assert btn.toolTip() == want and win._save_preset_act.toolTip() == want
+    assert btn.isEnabled() is (why == "ok")
+    if why == "linear":
+        assert "Stretch the picture first" in want and "Enhancements" not in want
+
+
+def test_before_enhancements_the_menu_item_keeps_its_text(qtbot, tmp_path):
+    from nocturne.ui import main_window as mw
+    win = _export_win(qtbot, tmp_path)
+    win._go_to_id("levels", user_initiated=False)
+    assert win._save_preset_act.toolTip() == mw._PRESET_TIP_OFF
+
+
+def test_the_empty_preset_browser_points_at_export():
+    from nocturne.ui.preset_browser import _EMPTY
+    assert _EMPTY == ("Process a picture through to Export, then press Save as Preset… "
+                      "(or use the Project menu).")
