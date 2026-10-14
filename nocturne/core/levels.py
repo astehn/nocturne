@@ -176,6 +176,9 @@ class CrushProbe:
         from .inspect import structural_block_peaks
         peaks = structural_block_peaks(img.data)
         self.channels = 0 if peaks is None else peaks.shape[2]
+        if self.channels not in (0, 1, 3):
+            raise ValueError(f"CrushProbe needs 1 or 3 channels, got {self.channels}: "
+                             "the read-out it mirrors shows grey or RGB only")
         # Mono back to 2-D, so display_rgb8 greys it to RGB as it does the frame.
         self._peaks = peaks[:, :, 0] if self.channels == 1 else peaks
 
@@ -198,22 +201,31 @@ def auto_black(img: AstroImage, version: int = AUTO_VERSION) -> AutoBlack:
     Version 1 is `auto_levels` as it always was. Version 2 bisects on the
     black in [0, candidate] — the crushed figure only grows with the black, so
     the passing set is an interval from 0 — for the largest black at which
-    every channel is under `CRUSHED_LIMIT` or no worse than it arrived. At or
-    over the limit counts as over, because that is where the read-out turns
-    amber. A LINEAR picture has no structural read-out to stay under (it is
+    every channel is under `CRUSHED_LIMIT`, or arrived at or over it and rose
+    by less than `CRUSH_INVISIBLE` (a change the read-out cannot display). At
+    the limit counts as over, because that is where the read-out turns amber.
+    A version newer than this build raises NewerVersionError. A LINEAR picture has no structural read-out to stay under (it is
     autostretched for display), so it keeps the candidate.
     """
+    if int(version) > AUTO_VERSION:
+        # Made by a newer Nocturne: running it as this build's version would
+        # silently draw a different picture. The same refusal a newer bundle
+        # format gets, so opening such a project says so instead of failing.
+        from ..history.project_store import NewerVersionError
+        raise NewerVersionError(f"Levels Auto version {int(version)} is newer than "
+                                f"this build supports (max {AUTO_VERSION})")
     candidate = float(auto_levels(img.data)[0])
     if int(version) == AUTO_V1 or candidate <= 0.0 or img.is_linear:
         return AutoBlack(candidate, candidate, False)
-    from .inspect import CRUSHED_LIMIT
+    from .inspect import CRUSH_INVISIBLE, CRUSHED_LIMIT
     probe = CrushProbe(img)
     if probe.channels == 0:
         return AutoBlack(candidate, candidate, False)
     arrived = probe.crushed()
 
     def ok(b: float) -> bool:
-        return all(now < CRUSHED_LIMIT or now <= was
+        return all(now < CRUSHED_LIMIT
+                   or (was >= CRUSHED_LIMIT and now - was < CRUSH_INVISIBLE)
                    for now, was in zip(probe.crushed(b), arrived))
 
     if ok(candidate):

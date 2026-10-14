@@ -150,6 +150,13 @@ def structural_clipping(rgb: np.ndarray,
 # turns a channel amber" cannot drift into two numbers.
 CRUSHED_LIMIT = 0.0005
 
+# How far a channel that ARRIVED at or over the limit may rise and still count
+# as "no worse": 0.00005 = 0.005 percentage points, half the read-out's last
+# displayed digit (0.01%), so a rise below it cannot change the number the user
+# reads. Zero tolerance let one dim 3x3 block veto Auto: blue arriving at 0.07%
+# plus one block above zero dropped Auto from 0.209 to 0.028 (review 2026-10-14).
+CRUSH_INVISIBLE = 0.00005
+
 
 def _structural_sample(arr: np.ndarray, block: int, target_blocks: int):
     """The sampled block grid, (by, block, bx, block, C), or None when the

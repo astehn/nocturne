@@ -253,3 +253,95 @@ def test_describe_offsets():
     assert describe_offsets((0.0, 0.0, -0.015)) == "blue −0.015"
     assert describe_offsets((0.02, 0.0, 0.0)) == "red +0.020"
     assert describe_offsets((0.0, 0.0, 0.0)) == ""
+
+
+# --- fix round 1 ------------------------------------------------------------
+
+def _dim_blocks(d, n, channel=2, value=0.15, row0=600):
+    """n whole, block-aligned 3x3 patches at `value` in one channel: each is
+    exactly one structural block the candidate (~0.22) crushes."""
+    for k in range(n):
+        y, x = row0 + 3 * (k // 100), 3 + 9 * (k % 100)
+        d[y:y + 3, x:x + 3, channel] = value
+    return d
+
+
+def _amber_blue(n_dim):
+    """The reviewer's shape: blue ARRIVES amber (a zero strip, 84 of 120,400
+    blocks = 0.0698%) and a few dim blue blocks sit above zero."""
+    d = _sky()
+    d[0:3, 0:252, 2] = 0.0
+    return AstroImage(_dim_blocks(d, n_dim), is_linear=False)
+
+
+def test_an_invisible_rise_on_an_amber_channel_does_not_collapse_auto():
+    img = _amber_blue(1)                      # +1 block = +0.0008 points
+    arrived = _readout(img)
+    assert arrived[2] >= CRUSHED_LIMIT        # precondition: amber on arrival
+    cand = auto_levels(img.data)[0]
+    assert _readout(apply_levels(img, cand, 1.0, 1.0))[2] > arrived[2]   # it does rise
+    assert auto_black(img) == (cand, cand, False)
+
+
+def test_a_visible_rise_on_an_amber_channel_still_stops_auto():
+    from nocturne.core.inspect import CRUSH_INVISIBLE
+    img = _amber_blue(10)                     # +10 blocks = +0.0083 points
+    arrived = _readout(img)
+    a = auto_black(img)
+    assert a.stopped and 0.12 < a.black < a.candidate     # stopped at the dim blocks, not 0
+    assert _readout(apply_levels(img, a.black, 1.0, 1.0))[2] - arrived[2] < CRUSH_INVISIBLE
+
+
+def _boundary_image(n_dim):
+    """900x1200 = 120,000 blocks, so 60 crushed blocks is EXACTLY the limit."""
+    d = _sky(900, 1200)
+    return AstroImage(_dim_blocks(d, n_dim), is_linear=False)
+
+
+def test_boundary_fixture_is_exact():
+    img = _boundary_image(60)
+    cand = auto_levels(img.data)[0]
+    assert max(_readout(img)) == 0.0
+    assert _readout(apply_levels(img, cand, 1.0, 1.0)) == (0.0, 0.0, CRUSHED_LIMIT)
+
+
+def test_a_channel_exactly_at_the_limit_fails_and_just_under_passes():
+    at, under = _boundary_image(60), _boundary_image(59)
+    assert auto_black(at).stopped                       # read-out is amber at >=
+    c = auto_levels(under.data)[0]
+    assert auto_black(under) == (c, c, False)
+
+
+def test_an_unknown_future_auto_version_refuses():
+    from nocturne.history.project_store import NewerVersionError
+    img = _stop_image()
+    with pytest.raises(NewerVersionError):
+        auto_black(img, AUTO_VERSION + 1)
+    with pytest.raises(NewerVersionError):
+        LevelsStep().apply(img, {"auto": True, "version": AUTO_VERSION + 1,
+                                 "offsets": [0, 0, 0]})
+
+
+@pytest.mark.parametrize("shape", [(30, 30, 2), (30, 30, 4)])
+def test_crush_probe_wants_one_or_three_channels(shape):
+    """AstroImage refuses these shapes today; the probe says so itself rather
+    than relying on that, since a 2- or 4-channel array would otherwise be
+    measured as something the read-out never shows."""
+    from types import SimpleNamespace
+    with pytest.raises(ValueError, match="1 or 3 channels"):
+        CrushProbe(SimpleNamespace(data=np.full(shape, 0.3, np.float32), is_linear=False))
+
+
+def test_the_tolerance_never_lets_auto_turn_a_channel_amber():
+    """Blue arrives JUST under the limit (59 of 120,000 blocks at zero); one dim
+    block would take it to exactly the limit — a rise far smaller than
+    CRUSH_INVISIBLE, but it turns the read-out amber, so Auto must stop."""
+    d = _sky(900, 1200)
+    _dim_blocks(d, 59, value=0.0, row0=300)
+    img = AstroImage(_dim_blocks(d, 1), is_linear=False)
+    assert 0.0 < _readout(img)[2] < CRUSHED_LIMIT                 # arrived grey
+    cand = auto_levels(img.data)[0]
+    assert _readout(apply_levels(img, cand, 1.0, 1.0))[2] == CRUSHED_LIMIT
+    a = auto_black(img)
+    assert a.stopped
+    assert _readout(apply_levels(img, a.black, 1.0, 1.0))[2] < CRUSHED_LIMIT
