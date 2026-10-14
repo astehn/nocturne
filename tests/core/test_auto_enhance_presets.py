@@ -382,10 +382,12 @@ def test_levels_auto_false_applies_saved_levels_as_saved():
 
 
 def test_levels_auto_default_is_unchanged_for_auto_enhance():
-    from nocturne.recipe import LEVELS_AUTO
+    # Auto Enhance still re-derives its Levels per image; since 2026-10-14 it
+    # records the CURRENT Auto (version 2) rather than the bare "auto" string.
+    from nocturne.core.levels import new_levels_option
     img = _img()
     run = run_auto_plan(img, [("levels", (0.05, 1.0, 0.9))], Settings())
-    assert run.results[0][1] == LEVELS_AUTO
+    assert run.results[0][1] == new_levels_option(auto=True)
 
 
 def test_a_tap_is_recorded_under_its_own_name_with_an_empty_option():

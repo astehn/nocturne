@@ -2356,14 +2356,20 @@ class MainWindow(QMainWindow):
         Enhance and a user preset; `suffix` names which ("Auto Enhance
         (Natural)", "Preset (M 8)")."""
         stage_of = {v: k for k, v in STEP_NAME.items()}
-        for (name, option, img), engine in zip(run.results, run.engines):
+        resolved = run.resolved or (None,) * len(run.results)
+        for (name, option, img), engine, res in zip(run.results, run.engines, resolved):
             self.project.record_precomputed(name, option, img)
-            label = str(self._step_log_label(stage_of.get(name, ""), option, engine) or "")
+            stage = stage_of.get(name, "")
+            label = str(self._step_log_label(stage, option, engine) or "")
+            # The manual Apply's words for the same Levels: where Auto stopped,
+            # a chosen black, any colour offsets (one helper, see _log_step).
+            detail = self._levels_log_detail(option, res) if stage == "levels" else ""
             # Its own line per stage, naming the run: the next line (an
             # Export, a Reset) would otherwise be taken as this stage's.
-            self.log_panel.append_entry(format_log_entry(name, label, None) + f" \u2014 {suffix}")
+            self.log_panel.append_entry(format_log_entry(name, label, None, detail=detail)
+                                        + f" \u2014 {suffix}")
             # And to the file, as _log_step does for a manual apply.
-            sessionlog.write(f"step  {name}" + (f" ({label})" if label else "")
+            sessionlog.write(f"step  {name}" + (f" ({label})" if label else "") + detail
                              + f" \u2014 {suffix}")
         for (name, _reason), detail in zip(run.failures, run.failure_details):
             sessionlog.write(f"ERROR {suffix}: {name} failed\n{detail}")

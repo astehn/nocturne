@@ -152,9 +152,11 @@ CRUSHED_LIMIT = 0.0005
 
 # How far a channel that ARRIVED at or over the limit may rise and still count
 # as "no worse": 0.00005 = 0.005 percentage points, half the read-out's last
-# displayed digit (0.01%), so a rise below it cannot change the number the user
-# reads. Zero tolerance let one dim 3x3 block veto Auto: blue arriving at 0.07%
-# plus one block above zero dropped Auto from 0.209 to 0.028 (review 2026-10-14).
+# displayed digit (0.01%), so a rise below it moves the number the user reads
+# by at most one tick of that digit (it can still straddle a rounding edge,
+# 0.074% -> 0.078% shows 0.07 -> 0.08). Zero tolerance let one dim 3x3 block
+# veto Auto: blue arriving at 0.07% plus one block above zero dropped Auto from
+# 0.209 to 0.028 (review 2026-10-14).
 CRUSH_INVISIBLE = 0.00005
 
 

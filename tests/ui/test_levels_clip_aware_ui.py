@@ -358,3 +358,28 @@ def test_returning_to_an_old_v1_auto_keeps_its_exact_black(qtbot, tmp_path):
     win._apply_current_step()
     option = win.project.entries()[-1][1]
     assert option == new_levels_option(v1_black, 1.0, 1.0, (0.0, 0.0, -0.015))
+
+
+def test_auto_enhance_log_line_says_where_auto_stopped(qtbot, tmp_path):
+    """Auto Enhance and a preset log through _record_auto_run; its Levels line
+    carries the same stop detail as the panel's Apply (one helper)."""
+    from nocturne.core.auto_enhance import AUTO_LEVELS, run_auto_plan
+    from nocturne.settings import Settings
+    win = _at_levels(qtbot, tmp_path)
+    run = run_auto_plan(win.project.current(), [("levels", AUTO_LEVELS)], Settings())
+    win._record_auto_run(run, "Auto Enhance (Natural)")
+    line = win.log_panel.entries()[-1]
+    assert line.endswith("Levels (auto) · black 0.100 — stopped at the clipping limit "
+                         "(unlimited Auto: 0.219) — Auto Enhance (Natural)"), line
+
+
+def test_preset_log_line_shows_a_saved_hand_set_levels(qtbot, tmp_path):
+    from nocturne.core.auto_enhance import run_auto_plan
+    from nocturne.settings import Settings
+    win = _at_levels(qtbot, tmp_path)
+    opt = new_levels_option(0.062, 1.0, 1.0, (0, 0, -0.015))
+    run = run_auto_plan(win.project.current(), [("levels", opt)], Settings(),
+                        levels_auto=False)
+    win._record_auto_run(run, "Preset (M 8)")
+    line = win.log_panel.entries()[-1]
+    assert line.endswith("Levels · black 0.062 · blue −0.015 — Preset (M 8)"), line
