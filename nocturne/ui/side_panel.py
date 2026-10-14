@@ -38,7 +38,7 @@ STATUS_SLOT_H = 75
 # RIGHT_PANE_W: lines 16 px on cocoa (17 offscreen), toggle 23, so 34 / 36 —
 # 36 holds both. The old line-plus-checkbox slot was 54; the 18 px saved went to
 # the step card (+11) and histogram (+7) at 1280x800, all to the histogram at
-# 1440x900. Widest row: values end at x=240 of 376, toggle starts at 291.
+# 1440x900. Widest row: values end at x=258 of 376, toggle starts at 291.
 CLIP_SLOT_H = 36
 LINEAR_CLIP_TEXT = "Clipping is shown once the image is stretched."
 # One legend for every clipping view — the main window's toggle and Starless
@@ -197,7 +197,9 @@ class ClipReadout(QWidget):
                 letter.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 value = QLabel("0.0%")
                 value.setObjectName("clipValue")
-                value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                # Left, against its own letter: right-aligned, a short value
+                # sat nearer the NEXT letter and "7.4%  G" read as green's.
+                value.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 grid.addWidget(letter, r, 1 + 2 * i)
                 grid.addWidget(value, r, 2 + 2 * i)
                 self._letters[(end, i)] = letter
@@ -281,12 +283,13 @@ class ClipReadout(QWidget):
         bold = value.font()
         bold.setWeight(bold.Weight.Bold)
         from PySide6.QtGui import QFontMetrics
-        w_val = QFontMetrics(bold).horizontalAdvance(_WIDEST_VALUE) + 2
+        # The spare room trails the value, so it separates channel groups.
+        w_val = QFontMetrics(bold).horizontalAdvance(_WIDEST_VALUE) + 12
         letter = self._letters[("lo", 0)]
         letter.ensurePolished()
         lf = letter.font()
         lf.setWeight(lf.Weight.DemiBold)
-        w_let = max(QFontMetrics(lf).horizontalAdvance(c) for c in "RGBL") + 6
+        w_let = max(QFontMetrics(lf).horizontalAdvance(c) for c in "RGBL") + 2
         for lab in self._values.values():
             lab.setFixedWidth(w_val)
         for lab in self._letters.values():

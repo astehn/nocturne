@@ -1,5 +1,5 @@
 import shiboken6
-from PySide6.QtCore import QEvent, QPoint
+from PySide6.QtCore import QEvent, QPoint, Qt
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from nocturne.ui.side_panel import (CLIP_SLOT_H, LINEAR_CLIP_TEXT, STATUS_SLOT_H, ClipValue,
@@ -323,3 +323,19 @@ def test_a_replaced_header_stops_painting_at_once(qtbot):
     s.set_header(new)
     s.set_actions(QPushButton("Apply Levels"), None)
     assert old.isHidden() and old_apply.isHidden()
+
+
+def test_a_value_sits_against_its_own_letter(qtbot):
+    """Right-aligned in its fixed cell, a short value drifted toward the NEXT
+    letter and "7.4%  G" read as green's (seen in the first render)."""
+    s = _side(qtbot)
+    r = s.clip_readout
+    s.set_clipping(*_vals(lo=(0.074, 0.0, 0.0), over={("lo", 0)}))
+    qtbot.wait(10)
+    for i in range(2):
+        letter, value, nxt = r.letter_label("lo", i), r.value_label("lo", i), r.letter_label("lo", i + 1)
+        text_w = value.fontMetrics().horizontalAdvance(value.text())
+        own_gap = value.x() - (letter.x() + letter.width())
+        next_gap = nxt.x() - (value.x() + text_w)
+        assert own_gap < next_gap / 2, (own_gap, next_gap)
+        assert value.alignment() & Qt.AlignmentFlag.AlignLeft
