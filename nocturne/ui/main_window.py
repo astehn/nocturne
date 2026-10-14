@@ -6222,8 +6222,11 @@ class MainWindow(QMainWindow):
         if p.auto:
             a = resolved.auto if resolved is not None else None
             if a is not None and a.stopped:
+                # Both rounded DOWN, as the panel shows them, so the two
+                # numbers cannot disagree in the last digit.
                 parts.append(f"black {_floor_black(a.black) / BLACK_STEPS:.3f} \u2014 stopped at "
-                             f"the clipping limit (unlimited Auto: {a.candidate:.3f})")
+                             "the clipping limit (unlimited Auto: "
+                             f"{_floor_black(a.candidate) / BLACK_STEPS:.3f})")
         else:
             parts.append(f"black {p.black:.3f}")
             if abs(p.gamma - 1.0) > 1e-9:
@@ -6234,6 +6237,35 @@ class MainWindow(QMainWindow):
         if offsets:
             parts.append(offsets)
         return "".join(f" \u00b7 {x}" for x in parts)
+
+    def _seed_levels(self, panel) -> None:
+        """Show the COMMITTED Levels on a rebuilt panel, so returning to the
+        step and touching one control edits what is there instead of starting
+        from the defaults (review 2026-10-14: a colour nudge on a revisited
+        Auto committed black 0 and the sky jumped).
+
+        Current Auto: Auto selected, its cached decision, the note if it
+        stopped. Manual: its numbers, the black exact. A version-1 "auto"
+        (an older project): NOT selected — pressing Auto would give version 2,
+        a different picture — and the black is the exact one version 1
+        produced, so a move elsewhere keeps the look. Nothing is pending and
+        nothing renders on arrival: the panel equals the commit."""
+        committed = self._committed_option("levels")
+        if committed is None:
+            return
+        p = parse_levels_option(committed)
+        if p.auto and p.version == AUTO_VERSION:
+            decided = self._levels_auto_black()
+            panel.set_levels_values(decided.black, 1.0, 1.0, p.offsets)
+            panel.neutral_option = committed
+            self._set_levels_auto(True)
+        elif p.auto:
+            r = resolve_levels(self._preview_base("levels"), committed)
+            panel.set_levels_values(r.black, r.gamma, r.white, r.offsets)
+            panel.neutral_option = panel.commit_option()
+        else:
+            panel.set_levels_values(p.black, p.gamma, p.white, p.offsets)
+            panel.neutral_option = panel.commit_option()
 
     def _on_levels_auto(self) -> None:
         if self.project is None or self.current_stage_id() != "levels":
@@ -6248,16 +6280,13 @@ class MainWindow(QMainWindow):
         # measured the ALREADY levelled image while the commit measured the
         # original (0.227 mean apart on a synthetic frame).
         decided = self._levels_auto_black()
-        # Setting the sliders fires _on_levels_change (which debounces a render).
-        # The black is shown rounded DOWN: Auto's own value is continuous, and
-        # what is committed and previewed is that exact value, not the slider's.
-        self._panel.black_slider.setValue(_floor_black(decided.black))
-        self._panel.gamma_slider.setValue(100)
-        self._panel.white_slider.setValue(100)
-        # AFTER the three setValue calls, never before: each one fires
-        # _on_levels_change, which clears the flag. Setting it first means the
-        # app wipes its own record and the recipe silently stores numbers while
-        # the button still reads Auto.
+        # Set without emitting (each emit would clear the flag Auto is about to
+        # set). The black is SHOWN rounded down — Auto's own value is continuous
+        # and dragging to a number rounded up could cross the limit — and kept
+        # exact underneath, so the preview, the commit and a later midtones
+        # nudge all use Auto's value, not the slider's.
+        panel = self._panel
+        panel.set_levels_values(decided.black, 1.0, 1.0, panel.levels_offsets())
         self._set_levels_auto(True)
         self._levels_pending = self._levels_commit_option(self._panel.commit_option())
         self._render_levels_preview()
@@ -8143,8 +8172,9 @@ class MainWindow(QMainWindow):
             self._seed_curves(new_panel)
         if stage.id == "levels" and loaded:
             # A mono picture has one black point; the colour ones would do
-            # nothing (core ignores them), so they are not offered.
-            shape = self.project.shape_at(self.project.position)
+            # nothing (core ignores them), so they are not offered. Read off
+            # the Levels INPUT, which is what the offsets would act on.
+            shape = self._preview_base("levels").data.shape
             new_panel.levels_colour_box.setVisible(len(shape) == 3 and shape[2] == 3)
         if stage.id == "curves" and loaded:
             new_panel.curve_editor.set_histogram(self._preview_base("curves").data)
@@ -8190,6 +8220,8 @@ class MainWindow(QMainWindow):
         if stage.id == "saturation":
             self._setup_saturation()
         self._update_explainer()
+        if stage.id == "levels" and loaded:
+            self._seed_levels(new_panel)
         if stage.id == "crop":
             self._resolve_held_preset()      # a Save as Preset or delete since
         # The new Apply starts at the component's own default state; decide

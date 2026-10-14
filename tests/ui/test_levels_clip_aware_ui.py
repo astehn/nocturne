@@ -96,14 +96,24 @@ def test_preview_is_the_commit_with_auto_and_an_offset(qtbot, tmp_path):
     assert np.array_equal(win.project.current().data, shown)
 
 
-def test_auto_is_searched_once_per_input(qtbot, tmp_path, monkeypatch):
+def _count_searches(monkeypatch):
+    """Counts the REAL search, nocturne.core.levels.auto_black — wherever it is
+    reached from (MainWindow's own call, or resolve_levels inside the step at
+    Apply), so an Apply-time re-search is counted too."""
+    import nocturne.core.levels as core_levels
     calls = []
-    real = mw.auto_black
+    real = core_levels.auto_black
 
     def counting(img, *a, **k):
         calls.append(1)
         return real(img, *a, **k)
+    monkeypatch.setattr(core_levels, "auto_black", counting)
     monkeypatch.setattr(mw, "auto_black", counting)
+    return calls
+
+
+def test_auto_is_searched_once_per_input(qtbot, tmp_path, monkeypatch):
+    calls = _count_searches(monkeypatch)
     win = _at_levels(qtbot, tmp_path)
     win._on_levels_auto()
     for v in (-3, -6, -9):
@@ -111,7 +121,48 @@ def test_auto_is_searched_once_per_input(qtbot, tmp_path, monkeypatch):
         _settle(qtbot, win)
     win._on_levels_auto()                              # pressed again: same input
     win._apply_current_step()
+    assert win.project.entries()[-1][1]["auto"] is True
     assert len(calls) == 1, f"Auto's search ran {len(calls)} times"
+
+
+def test_another_picture_is_searched_afresh(qtbot, tmp_path, monkeypatch):
+    calls = _count_searches(monkeypatch)
+    win = _at_levels(qtbot, tmp_path)
+    win._on_levels_auto()
+    first = win._panel.black_slider.value()
+    win._ask_pending = lambda *a, **k: "discard"
+    other = AstroImage(_sky(seed=5, means=(0.30, 0.29, 0.28)), is_linear=False)
+    win.open_image(other, "other")
+    win._go_to_id("levels", user_initiated=False)
+    win._on_levels_auto()
+    assert len(calls) == 2, "image B reused image A's Auto"
+    expected = auto_black(other)
+    assert win._panel.black_slider.value() == int(expected.black * BLACK_STEPS) != first
+
+
+def test_undoing_an_earlier_step_searches_afresh(qtbot, tmp_path, monkeypatch):
+    calls = _count_searches(monkeypatch)
+    win = _window(qtbot, tmp_path)
+    win.open_image(_stop_image(), "stop")
+    win._go_to_id("remove_green", user_initiated=False)
+    win._panel.rg_slider.setValue(100)
+    win._panel.apply_btn.click()
+    assert win.project.entries()[-1][0] != "Levels" and len(win.project.entries()) == 1
+    win._go_to_id("levels", user_initiated=False)
+    win._on_levels_auto()
+    win._ask_pending = lambda *a, **k: "discard"
+    win._undo()
+    assert win.project.entries() == []
+    win._go_to_id("levels", user_initiated=False)
+    win._on_levels_auto()
+    assert len(calls) == 2, "Auto reused the decision made on the undone input"
+    # De-green leaves this fixture's stop where it was, so equal numbers cannot
+    # tell a stale decision from a fresh one: the decision must be the one
+    # made for the input on screen now.
+    assert win._levels_auto_cache[0] == win._base_token("levels"), (
+        "Auto's decision belongs to the undone input")
+    assert win._panel.black_slider.value() == int(
+        auto_black(win._preview_base("levels")).black * BLACK_STEPS)
 
 
 def test_dragging_a_colour_slider_updates_the_readout_live(qtbot, tmp_path):
@@ -126,6 +177,17 @@ def test_dragging_a_colour_slider_updates_the_readout_live(qtbot, tmp_path):
     _settle(qtbot, win)
     after = _shown(win)[("lo", "B")]
     assert float(after.rstrip("%")) > float(before.rstrip("%")), (before, after)
+
+
+def test_the_colour_section_follows_the_levels_input_not_the_position(qtbot, tmp_path,
+                                                                      monkeypatch):
+    """The offsets act on the Levels INPUT; whatever the current position's
+    shape says, an RGB input shows them."""
+    win = _at_levels(qtbot, tmp_path)
+    monkeypatch.setattr(win.project, "shape_at", lambda i: (903, 1201))
+    win._go_to_id("curves", user_initiated=False)
+    win._go_to_id("levels", user_initiated=False)
+    assert not win._panel.levels_colour_box.isHidden()
 
 
 def test_a_mono_picture_hides_the_colour_section(qtbot, tmp_path):
@@ -144,7 +206,7 @@ def test_log_line_when_auto_stopped(qtbot, tmp_path):
     win._apply_current_step()
     line = win.log_panel.entries()[-1]
     assert ("Levels (auto) · black 0.100 — stopped at the clipping limit "
-            "(unlimited Auto: 0.220) · blue −0.015 · Δ") in line, line
+            "(unlimited Auto: 0.219) · blue −0.015 · Δ") in line, line
 
 
 def test_log_line_for_hand_set_values(qtbot, tmp_path):
@@ -223,3 +285,76 @@ def test_double_click_resets_a_colour_slider(qtbot, tmp_path):
                                           Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
                                           Qt.KeyboardModifier.NoModifier))
     assert s.value() == 0 and win._panel.red_val.text() == "0.000"
+
+
+# --- returning to Levels shows the commit (review 2026-10-14, fix round 1) ---
+
+def _away_and_back(win):
+    win._go_to_id("curves", user_initiated=False)
+    win._go_to_id("levels", user_initiated=False)
+
+
+def _channels_after_blue_move(qtbot, win, committed):
+    """Arrival renders nothing and is not pending; a blue move changes blue
+    only — red and green stay exactly the committed picture."""
+    assert np.array_equal(win._displayed.data, committed)
+    assert win._has_pending() is False
+    win._panel.blue_slider.setValue(win._panel.blue_slider.value() - 15)
+    _settle(qtbot, win)
+    shown = win._displayed.data
+    assert np.array_equal(shown[..., 0], committed[..., 0])
+    assert np.array_equal(shown[..., 1], committed[..., 1])
+    assert not np.array_equal(shown[..., 2], committed[..., 2])
+    return shown
+
+
+def test_returning_to_a_v2_auto_shows_it_selected(qtbot, tmp_path):
+    win = _at_levels(qtbot, tmp_path)
+    win._on_levels_auto()
+    win._panel.blue_slider.setValue(-15)
+    win._apply_current_step()
+    committed = win.project.current().data.copy()
+    _away_and_back(win)
+    p = win._panel
+    assert p.auto_btn.isChecked() and win._levels_auto is True
+    assert p.auto_note.text() == NOTE and not p.auto_note.isHidden()
+    assert p.black_slider.value() == 100 and p.blue_slider.value() == -15
+    assert win._controls_match_commit("levels") is True
+    _channels_after_blue_move(qtbot, win, committed)
+    assert win._levels_auto is True, "a colour move on a revisit dropped Auto"
+    win._apply_current_step()
+    assert win.project.entries()[-1][1] == {"auto": True, "version": 2,
+                                            "offsets": [0.0, 0.0, -0.03]}
+
+
+def test_returning_to_hand_set_values_shows_them(qtbot, tmp_path):
+    win = _at_levels(qtbot, tmp_path)
+    win._panel.black_slider.setValue(62)
+    win._panel.gamma_slider.setValue(120)
+    win._panel.red_slider.setValue(8)
+    win._apply_current_step()
+    committed = win.project.current().data.copy()
+    _away_and_back(win)
+    p = win._panel
+    assert (p.black_slider.value(), p.gamma_slider.value(), p.white_slider.value(),
+            p.red_slider.value(), p.blue_slider.value()) == (62, 120, 100, 8, 0)
+    assert not p.auto_btn.isChecked() and p.auto_note.isHidden()
+    assert win._controls_match_commit("levels") is True
+    _channels_after_blue_move(qtbot, win, committed)
+
+
+def test_returning_to_an_old_v1_auto_keeps_its_exact_black(qtbot, tmp_path):
+    from nocturne.core.levels import auto_levels
+    win = _at_levels(qtbot, tmp_path)
+    win.apply_current("auto")                         # an older project's Auto
+    committed = win.project.current().data.copy()
+    v1_black = auto_levels(win._preview_base("levels").data)[0]
+    _away_and_back(win)
+    p = win._panel
+    assert not p.auto_btn.isChecked(), "v1 shown as selected: pressing it would give v2"
+    assert p.black_slider.value() == int(v1_black * BLACK_STEPS)
+    assert win._panel.commit_option()["black"] == v1_black
+    _channels_after_blue_move(qtbot, win, committed)
+    win._apply_current_step()
+    option = win.project.entries()[-1][1]
+    assert option == new_levels_option(v1_black, 1.0, 1.0, (0.0, 0.0, -0.015))

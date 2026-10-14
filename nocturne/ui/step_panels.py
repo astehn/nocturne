@@ -1008,21 +1008,54 @@ def build_panel(
 
         # What Apply commits from the controls alone. Auto is MainWindow's: it
         # knows whether the black on the slider is still the derived one.
+        # A black finer than the slider's 0.001 grid — Auto's continuous one,
+        # or a committed value the panel was rebuilt from — as (slider position
+        # it shows at, exact value). While the slider stays there, the exact
+        # value is what is committed, so touching another control keeps the
+        # picture rather than snapping the black to the grid.
+        w.exact_black = None
+
+        def _black():
+            held = w.exact_black
+            if held is not None and held[0] == black.value():
+                return held[1]
+            return black.value() / BLACK_STEPS
+
         w.commit_option = lambda: new_levels_option(
-            black.value() / BLACK_STEPS, gamma.value() / 100.0,
-            white.value() / 100.0, _offsets())
+            _black(), gamma.value() / 100.0, white.value() / 100.0, _offsets())
         w.levels_offsets = _offsets
 
-        def _emit(*_):
+        def _labels():
             black_val.setText(f"{black.value() / BLACK_STEPS:.3f}")
             gamma_val.setText(f"{gamma.value() / 100:.2f}")
             white_val.setText(f"{white.value() / 100:.2f}")
+            for s, v in zip(offset_sliders, offset_vals):
+                v.setText(_offset_text(s.value() / BLACK_STEPS))
+
+        def _emit(*_):
+            _labels()
             if on_levels_change is not None:
                 on_levels_change(w.commit_option())
 
+        def _set_values(black_exact, gamma_v, white_v, offsets):
+            """Show values WITHOUT emitting: a panel rebuilt from its commit
+            is not an edit. The black shows rounded DOWN and is kept exact."""
+            import math
+            pos = math.floor(round(float(black_exact) * BLACK_STEPS, 6))
+            values = [(black, pos), (gamma, round(float(gamma_v) * 100)),
+                      (white, round(float(white_v) * 100))]
+            values += [(s, round(float(d) * BLACK_STEPS))
+                       for s, d in zip(offset_sliders, offsets)]
+            for s, v in values:
+                s.blockSignals(True)
+                s.setValue(v)
+                s.blockSignals(False)
+            w.exact_black = (pos, float(black_exact))
+            _labels()
+        w.set_levels_values = _set_values
+
         def _emit_colour(*_):
-            for s, v in zip(offset_sliders, offset_vals):
-                v.setText(_offset_text(s.value() / BLACK_STEPS))
+            _labels()
             # Its own hook: a colour move keeps Auto selected (spec B), where
             # any of the three above makes the value a choice.
             if on_levels_colour_change is not None:
