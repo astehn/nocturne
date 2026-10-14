@@ -141,11 +141,10 @@ def test_no_gallery_button_without_gallery_fields(qtbot):
 
 
 def test_the_gallery_button_and_its_line(qtbot):
-    p = _panel(qtbot, wall_fields=dict(FACTS), wall_handle="@a")
+    p = _panel(qtbot, wall_fields=dict(FACTS), wall_handle="@a", gallery_ready=True)
     assert p.gallery_btn.text() == "Share to the gallery…"
     assert not p.gallery_btn.icon().isNull(), "the upload icon"
-    assert p.gallery_hint.text() == ("Optional — your picture in the public gallery "
-                                     "at nocturneastro.com.")
+    assert p.gallery_hint.text() == "Your exported picture in the public gallery."
 
 
 def test_the_gallery_block_lives_in_the_dialog_not_the_panel(qtbot):
@@ -160,7 +159,7 @@ def test_the_gallery_block_lives_in_the_dialog_not_the_panel(qtbot):
 
 
 def test_the_button_opens_the_dialog_and_cancel_closes_it(qtbot):
-    p = _panel(qtbot, wall_fields=dict(FACTS), wall_handle="@a")
+    p = _panel(qtbot, wall_fields=dict(FACTS), wall_handle="@a", gallery_ready=True)
     p.show()
     p.gallery_btn.click()
     qtbot.waitUntil(p.gallery_dialog.isVisible, timeout=2000)
@@ -169,7 +168,8 @@ def test_the_button_opens_the_dialog_and_cancel_closes_it(qtbot):
 
 
 def test_a_spent_send_stays_spent_across_a_reopen(qtbot):
-    p = _panel(qtbot, wall_fields=dict(FACTS), wall_handle="@a", on_wall_submit=lambda t: None)
+    p = _panel(qtbot, wall_fields=dict(FACTS), wall_handle="@a", on_wall_submit=lambda t: None,
+               gallery_ready=True)
     p.show()
     p.gallery_btn.click()
     p.wall_consent.setChecked(True)
@@ -200,7 +200,7 @@ def test_save_as_preset_is_on_export_with_its_line(qtbot):
     p = _panel(qtbot, on_save_preset=lambda: got.append(1))
     assert p.save_preset_btn.text() == "Save as Preset…"
     assert not p.save_preset_btn.icon().isNull(), "the bookmark icon"
-    assert p.save_preset_hint.text() == "Keep this look for similar pictures."
+    assert p.save_preset_hint.text() == "Saves the steps for similar pictures — not this picture."
     assert not p.save_preset_btn.isEnabled(), "MainWindow gates it"
     p.save_preset_btn.setEnabled(True)
     p.save_preset_btn.click()
@@ -540,11 +540,12 @@ def test_a_send_landing_after_an_edit_does_not_spend_the_new_version(
     assert p.wall_btn.isEnabled(), "the old version's send spent the new one"
 
 
-def test_busy_sweeps_the_gallery_dialog_but_not_its_cancel(qtbot, tmp_path):
+def test_busy_sweeps_the_gallery_dialog_but_not_its_cancel(qtbot, tmp_path, monkeypatch):
     """The busy gate's rule — no panel button can START work mid-job — covers
     the dialog: Send (live before, consent ticked) goes off and comes back.
     Cancel only closes the window, so it stays live (keep_live)."""
     win = _export_win(qtbot, tmp_path)
+    _do_export(qtbot, win, monkeypatch, tmp_path)        # Share waits for an export
     p = win._panel
     p.wall_consent.setChecked(True)
     assert p.wall_btn.isEnabled(), "fixture: Send live before the job"
@@ -554,3 +555,105 @@ def test_busy_sweeps_the_gallery_dialog_but_not_its_cancel(qtbot, tmp_path):
     assert p.gallery_dialog.cancel_btn.isEnabled()
     win._set_busy(False)
     assert p.wall_btn.isEnabled() and p.gallery_btn.isEnabled()
+
+
+# --- C2 (owner's choice after testing B1, 2026-10-14) -------------------------------------
+
+OPTIONAL_HEADING = "OPTIONAL — DOESN'T SAVE YOUR PICTURE"
+
+
+def test_one_heading_over_both_extras(qtbot):
+    p = _panel(qtbot, wall_fields=dict(FACTS), wall_handle="@a")
+    assert p.optional_heading.text() == OPTIONAL_HEADING
+    assert p.optional_heading.objectName() == "panelSectionLabel"
+    p.resize(360, 900); p.show(); qtbot.waitExposed(p)
+    ys = [w.mapTo(p, w.rect().topLeft()).y() for w in (
+        p.space_note, p.optional_heading, p.gallery_btn, p.gallery_hint,
+        p.save_preset_btn, p.save_preset_hint)]
+    assert ys == sorted(ys) and len(set(ys)) == len(ys), ys
+
+
+def test_the_heading_stands_over_the_preset_alone_without_a_gallery(qtbot):
+    p = _panel(qtbot)
+    assert p.optional_heading.text() == OPTIONAL_HEADING
+
+
+def test_the_preset_line_says_it_does_not_save_the_picture(qtbot):
+    p = _panel(qtbot)
+    assert p.save_preset_hint.text() == "Saves the steps for similar pictures — not this picture."
+
+
+def test_share_is_off_until_exported_at_the_panel(qtbot):
+    p = _panel(qtbot, wall_fields=dict(FACTS), wall_handle="@a")
+    assert not p.gallery_btn.isEnabled()
+    assert p.gallery_hint.text() == "Available after you export."
+    assert "export" in p.gallery_btn.toolTip().lower()
+    p2 = _panel(qtbot, wall_fields=dict(FACTS), wall_handle="@a", gallery_ready=True)
+    assert p2.gallery_btn.isEnabled()
+    assert p2.gallery_hint.text() == "Your exported picture in the public gallery."
+
+
+def test_the_dialog_links_to_the_gallery(qtbot, monkeypatch):
+    from PySide6.QtGui import QDesktopServices
+    opened = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", staticmethod(lambda u: opened.append(u.toString())))
+    p = _panel(qtbot, wall_fields=dict(FACTS), wall_handle="@a")
+    link = p.gallery_dialog.gallery_link
+    assert "See the gallery ↗" in link.text()
+    assert "text-decoration:none" in link.text(), "the How-this-works link style"
+    link.linkActivated.emit("https://nocturneastro.com/gallery.html")
+    assert opened == ["https://nocturneastro.com/gallery.html"]
+
+
+def _do_export(qtbot, win, monkeypatch, tmp_path, ok=True, cancel=False):
+    from nocturne.ui import file_dialogs
+    out = tmp_path / "out.tiff"
+    monkeypatch.setattr(file_dialogs, "save_file",
+                        staticmethod(lambda *a, **k: ("" if cancel else str(out), "")))
+    if not ok:
+        from nocturne.ui import main_window as mw
+        def boom(*a, **k):
+            raise OSError("disk full")
+        monkeypatch.setattr(mw, "save_tiff", boom)
+    win._panel.export_btn.click()
+    qtbot.wait(50)
+
+
+def test_share_wakes_after_an_export_and_sleeps_after_an_edit(qtbot, tmp_path, monkeypatch):
+    win = _export_win(qtbot, tmp_path)
+    p = win._panel
+    assert not p.gallery_btn.isEnabled()
+    assert p.gallery_hint.text() == "Available after you export."
+    _do_export(qtbot, win, monkeypatch, tmp_path)
+    p = win._panel
+    assert p.gallery_btn.isEnabled(), "exported: Share is offered"
+    assert p.gallery_hint.text() == "Your exported picture in the public gallery."
+    assert "out.tiff" in p.desc_box.text(), "the export-done line stays"
+    win._rebuild_panel()
+    assert win._panel.gallery_btn.isEnabled(), "same version, still exported"
+    _edit(win)
+    p = win._panel
+    assert not p.gallery_btn.isEnabled(), "a changed picture needs a new export"
+    assert p.gallery_hint.text() == "Available after you export."
+
+
+@pytest.mark.parametrize("how", ["failed", "cancelled"])
+def test_a_failed_or_cancelled_export_does_not_wake_share(qtbot, tmp_path, monkeypatch, how):
+    win = _export_win(qtbot, tmp_path)
+    _do_export(qtbot, win, monkeypatch, tmp_path, ok=(how != "failed"), cancel=(how == "cancelled"))
+    win._sync_step_controls(); win._rebuild_panel()     # read back from the record itself
+    assert not win._panel.gallery_btn.isEnabled()
+    assert win._panel.gallery_hint.text() == "Available after you export."
+
+
+def test_share_is_still_swept_while_busy_once_exported(qtbot, tmp_path, monkeypatch):
+    win = _export_win(qtbot, tmp_path)
+    _do_export(qtbot, win, monkeypatch, tmp_path)
+    p = win._panel
+    assert p.gallery_btn.isEnabled()
+    win._set_busy(True, "Working…")
+    assert not p.gallery_btn.isEnabled()
+    win._refresh()
+    assert not win._panel.gallery_btn.isEnabled(), "a refresh mid-job relit it"
+    win._set_busy(False)
+    assert win._panel.gallery_btn.isEnabled()

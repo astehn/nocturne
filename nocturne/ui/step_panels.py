@@ -236,7 +236,17 @@ _FORMAT_TILES = [
 _LAYERS_FORMAT = "Starless + Stars (two TIFFs)"
 # Short labels for the colour-space buttons; the VALUES stay core.colour.SPACES.
 _SPACE_LABELS = {"Display P3": "P3", "ProPhoto RGB": "ProPhoto"}
-_GALLERY_HINT = "Optional — your picture in the public gallery at nocturneastro.com."
+# C2 (Andreas, 2026-10-14, after testing B1): the extras sit under one heading
+# that says what they are NOT, so nobody shares or saves a preset, thinks the
+# picture is saved, and quits. Share waits for an export of this version.
+_OPTIONAL_HEADING = "OPTIONAL — DOESN'T SAVE YOUR PICTURE"
+_GALLERY_HINT_WAIT = "Available after you export."
+_GALLERY_HINT = "Your exported picture in the public gallery."
+_GALLERY_TIP_WAIT = ("Export the picture first: the gallery shows the picture you "
+                     "exported, and this version has not been exported yet.")
+_GALLERY_TIP = "Publish your exported picture in the Nocturne gallery at nocturneastro.com"
+_GALLERY_URL = "https://nocturneastro.com/gallery.html"
+_PRESET_HINT = "Saves the steps for similar pictures — not this picture."
 
 
 def _rule() -> QFrame:
@@ -245,6 +255,12 @@ def _rule() -> QFrame:
     rule.setFrameShape(QFrame.Shape.HLine)
     rule.setObjectName("panelRule")
     return rule
+
+
+def _open_url(href: str) -> None:
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QDesktopServices
+    QDesktopServices.openUrl(QUrl(href))
 
 
 class _GalleryDialog(QDialog):
@@ -261,6 +277,15 @@ class _GalleryDialog(QDialog):
         # QDialog is a titled window on macOS too, not a sheet).
         lay = QVBoxLayout(self)
         self.body = QVBoxLayout()
+        # "How this works ↗"'s style: ACCENT, no underline; ↗ = opens elsewhere.
+        from .theme import ACCENT
+        self.gallery_link = QLabel(
+            f'<a href="{_GALLERY_URL}" style="color:{ACCENT}; text-decoration:none">'
+            "See the gallery ↗</a>")
+        self.gallery_link.setObjectName("helpHeader")
+        self.gallery_link.setOpenExternalLinks(False)
+        self.gallery_link.setToolTip(_GALLERY_URL)
+        self.gallery_link.linkActivated.connect(_open_url)
         lay.addLayout(self.body)
         lay.addSpacing(8)
         row = QHBoxLayout()
@@ -338,6 +363,7 @@ def build_panel(
     on_flip_v=None,
     on_export=None,
     wall_fields=None, wall_handle="", on_wall_submit=None, wall_state=None,
+    gallery_ready: bool = False,
     on_remove_green=None,
     on_removegreen_change=None, on_tint_change=None, on_apply_tint=None,
     on_enhance=None,
@@ -1333,10 +1359,12 @@ def build_panel(
         w.gallery_btn = None
         w.gallery_hint = None
         w.gallery_dialog = None
+        controls.addWidget(_rule(), 0)
+        w.optional_heading = section_label(_OPTIONAL_HEADING)
+        controls.addWidget(w.optional_heading)
         if wall_fields is not None:
-            controls.addWidget(_rule(), 0)
             w.gallery_btn = QPushButton(load_icon("upload"), "Share to the gallery…")
-            w.gallery_hint = _desc_label(_GALLERY_HINT)
+            w.gallery_hint = _desc_label(_GALLERY_HINT_WAIT)
             controls.addWidget(w.gallery_btn)
             controls.addWidget(w.gallery_hint)
 
@@ -1347,6 +1375,7 @@ def build_panel(
                 "Publish this picture in the public gallery at "
                 "nocturneastro.com. It is looked at before it appears, and can "
                 "be taken down later by asking."))
+            body_lay.addWidget(dlg.gallery_link)
 
             # WHAT IT WILL SAY ABOUT YOU, from the same dict that gets posted,
             # so the panel cannot claim one thing and send another.
@@ -1403,6 +1432,7 @@ def build_panel(
                 _wall_state()
                 w.wall_note.setText("Sending…")
                 w.gallery_hint.setText("Sending…")   # seen with the window closed
+                w._wall_msg_shown = True
                 target = w.wall_target.text().strip() if w.wall_target else ""
                 if on_wall_submit is not None:
                     on_wall_submit(target)
@@ -1413,6 +1443,7 @@ def build_panel(
                 # Also under the panel's button: the dialog may have been
                 # closed while the send was in flight.
                 w.gallery_hint.setText(message)
+                w._wall_msg_shown = True
                 if ok:
                     w._wall_sent = True
                 # On failure Send comes back (a network blip must not cost
@@ -1422,8 +1453,19 @@ def build_panel(
             w.wall_consent.toggled.connect(_wall_toggled)
             w.wall_btn.clicked.connect(_wall_click)
             w.gallery_btn.clicked.connect(dlg.open)
+            def _gallery_sync(ready: bool) -> None:
+                """Share waits for an export of THIS version (MainWindow
+                knows). Enablement only: a busy sweep re-closes it, as for
+                every control _sync_step_controls touches. A send's own
+                message, once there is one, outranks the standing line."""
+                w.gallery_btn.setEnabled(bool(ready))
+                w.gallery_btn.setToolTip(_GALLERY_TIP if ready else _GALLERY_TIP_WAIT)
+                if not getattr(w, "_wall_msg_shown", False):
+                    w.gallery_hint.setText(_GALLERY_HINT if ready else _GALLERY_HINT_WAIT)
+
             w.wall_finished = _wall_finished
             w.wall_sync = _wall_state
+            w.gallery_sync = _gallery_sync
             # A rebuilt panel starts from the picture's send, not from scratch.
             state = (wall_state or {}).get("state")
             if state in ("sending", "sent", "failed"):
@@ -1432,19 +1474,20 @@ def build_panel(
                 msg = (wall_state or {}).get("message", "")
                 w.wall_note.setText(msg)
                 w.gallery_hint.setText(msg)
+                w._wall_msg_shown = True
+            _gallery_sync(gallery_ready)
             _wall_state()
 
         # Save as Preset… — here, not on Enhancements, where it read as an
         # Enhancements-only preset (Andreas, 2026-10-14). The Project-menu item
         # reaches it from both steps; MainWindow gates the two together.
-        controls.addWidget(_rule(), 0)
         w.save_preset_btn = QPushButton(load_icon("save-preset"), "Save as Preset…")
         w.save_preset_btn.setObjectName("savePreset")
         w.save_preset_btn.setEnabled(False)
         if on_save_preset is not None:
             w.save_preset_btn.clicked.connect(lambda: on_save_preset())
         controls.addWidget(w.save_preset_btn)
-        w.save_preset_hint = _desc_label("Keep this look for similar pictures.")
+        w.save_preset_hint = _desc_label(_PRESET_HINT)
         controls.addWidget(w.save_preset_hint)
 
     else:  # placeholder / unknown

@@ -2418,7 +2418,10 @@ def test_export_help_names_the_buttons_the_panel_has():
     assert "Share to the gallery…" in b and "window" in b
     sp = _src("nocturne/ui/step_panels.py")
     assert 'QPushButton(load_icon("upload"), "Share to the gallery…")' in sp
-    assert "nocturneastro.com" in _GALLERY_HINT
+    # C2's line under the button is "Your exported picture in the public
+    # gallery."; the dialog it opens names the site.
+    assert _GALLERY_HINT == "Your exported picture in the public gallery."
+    assert "public gallery at \"\n" in sp or "nocturneastro.com. It is looked at" in sp
     # Burn annotations appears only once solved, and the help says when.
     assert "plate-solved" in b and "Burn annotations" in b
     mw = _src("nocturne/ui/main_window.py")
@@ -2431,3 +2434,20 @@ def test_enhancements_help_no_longer_puts_the_preset_button_on_its_own_step():
     b = _plain(_body("enhancements"))
     assert "button at the top of this step" not in b
     assert "Export step" in b
+
+
+
+def test_export_help_gives_the_c2_order_and_what_the_extras_do_not_do():
+    from nocturne.ui import step_panels as sp
+    b = _plain(_body("export"))
+    # Export first, then optionally share — and Share waits for it.
+    assert b.index("export first") < b.index("then, if you like, share it")
+    assert sp._GALLERY_HINT_WAIT in b
+    assert "until this version of the picture has been exported" in b
+    assert "See the gallery ↗" in b and "See the gallery ↗" in _src("nocturne/ui/step_panels.py")
+    # The heading, in the help's own case, and what the preset does not save.
+    assert "Optional — doesn't save your picture".upper() == sp._OPTIONAL_HEADING
+    assert "Optional — doesn't save your picture" in b
+    assert "not the picture itself" in b
+    mw = _src("nocturne/ui/main_window.py")
+    assert "self._exported_key = self._gallery_key()" in mw.split("def _export_done")[1][:600]

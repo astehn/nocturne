@@ -541,6 +541,11 @@ class MainWindow(QMainWindow):
         # version and may be sent again (review 2026-10-14). On the WINDOW,
         # not the panel, because the panel is rebuilt mid-send.
         self._gallery_send = None
+        # _gallery_key() of the last version that EXPORTED successfully. Share
+        # to the gallery waits for it (C2, Andreas 2026-10-14): the gallery
+        # shows what you exported, and a picture edited since is a new version
+        # that needs a new export. A failed or cancelled export never sets it.
+        self._exported_key = None
         # (shown name, path to reveal) of the last export from THIS image, for
         # the Export step's "Saved … · Show in Finder" line. Cleared with the
         # workspace, so an old file is never announced over new work.
@@ -4718,6 +4723,9 @@ class MainWindow(QMainWindow):
                 and not (isinstance(committed, dict)
                          and committed.get("linked") is False))
         self._sync_split_readiness(sid)
+        gallery_sync = getattr(self._panel, "gallery_sync", None)
+        if gallery_sync is not None:
+            gallery_sync(self._gallery_ready())   # swept below if busy
         wall_sync = getattr(self._panel, "wall_sync", None)
         if wall_sync is not None:
             wall_sync()          # re-derived, then swept below if busy
@@ -5500,8 +5508,9 @@ class MainWindow(QMainWindow):
         self._chosen_preset = None
         self._recover_prep = self._lc_prep = None
         self._last_export = None
-        # A gallery send belongs to the picture it was made from.
+        # A gallery send and an export record belong to the picture they were made from.
         self._gallery_send = None
+        self._exported_key = None
         self._solve = None
         self._solve_freshness = None
         self._solve_elapsed = 0.0
@@ -7489,6 +7498,10 @@ class MainWindow(QMainWindow):
             return None
         return (self._project_gen, self.project.state_token(self.project.position))
 
+    def _gallery_ready(self) -> bool:
+        """Has the version now showing been exported?"""
+        return self._exported_key is not None and self._exported_key == self._gallery_key()
+
     def _gallery_state(self):
         """The last send, if it was of the version now showing."""
         st = self._gallery_send
@@ -7651,7 +7664,10 @@ class MainWindow(QMainWindow):
 
     def _export_done(self, name: str, path: str) -> None:
         self._last_export = (name, path)
+        # Only a successful export reaches here: Share may now offer this version.
+        self._exported_key = self._gallery_key()
         self._show_export_done()
+        self._sync_step_controls()       # Share wakes; a busy sweep re-gates it
 
     def _show_export_done(self) -> None:
         """Put "Saved <name> · Show in Finder" on the Export step, if it is up."""
@@ -7848,6 +7864,7 @@ class MainWindow(QMainWindow):
             wall_handle=(getattr(self.settings, "handle", "") or "").strip(),
             on_wall_submit=self._submit_to_wall,
             wall_state=self._gallery_state(),
+            gallery_ready=self._gallery_ready(),
             on_remove_green=self._remove_green,
             on_removegreen_change=self._on_removegreen_change,
             on_tint_change=self._on_tint_change,
