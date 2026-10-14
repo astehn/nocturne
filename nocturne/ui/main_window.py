@@ -203,7 +203,11 @@ def _clip_values(raw: ChannelClipping, raw_base, structural: ChannelClipping | N
                         f"that counts toward the warning.")
             if over:
                 tip += f"\nOver the {limit * 100:g}% limit. {advice}"
-            elif frac - (base[i] if exact else 0.0) >= limit:
+            # An old worst-channel bound neither explains a channel's figure
+            # away nor gets contradicted: at or under it, the import may have
+            # crushed a REGION here, so "scattered noise" would be a guess.
+            elif frac - (base[i] if exact else 0.0) >= limit \
+                    and (exact or base[i] <= 0 or frac > base[i]):
                 tip += ("\nScattered noise, not lost detail: single pixels, not a "
                         "region — Noise Reduction smooths them away.")
             row.append(ClipValue(ch, frac, over, tip))

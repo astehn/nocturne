@@ -4035,6 +4035,9 @@ def test_an_old_manifest_with_float_baselines_loads_and_reads(qtbot, tmp_path):
     win2._update_clipping_line()
     tip = _cells(win2)[("lo", "G")].toolTip()
     assert "up to 30.0% crushed on import (worst channel)" in tip
+    # The import crushed a REGION; calling the same pixels scattered noise
+    # beside it would contradict the line above.
+    assert "scattered noise" not in tip.lower()
     assert _amber(win2) == set()
 
 
@@ -4076,11 +4079,11 @@ def test_an_old_scalar_baseline_does_not_hide_scattered_noise(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)
-    win._clip_baseline = (0.0, 0.30)
-    assert _preview_with_clipped(win, black=400, scatter=True) == set()
+    win._clip_baseline = (0.0, 0.002)          # worst channel 0.2%, maybe not G's
+    assert _preview_with_clipped(win, black=400, scatter=True) == set()   # 1.0% each
     tip = _cells(win)[("lo", "G")].toolTip()
-    assert "scattered noise" in tip.lower()
-    assert "up to 30.0% crushed on import (worst channel)" in tip
+    assert "scattered noise" in tip.lower(), "above the bound: still explained"
+    assert "up to 0.2% crushed on import (worst channel)" in tip
 
 
 def test_a_bundle_without_a_baseline_still_loads(qtbot, tmp_path):
