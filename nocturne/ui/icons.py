@@ -14,7 +14,7 @@ _ICON_DIR = Path(__file__).resolve().parent.parent / "assets" / "icons"
 ICON_NAMES = (
     "open", "settings", "save-recipe", "save-preset", "batch", "stack", "haoiii", "combine",
     "undo", "redo", "before-after", "log", "fit", "actual-size", "about", "reset",
-    "update", "more",
+    "update", "more", "format-tiff", "format-png", "format-fits", "upload",
 )
 
 

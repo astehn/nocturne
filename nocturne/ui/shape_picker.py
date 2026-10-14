@@ -174,20 +174,27 @@ class OrientationToggle(ShapeButton):
 class SegmentRow(QWidget):
     """Buttons side by side in the mock-up's segment style. `checkable` makes
     them one exclusive choice (Guides, Orientation); otherwise each is an
-    action (Rotate / Flip)."""
+    action (Rotate / Flip).
+
+    `values`, when given, is what the row READS and WRITES in place of the
+    labels: Export shows "P3" and still hands on "Display P3", the name the
+    exporter and every saved setting already use."""
 
     currentTextChanged = Signal(str)
 
-    def __init__(self, labels, *, checkable: bool = True, parent=None) -> None:
+    def __init__(self, labels, *, checkable: bool = True, values=None, parent=None) -> None:
         super().__init__(parent)
-        self._labels = list(labels)
+        labels = list(labels)
+        self._labels = list(values) if values is not None else labels
+        if len(self._labels) != len(labels):
+            raise ValueError("one value per label")
         self._buttons: list[QPushButton] = []
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
-        for i, label in enumerate(self._labels):
+        for i, label in enumerate(labels):
             b = QPushButton(label)
             b.setObjectName("shapeSeg")
             b.setCheckable(checkable)
