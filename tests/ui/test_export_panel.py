@@ -480,3 +480,77 @@ def test_the_empty_preset_browser_points_at_export():
     from nocturne.ui.preset_browser import _EMPTY
     assert _EMPTY == ("Process a picture through to Export, then press Save as Preset… "
                       "(or use the Project menu).")
+
+
+# --- fix round 2: "sent" belongs to the exact version that was sent ------------------
+
+def _send_and_land(qtbot, win, monkeypatch):
+    gate, _ = _held_submit(monkeypatch)
+    win._panel.wall_consent.setChecked(True)
+    win._panel.wall_btn.click()
+    gate.set()
+    qtbot.waitUntil(lambda: "looked at" in win._panel.gallery_hint.text(), timeout=4000)
+
+
+def _edit(win):
+    """Change the picture: a real Enhancements tap, a new history state."""
+    win._go_to_id("enhancements", user_initiated=False)
+    win._enhance("Vibrance")
+    win._go_to_id("export", user_initiated=False)
+
+
+def test_an_edited_picture_can_be_sent_again(qtbot, tmp_path, monkeypatch):
+    win = _export_win(qtbot, tmp_path)
+    win._async_enabled = True
+    _send_and_land(qtbot, win, monkeypatch)
+    win._async_enabled = False
+    before = win.project.state_token(win.project.position)
+    _edit(win)
+    assert win.project.state_token(win.project.position) != before, "fixture: no edit"
+    p = win._panel
+    p.wall_consent.setChecked(True)
+    assert p.wall_btn.isEnabled(), "the changed version must be sendable"
+    assert "looked at" not in p.gallery_hint.text()
+
+
+def test_undoing_back_to_the_sent_version_is_spent_again(qtbot, tmp_path, monkeypatch):
+    win = _export_win(qtbot, tmp_path)
+    win._async_enabled = True
+    _send_and_land(qtbot, win, monkeypatch)
+    win._async_enabled = False
+    _edit(win)
+    win.project.undo(); win._refresh(); win._rebuild_panel()
+    p = win._panel
+    p.wall_consent.setChecked(True)
+    assert not p.wall_btn.isEnabled(), "this exact version has been sent"
+
+
+def test_a_send_landing_after_an_edit_does_not_spend_the_new_version(
+        qtbot, tmp_path, monkeypatch):
+    win = _export_win(qtbot, tmp_path)
+    win._async_enabled = True
+    gate, _ = _held_submit(monkeypatch)
+    win._panel.wall_consent.setChecked(True)
+    win._panel.wall_btn.click()
+    win._async_enabled = False
+    _edit(win)
+    gate.set(); qtbot.wait(300)
+    p = win._panel
+    p.wall_consent.setChecked(True)
+    assert p.wall_btn.isEnabled(), "the old version's send spent the new one"
+
+
+def test_busy_sweeps_the_gallery_dialog_but_not_its_cancel(qtbot, tmp_path):
+    """The busy gate's rule — no panel button can START work mid-job — covers
+    the dialog: Send (live before, consent ticked) goes off and comes back.
+    Cancel only closes the window, so it stays live (keep_live)."""
+    win = _export_win(qtbot, tmp_path)
+    p = win._panel
+    p.wall_consent.setChecked(True)
+    assert p.wall_btn.isEnabled(), "fixture: Send live before the job"
+    win._set_busy(True, "Working…")
+    assert not p.wall_btn.isEnabled() and not p.wall_consent.isEnabled()
+    assert not p.gallery_btn.isEnabled()
+    assert p.gallery_dialog.cancel_btn.isEnabled()
+    win._set_busy(False)
+    assert p.wall_btn.isEnabled() and p.gallery_btn.isEnabled()

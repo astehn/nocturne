@@ -532,10 +532,14 @@ class MainWindow(QMainWindow):
         self._project_path: str | None = None   # current .nocturne bundle path, if saved/opened
         self._dirty = False   # True once the project has un-saved edits
         self._solve = None  # (sig, SolveResult, objects) once a plate-solve lands
-        # This picture's gallery send: None, or {"state": "sending"|"sent"|
-        # "failed", "message": str}. On the WINDOW, not the panel: a plate
-        # solve landing (or any _rebuild_panel) builds a fresh panel mid-send,
-        # and that one must not offer Send again (review 2026-10-14).
+        # The last gallery send: None, or {"key", "state": "sending"|"sent"|
+        # "failed", "message"}. The rule: it applies to the exact VERSION that
+        # was sent — `key` is _gallery_key(), the workspace generation plus the
+        # history state at the Export position. A panel rebuilt over the same
+        # version (a plate solve landing, any _rebuild_panel) starts from it,
+        # so Send stays off mid-send and once sent; an edited picture is a new
+        # version and may be sent again (review 2026-10-14). On the WINDOW,
+        # not the panel, because the panel is rebuilt mid-send.
         self._gallery_send = None
         # (shown name, path to reveal) of the last export from THIS image, for
         # the Export step's "Saved … · Show in Finder" line. Cleared with the
@@ -7479,6 +7483,17 @@ class MainWindow(QMainWindow):
         meta["source_label"] = self._source_label
         return submission_fields(meta, handle)
 
+    def _gallery_key(self):
+        """Which version of which picture a gallery send is about."""
+        if self.project is None:
+            return None
+        return (self._project_gen, self.project.state_token(self.project.position))
+
+    def _gallery_state(self):
+        """The last send, if it was of the version now showing."""
+        st = self._gallery_send
+        return st if st is not None and st.get("key") == self._gallery_key() else None
+
     def _submit_to_wall(self, target: str) -> None:
         """Compose the finished picture and post it, off the interface thread.
 
@@ -7512,17 +7527,20 @@ class MainWindow(QMainWindow):
         # QRunnable (and its signals) before QThreadPool runs it." Every other
         # background call in this window already goes through it.
         gen = self._project_gen
-        self._gallery_send = {"state": "sending", "message": "Sending…"}
+        key = self._gallery_key()
+        self._gallery_send = {"key": key, "state": "sending", "message": "Sending…"}
 
         def _land(ok: bool, message: str) -> None:
             # To whatever panel is CURRENT: the one that sent may have been
-            # rebuilt (and deleted) while the send was in flight. And only for
-            # the picture that sent it — a new image retires the state.
+            # rebuilt (and deleted) while the send was in flight. Only for the
+            # picture that sent it — a new image retires the state — and the
+            # panel hears it only while it shows the version that was sent.
             if gen != self._project_gen:
                 return
-            self._gallery_send = {"state": "sent" if ok else "failed", "message": message}
+            self._gallery_send = {"key": key, "state": "sent" if ok else "failed",
+                                  "message": message}
             panel = self._panel
-            if hasattr(panel, "wall_finished"):
+            if hasattr(panel, "wall_finished") and self._gallery_key() == key:
                 panel.wall_finished(ok, message)
                 self._sync_step_controls()   # re-gates it if another job runs
 
@@ -7829,7 +7847,7 @@ class MainWindow(QMainWindow):
             wall_fields=self._wall_fields(stage),
             wall_handle=(getattr(self.settings, "handle", "") or "").strip(),
             on_wall_submit=self._submit_to_wall,
-            wall_state=self._gallery_send,
+            wall_state=self._gallery_state(),
             on_remove_green=self._remove_green,
             on_removegreen_change=self._on_removegreen_change,
             on_tint_change=self._on_tint_change,

@@ -34,7 +34,12 @@ def test_no_panel_button_stays_live_while_busy(qtbot, tmp_path, stage_id):
 
     live_before = [b for b in win._panel.findChildren(QPushButton) if b.isEnabled()]
     win._set_busy(True, "Working…")
-    still_live = [b.text() for b in win._panel.findChildren(QPushButton) if b.isEnabled()]
+    # The ONE exemption, by identity: the gallery dialog's Cancel only closes
+    # that window — it starts no work — and must work mid-job or the window
+    # could not be dismissed (busy_gate.keep_live). Every other button counts.
+    exempt = {id(getattr(getattr(win._panel, "gallery_dialog", None), "cancel_btn", None))}
+    still_live = [b.text() for b in win._panel.findChildren(QPushButton)
+                  if b.isEnabled() and id(b) not in exempt]
     assert not still_live, f"{stage_id}: {still_live} stayed clickable during an operation"
 
     win._set_busy(False)
