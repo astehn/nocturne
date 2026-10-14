@@ -2675,7 +2675,7 @@ def test_levels_help_already_amber_means_no_more_regions_not_a_steady_number():
     from tests.core.test_levels_clip_aware import _amber_blue
     b = _plain(_body("levels"))
     assert "give or take the last digit" not in b and "comes out no worse" not in b
-    assert "A colour that was already amber gets no more crushed regions" in b
+    assert "A colour that was already amber gets no more crushed regions to speak of" in b
     assert ("scattered single pixels can still be pushed to black, so the number shown, "
             "which counts every pixel, can still climb") in b
     img = _amber_blue(1)

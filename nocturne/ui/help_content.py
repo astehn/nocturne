@@ -546,7 +546,7 @@ _TOPIC_LIST = (
        "<p><b>It stops at the clipping warning.</b> Auto black point takes the black point as "
        "far as it can and never turns a colour amber by itself on the crushed-to-black "
        "read-out under the histogram (<b>▼</b>), so clipping is never a surprise Auto hands "
-       "you. A colour that was already amber gets no more crushed regions \u2014 but "
+       "you. A colour that was already amber gets no more crushed regions to speak of \u2014 but "
        "scattered single pixels can still be pushed to black, so the number shown, which "
        "counts every pixel, can still climb. When it had to stop short, a line under the "
        "button says so "
