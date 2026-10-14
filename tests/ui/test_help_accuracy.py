@@ -2495,7 +2495,7 @@ def test_levels_help_auto_stops_at_the_warning_and_never_turns_a_colour_amber():
     from tests.core.test_levels_clip_aware import _stop_image
     b = _plain(_body("levels"))
     assert "It stops at the clipping warning." in b
-    assert "turns amber" in b and "give or take the last digit" in b
+    assert "never turns a colour amber by itself" in b
     img = _stop_image()
     probe = CrushProbe(img)
     a = auto_black(img)
@@ -2660,3 +2660,52 @@ def test_auto_enhance_and_recipes_help_say_auto_levels_stops_at_the_warning():
     assert a.stopped
     (_n, _o, out), = run_auto_plan(img, [("levels", AUTO_LEVELS)], Settings()).results
     np.testing.assert_array_equal(out.data, apply_levels(img, a.black, 1.0, 1.0).data)
+
+
+def test_levels_help_already_amber_means_no_more_regions_not_a_steady_number():
+    """The read-out SHOWS the raw crushed fraction; Auto limits the STRUCTURAL
+    figure, which only decides amber or grey. The old sentence ("no worse, give
+    or take the last digit") was false: here blue arrives amber, Auto keeps
+    its full black because the crushed regions barely move — and the shown
+    blue number climbs from 0.07% to over 13%."""
+    from nocturne.core.histogram import histogram
+    from nocturne.core.inspect import CRUSH_INVISIBLE, CRUSHED_LIMIT
+    from nocturne.core.inspect import channel_clipping_from_histogram as shown_fig
+    from nocturne.core.levels import CrushProbe, apply_levels, auto_black
+    from tests.core.test_levels_clip_aware import _amber_blue
+    b = _plain(_body("levels"))
+    assert "give or take the last digit" not in b and "comes out no worse" not in b
+    assert "A colour that was already amber gets no more crushed regions" in b
+    assert ("scattered single pixels can still be pushed to black, so the number shown, "
+            "which counts every pixel, can still climb") in b
+    img = _amber_blue(1)
+    probe = CrushProbe(img)
+    a = auto_black(img)
+    was, now = probe.crushed(0.0)[2], probe.crushed(a.black)[2]
+    assert was >= CRUSHED_LIMIT and now - was < CRUSH_INVISIBLE     # regions: held
+    before = shown_fig(histogram(img)).lo[2]
+    after = shown_fig(histogram(apply_levels(img, a.black, 1.0, 1.0))).lo[2]
+    assert after > 100 * before, (before, after)                    # shown: climbs
+
+
+def test_levels_help_an_already_stretched_picture_can_stop_earlier_than_the_warning():
+    """A picture that opens already stretched has its arrival subtracted by the
+    read-out; Auto judges the picture as it is (it must replay from its option
+    and input alone), so it can stop where the warning would have stayed grey."""
+    import nocturne.ui.main_window as mw
+    from nocturne.core.export import display_rgb8
+    from nocturne.core.histogram import histogram
+    from nocturne.core.inspect import channel_clipping_from_histogram, structural_channel_clipping
+    from nocturne.core.levels import apply_levels, auto_black
+    from tests.core.test_levels_clip_aware import _amber_blue
+    b = _plain(_body("levels"))
+    assert "On a picture that opened already stretched" in b
+    assert "so it can stop earlier than the warning would" in b
+    img = _amber_blue(10)                      # opened as it is: the import IS this
+    a = auto_black(img)
+    assert a.stopped and a.black < a.candidate
+    at_cand = apply_levels(img, a.candidate, 1.0, 1.0)
+    lo, _hi = mw._clip_values(channel_clipping_from_histogram(histogram(at_cand)), None,
+                              structural_channel_clipping(display_rgb8(at_cand)),
+                              structural_channel_clipping(display_rgb8(img)))
+    assert not any(v.over for v in lo), "the warning would have gone amber at the candidate"

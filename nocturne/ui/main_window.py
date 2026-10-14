@@ -2357,6 +2357,7 @@ class MainWindow(QMainWindow):
         (Natural)", "Preset (M 8)")."""
         stage_of = {v: k for k, v in STEP_NAME.items()}
         resolved = run.resolved or (None,) * len(run.results)
+        levels_at = None
         for (name, option, img), engine, res in zip(run.results, run.engines, resolved):
             self.project.record_precomputed(name, option, img)
             stage = stage_of.get(name, "")
@@ -2371,6 +2372,14 @@ class MainWindow(QMainWindow):
             # And to the file, as _log_step does for a manual apply.
             sessionlog.write(f"step  {name}" + (f" ({label})" if label else "") + detail
                              + f" \u2014 {suffix}")
+            if stage == "levels":
+                levels_at = (len(self.project.entries()) - 1, option, res)
+        if levels_at is not None:
+            # Auto's decision on the very input now recorded before the Levels
+            # entry: returning to Levels reuses it instead of searching again.
+            at, option, res = levels_at
+            if self._leading_kept(self.project.entries(), names_before("levels")) == at:
+                self._keep_levels_auto(option, res, self._base_token("levels"))
         for (name, _reason), detail in zip(run.failures, run.failure_details):
             sessionlog.write(f"ERROR {suffix}: {name} failed\n{detail}")
         if run.results:
@@ -4739,6 +4748,12 @@ class MainWindow(QMainWindow):
                 # What apply_current commits; compared by meaning, so a legacy
                 # (b, g, w) commit matches today's dict and a version-1 "auto"
                 # does not match a version-2 one (it derives another black).
+                p = parse_levels_option(committed)
+                if p.auto and p.version != AUTO_VERSION and not self._levels_auto:
+                    # An older Auto is shown as the numbers it produced (see
+                    # _seed_levels); untouched, those ARE the commit.
+                    seeded = getattr(panel, "levels_v1_seed", None)
+                    return seeded is not None and _same_levels(current, seeded)
                 return _same_levels(self._levels_commit_option(current), committed)
             elif sid == "curves":
                 current = self._curve_option(current)
@@ -5293,6 +5308,7 @@ class MainWindow(QMainWindow):
         applied_preview = getattr(self, slot, None) if slot is not None else None
         engine_box = getattr(self._panel, "engine_box", None)
         applied_engine = engine_box.currentText() if engine_box is not None else _UNSET
+        levels_token = self._base_token("levels") if stage_id == "levels" else None
 
         def on_result(result):
             # What RAN, not only what was chosen (ColorStep: a photometric
@@ -5301,6 +5317,9 @@ class MainWindow(QMainWindow):
             self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), recorded)
             self._mark_dirty()
             self._log_step(stage_id, option, base, result, step)
+            if stage_id == "levels":
+                self._keep_levels_auto(option, getattr(step, "last_resolved", None),
+                                       levels_token)
             if (stage_id == "stretch" and isinstance(option, dict)
                     and option.get("linked") is False and self._spcc_was_applied()
                     and not (isinstance(prior_stretch, dict)
@@ -6210,6 +6229,18 @@ class MainWindow(QMainWindow):
             return None
         return cached[1]
 
+    def _keep_levels_auto(self, option, resolved, token) -> None:
+        """Keep the Auto decision a commit just made (panel Apply, Auto
+        Enhance, a preset) for its input, so arriving at Levels next does not
+        run the ~0.8 s search again. Only for the current Auto, and only while
+        `token` is still the Levels input."""
+        decided = getattr(resolved, "auto", None)
+        p = parse_levels_option(option)
+        if (decided is None or not p.auto or p.version != AUTO_VERSION
+                or token is None or token != self._base_token("levels")):
+            return
+        self._levels_auto_cache = (token, decided)
+
     @staticmethod
     def _resolve_with(img, option, cached) -> ResolvedLevels:
         """resolve_levels(img, option), reusing Auto's cached decision for this
@@ -6234,7 +6265,8 @@ class MainWindow(QMainWindow):
                              "the clipping limit (unlimited Auto: "
                              f"{_floor_black(a.candidate) / BLACK_STEPS:.3f})")
         else:
-            parts.append(f"black {p.black:.3f}")
+            # Rounded DOWN, as the panel's Black point label shows it.
+            parts.append(f"black {_floor_black(p.black) / BLACK_STEPS:.3f}")
             if abs(p.gamma - 1.0) > 1e-9:
                 parts.append(f"midtones {p.gamma:.2f}")
             if abs(p.white - 1.0) > 1e-9:
@@ -6268,7 +6300,7 @@ class MainWindow(QMainWindow):
         elif p.auto:
             r = resolve_levels(self._preview_base("levels"), committed)
             panel.set_levels_values(r.black, r.gamma, r.white, r.offsets)
-            panel.neutral_option = panel.commit_option()
+            panel.neutral_option = panel.levels_v1_seed = panel.commit_option()
         else:
             panel.set_levels_values(p.black, p.gamma, p.white, p.offsets)
             panel.neutral_option = panel.commit_option()
@@ -8180,7 +8212,10 @@ class MainWindow(QMainWindow):
             # A mono picture has one black point; the colour ones would do
             # nothing (core ignores them), so they are not offered. Read off
             # the Levels INPUT, which is what the offsets would act on.
-            shape = self._preview_base("levels").data.shape
+            # From the history's record, not the pixels: reading the input
+            # here loaded a full frame on every arrival.
+            shape = self.project.shape_at(
+                self._leading_kept(self.project.entries(), names_before("levels")))
             new_panel.levels_colour_box.setVisible(len(shape) == 3 and shape[2] == 3)
         if stage.id == "curves" and loaded:
             new_panel.curve_editor.set_histogram(self._preview_base("curves").data)

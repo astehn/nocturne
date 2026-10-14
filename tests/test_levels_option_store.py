@@ -149,3 +149,15 @@ def test_canvas_rgb8_is_the_core_cast():
     d[0, 0] = np.nan
     for img in (AstroImage(d, is_linear=False), AstroImage(d[..., 1].copy(), is_linear=False)):
         np.testing.assert_array_equal(to_rgb8(img), display_rgb8(img))
+
+
+def test_report_prints_levels_numbers_to_three_decimals():
+    """Auto's continuous black reaches a manual dict when a midtone moves; it
+    printed every digit of the float."""
+    r = _report([("Levels", new_levels_option(0.071234567, 1.23456, 0.98765,
+                                              (0.0, 0.0, -0.0151)))])
+    for line in ("- black point: 0.071\n", "- midtones: 1.235\n", "- white point: 0.988\n",
+                 "blue −0.015"):
+        assert line in r, line
+    r = _report([("Levels", new_levels_option(auto=True))])
+    assert "- midtones: 1.000\n" in r and "- white point: 1.000\n" in r

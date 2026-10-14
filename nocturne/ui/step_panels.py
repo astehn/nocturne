@@ -1013,16 +1013,18 @@ def build_panel(
         # it shows at, exact value). While the slider stays there, the exact
         # value is what is committed, so touching another control keeps the
         # picture rather than snapping the black to the grid.
-        w.exact_black = None
+        # Midtones and White point the same way: a hand-edited recipe or
+        # preset can hold 1.234, and a colour nudge must not snap it to 1.23.
+        w.exact_black = w.exact_gamma = w.exact_white = None
 
-        def _black():
-            held = w.exact_black
-            if held is not None and held[0] == black.value():
+        def _held(slider, held, scale):
+            if held is not None and held[0] == slider.value():
                 return held[1]
-            return black.value() / BLACK_STEPS
+            return slider.value() / scale
 
         w.commit_option = lambda: new_levels_option(
-            _black(), gamma.value() / 100.0, white.value() / 100.0, _offsets())
+            _held(black, w.exact_black, BLACK_STEPS), _held(gamma, w.exact_gamma, 100.0),
+            _held(white, w.exact_white, 100.0), _offsets())
         w.levels_offsets = _offsets
 
         def _labels():
@@ -1039,11 +1041,12 @@ def build_panel(
 
         def _set_values(black_exact, gamma_v, white_v, offsets):
             """Show values WITHOUT emitting: a panel rebuilt from its commit
-            is not an edit. The black shows rounded DOWN and is kept exact."""
+            is not an edit. The black shows rounded DOWN; all three are kept
+            exact while their sliders stay where they were put."""
             import math
             pos = math.floor(round(float(black_exact) * BLACK_STEPS, 6))
-            values = [(black, pos), (gamma, round(float(gamma_v) * 100)),
-                      (white, round(float(white_v) * 100))]
+            g_pos, w_pos = round(float(gamma_v) * 100), round(float(white_v) * 100)
+            values = [(black, pos), (gamma, g_pos), (white, w_pos)]
             values += [(s, round(float(d) * BLACK_STEPS))
                        for s, d in zip(offset_sliders, offsets)]
             for s, v in values:
@@ -1051,6 +1054,8 @@ def build_panel(
                 s.setValue(v)
                 s.blockSignals(False)
             w.exact_black = (pos, float(black_exact))
+            w.exact_gamma = (g_pos, float(gamma_v))
+            w.exact_white = (w_pos, float(white_v))
             _labels()
         w.set_levels_values = _set_values
 

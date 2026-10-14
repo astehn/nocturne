@@ -122,10 +122,12 @@ def _levels_params(ser: dict) -> list[str]:
     p = parse_levels_option(ser)
     if p.auto:
         lines = [f"- black point: {_levels_auto_words(p.version)}",
-                 "- midtones: 1.0", "- white point: 1.0"]
+                 "- midtones: 1.000", "- white point: 1.000"]
     else:
-        lines = [f"- black point: {p.black}", f"- midtones: {p.gamma}",
-                 f"- white point: {p.white}"]
+        # Three decimals, the offsets' precision: Auto's continuous black
+        # printed seventeen digits.
+        lines = [f"- black point: {p.black:.3f}", f"- midtones: {p.gamma:.3f}",
+                 f"- white point: {p.white:.3f}"]
     if colours := describe_offsets(p.offsets):
         lines.append(f"- one colour's black point: {colours}")
     return lines

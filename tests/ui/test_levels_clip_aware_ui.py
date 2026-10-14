@@ -182,9 +182,14 @@ def test_dragging_a_colour_slider_updates_the_readout_live(qtbot, tmp_path):
 def test_the_colour_section_follows_the_levels_input_not_the_position(qtbot, tmp_path,
                                                                       monkeypatch):
     """The offsets act on the Levels INPUT; whatever the current position's
-    shape says, an RGB input shows them."""
+    shape says, an RGB input shows them. After a Levels commit the position
+    (1) and the Levels input (0) differ, so reading the wrong one shows."""
     win = _at_levels(qtbot, tmp_path)
-    monkeypatch.setattr(win.project, "shape_at", lambda i: (903, 1201))
+    win.apply_current(new_levels_option(0.05))
+    assert win.project.position == 1
+    real = win.project.shape_at
+    monkeypatch.setattr(win.project, "shape_at",
+                        lambda i: real(i) if i == 0 else (903, 1201))
     win._go_to_id("curves", user_initiated=False)
     win._go_to_id("levels", user_initiated=False)
     assert not win._panel.levels_colour_box.isHidden()
@@ -383,3 +388,119 @@ def test_preset_log_line_shows_a_saved_hand_set_levels(qtbot, tmp_path):
     win._record_auto_run(run, "Preset (M 8)")
     line = win.log_panel.entries()[-1]
     assert line.endswith("Levels · black 0.062 · blue −0.015 — Preset (M 8)"), line
+
+
+# --- final whole-branch review: arrival cost, minors, parked tests ----------
+
+def test_arrival_after_auto_enhance_does_not_search_again(qtbot, tmp_path, monkeypatch):
+    """Auto Enhance already decided Auto on this very input; returning to
+    Levels reuses that decision (only a reopened project pays the search)."""
+    from nocturne.core.auto_enhance import AUTO_LEVELS, run_auto_plan
+    from nocturne.settings import Settings
+    calls = _count_searches(monkeypatch)
+    win = _at_levels(qtbot, tmp_path)
+    run = run_auto_plan(win.project.current(),
+                        [("levels", AUTO_LEVELS), ("local_contrast", 0.15)], Settings())
+    assert len(calls) == 1
+    win._record_auto_run(run, "Auto Enhance (Natural)")
+    _away_and_back(win)
+    assert len(calls) == 1, f"arrival searched again ({len(calls) - 1} more)"
+    p = win._panel
+    assert p.auto_btn.isChecked() and p.auto_note.text() == NOTE
+    assert win._controls_match_commit("levels") is True
+
+
+def test_arrival_after_a_panel_apply_does_not_search_again(qtbot, tmp_path, monkeypatch):
+    calls = _count_searches(monkeypatch)
+    win = _at_levels(qtbot, tmp_path)
+    win.apply_current(new_levels_option(auto=True))     # Apply without a press first
+    assert len(calls) == 1
+    _away_and_back(win)
+    assert len(calls) == 1, "arrival searched the input Apply had just searched"
+    assert win._panel.auto_btn.isChecked()
+
+
+def test_arrival_reads_the_shape_without_loading_the_levels_input(qtbot, tmp_path,
+                                                                 monkeypatch):
+    from nocturne.core.auto_enhance import AUTO_LEVELS, run_auto_plan
+    from nocturne.settings import Settings
+    win = _at_levels(qtbot, tmp_path)
+    run = run_auto_plan(win.project.current(), [("levels", AUTO_LEVELS)], Settings())
+    win._record_auto_run(run, "Auto Enhance (Natural)")
+    win._go_to_id("curves", user_initiated=False)
+    win._base_cache = None                               # nothing held in memory
+    loads = []
+    real = win.project.state_at
+    monkeypatch.setattr(win.project, "state_at", lambda i: (loads.append(i), real(i))[1])
+    win._go_to_id("levels", user_initiated=False)
+    assert 0 not in loads, "arrival loaded the Levels input"
+    assert not win._panel.levels_colour_box.isHidden()
+
+
+def test_returning_to_an_untouched_v1_auto_leaves_apply_unlit(qtbot, tmp_path):
+    win = _at_levels(qtbot, tmp_path)
+    win.apply_current("auto")
+    _away_and_back(win)
+    assert win._has_pending() is False
+    assert win._controls_match_commit("levels") is True, "Apply lit on an untouched v1 Auto"
+    win._panel.blue_slider.setValue(-15)
+    assert win._controls_match_commit("levels") is False
+
+
+def test_log_line_floors_a_hand_set_black_like_the_panel():
+    assert mw.MainWindow._levels_log_detail(new_levels_option(0.0629), None) == " · black 0.062"
+
+
+def test_off_grid_midtones_and_white_survive_a_colour_nudge(qtbot, tmp_path):
+    """A hand-edited recipe or preset can carry values off the slider grid;
+    touching a colour must not snap midtones or white to it."""
+    win = _at_levels(qtbot, tmp_path)
+    win.apply_current(new_levels_option(0.0623, 1.234, 0.987))
+    _away_and_back(win)
+    p = win._panel
+    assert (p.gamma_slider.value(), p.white_slider.value()) == (123, 99)
+    assert win._controls_match_commit("levels") is True
+    p.blue_slider.setValue(-15)
+    win._apply_current_step()
+    assert win.project.entries()[-1][1] == new_levels_option(0.0623, 1.234, 0.987,
+                                                             (0.0, 0.0, -0.015))
+
+
+def test_a_fresh_visit_shows_defaults_and_searches_nothing(qtbot, tmp_path, monkeypatch):
+    calls = _count_searches(monkeypatch)
+    win = _at_levels(qtbot, tmp_path)
+    p = win._panel
+    assert (p.black_slider.value(), p.gamma_slider.value(), p.white_slider.value(),
+            p.red_slider.value(), p.green_slider.value(), p.blue_slider.value()) == (
+        0, 100, 100, 0, 0, 0)
+    assert not p.auto_btn.isChecked() and p.auto_note.isHidden()
+    assert win._has_pending() is False and calls == []
+
+
+def test_undo_past_levels_forgets_its_commit(qtbot, tmp_path):
+    win = _at_levels(qtbot, tmp_path)
+    imported = win.project.current().data.copy()
+    win._on_levels_auto()
+    win._panel.blue_slider.setValue(-15)
+    win._apply_current_step()
+    win._undo()
+    assert win.project.entries() == []
+    _away_and_back(win)
+    p = win._panel
+    assert (p.black_slider.value(), p.blue_slider.value()) == (0, 0)
+    assert not p.auto_btn.isChecked() and p.auto_note.isHidden()
+    assert win._has_pending() is False
+    assert np.array_equal(win._displayed.data, imported)
+
+
+def test_a_midtone_move_on_a_revisited_v2_keeps_autos_exact_black(qtbot, tmp_path):
+    win = _at_levels(qtbot, tmp_path)
+    win._on_levels_auto()
+    win._apply_current_step()
+    exact = auto_black(win._preview_base("levels")).black
+    assert exact * BLACK_STEPS != int(exact * BLACK_STEPS), "fixture: black must be off grid"
+    _away_and_back(win)
+    win._panel.gamma_slider.setValue(120)
+    assert win._levels_auto is False                    # a midtone move is a choice
+    win._apply_current_step()
+    assert win.project.entries()[-1][1] == new_levels_option(exact, 1.2, 1.0)
