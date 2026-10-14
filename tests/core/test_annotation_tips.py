@@ -17,6 +17,7 @@ from tests.core.test_annotation_layout import _grid_wcs, _layers
     (7200, ["2 degrees", "about 4 full Moons side by side"]),
     (30, ["30 arcseconds", "1/60 of the width of the full Moon"]),
     (60, ["1 arcminute", "1/30 of the width of the full Moon"]),
+    (1, ["1 arcsecond", "a tiny fraction of the full Moon's width"]),
 ])
 def test_the_scale_bar_tip_names_the_unit_and_compares_with_the_moon(arcsec, says):
     tip = scale_bar_tip(arcsec)
@@ -49,6 +50,7 @@ def test_the_compass_n_explains_north_and_east():
     n = [p for p in prims if isinstance(p, Label) and p.text == "N"]
     assert len(n) == 1
     assert "north" in n[0].tip and "east is to the left" in n[0].tip
+    assert "not mirrored" in n[0].tip, "the east claim only holds for an unmirrored frame"
 
 
 def test_tips_default_to_empty_so_old_callers_and_the_export_are_unchanged():

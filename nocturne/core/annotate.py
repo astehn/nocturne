@@ -121,8 +121,11 @@ def scale_bar_tip(arcsec: int) -> str:
         moon = "about the width of the full Moon"
     else:
         n = round(1 / ratio)
-        frac = _FRACTION_WORDS.get(n, f"1/{n} of")
-        moon = f"{frac} the width of the full Moon"
+        if n > 60:      # "1/1800 of the Moon" reads as noise, not a picture
+            moon = "a tiny fraction of the full Moon's width"
+        else:
+            frac = _FRACTION_WORDS.get(n, f"1/{n} of")
+            moon = f"{frac} the width of the full Moon"
     return (f"This bar spans {amount} of sky — {moon}. "
             "60 arcminutes make 1 degree, 60 arcseconds make 1 arcminute; "
             "the full Moon is about 30 arcminutes across.")

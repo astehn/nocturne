@@ -370,8 +370,9 @@ def _compass_primitives(wcs, shape, ui_scale: float = 1.0) -> list:
         Marker(ax, ay, "compass", _COMPASS_COLOUR, "grid"),
         Leader(ax, ay, tx, ty, _COMPASS_COLOUR, screen_fixed=True),   # cosmetic HUD arrow
         Label("N", lx, ly, _COMPASS_COLOUR, "compass",
-              tip="North on the sky. With north up, east is to the left — the mirror "
-                  "of a map, because you look up at the sky rather than down at the ground."),
+              tip="North on the sky. In a normal (not mirrored) view with north up, east "
+                  "is to the left — the reverse of a map, because you look up at the sky "
+                  "rather than down at the ground."),
     ]
 
 
