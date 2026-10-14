@@ -113,8 +113,9 @@ def export_description(saved: str | None) -> str:
     The 2026-10-04 app audit (F-05): after a successful export the only trace
     was an Activity line, so a first-time user had to leave the app to find the
     file. In the pinned description box for the same reason as Stretch's colour
-    balance line: Export scrolls by ~400 px at 1280x800 (the gallery section),
-    and a "done" line below the fold is the problem it exists to solve.
+    balance line: Export still scrolls at 1280x800 (by 149-173 px since the
+    2026-10-14 redesign), and a "done" line below the fold is the problem it
+    exists to solve.
 
     `saved` is the already-elided, already-escaped name to show.
     """
