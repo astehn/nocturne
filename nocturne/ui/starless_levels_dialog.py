@@ -29,6 +29,7 @@ from ..core.enhance import starless_levels_layers
 from ..core.levels import apply_levels
 from ..core.image import AstroImage
 from ..core.inspect import capture_clip_baseline, clip_masks, clip_overlay
+from .side_panel import CLIP_LEGEND
 from ..core.tasks import CancelToken
 from .busy_gate import BusyGate, keep_live
 from .compare_view import MODE_CHOICES, CompareView
@@ -158,17 +159,12 @@ class StarlessLevelsDialog(QDialog):
         # (shadow, highlight) fractions the CURRENT endpoints add; None until measured.
         self._added: tuple[float, float] | None = None
 
-        self.clip_check = QCheckBox("Show Clipping")
+        self.clip_check = QCheckBox("Show clipping")
         self.clip_check.setChecked(False)
-        # Word for word the main window's own Show clipping tooltip. One
-        # legend: a mark must not mean two different things in two places.
+        # The main window's own name and legend, shared rather than copied:
+        # one legend, so a mark never means two different things in two places.
         self.clip_check.setToolTip(
-            "The mark's colour is the channel that died:\n"
-            "  red / green / blue — that one channel is at zero\n"
-            "  yellow / magenta / cyan — those two are\n"
-            "  white — all three, so the pixel really is black\n"
-            "Amber marks a channel blown to white instead.\n"
-            "Drag until the first specks appear, then back off.")
+            CLIP_LEGEND + "\nDrag until the first specks appear, then back off.")
         # What the overlay leaves out. The marks show only what THIS tool added,
         # but the total is still reported in words — the main window's rule:
         # those shadows really are gone, and hiding that from someone editing an
@@ -620,7 +616,7 @@ class StarlessLevelsDialog(QDialog):
         not change when you zoom.
 
         Measured on first need rather than in __init__: it is a full compose of
-        the whole frame, and nobody who leaves Show Clipping off should pay it.
+        the whole frame, and nobody who leaves Show clipping off should pay it.
         At fit it costs nothing at all — `_clip_baseline` has already done the
         work and hands the figures over.
         """
