@@ -2377,7 +2377,7 @@ def test_presets_help_describes_how_a_run_ends():
     # Each step its own history entry: the run is folded in one result at a time.
     assert "self._record_auto_run(run, " in run
     rec = mw.split("def _record_auto_run")[1].split("\n    def ")[0]
-    loop = rec.split("for (name, option, img), engine in zip(run.results, run.engines):")[1]
+    loop = rec.split("for (name, option, img), engine, res in zip(run.results, run.engines, resolved):")[1]
     assert loop.lstrip().startswith("self.project.record_precomputed(name, option, img)")
     assert "its own step, so you can change or undo any of them" in b
     # Apply and continue on Crop presses the crop-only path, which never runs a preset.
@@ -2395,7 +2395,6 @@ def test_presets_help_auto_levels_re_measures_and_the_rest_is_as_saved():
     reaches it as its numbers."""
     import nocturne.user_presets as up
     from nocturne.core.image import AstroImage
-    from nocturne.core.levels import auto_levels
     from nocturne.recipe import LEVELS_AUTO
     from nocturne.settings import Settings
     from nocturne.steps.levels import LevelsStep
@@ -2403,18 +2402,24 @@ def test_presets_help_auto_levels_re_measures_and_the_rest_is_as_saved():
     assert "Auto black point" in b and "re-measures" in b and "values you saved" in b
     auto = up.Preset(id="a", name="a", steps=({"stage": "levels", "option": LEVELS_AUTO},))
     fixed = up.Preset(id="f", name="f", steps=({"stage": "levels", "option": [0.1, 1.0, 1.0]},))
-    assert up.preset_plan(auto, Settings()).plan == [("levels", LEVELS_AUTO)]
+    # "auto" reaches the run as the CURRENT Auto (2026-10-14), still re-derived.
+    from nocturne.core.levels import new_levels_option
+    assert up.preset_plan(auto, Settings()).plan == [("levels", new_levels_option(auto=True))]
     assert up.preset_plan(fixed, Settings()).plan == [("levels", (0.1, 1.0, 1.0))]
     rng = np.random.default_rng(7)
     dim = (0.10 + 0.01 * rng.standard_normal((32, 32, 3))).astype(np.float32)
     bright = dim + np.float32(0.2)
+    # The run applies the PLAN's option (the current Auto), not the bare string.
+    (_stage, run_option), = up.preset_plan(auto, Settings()).plan
+    from nocturne.core.levels import apply_levels, auto_black
     for data in (dim, bright):
-        out = LevelsStep().apply(AstroImage(data, {}), LEVELS_AUTO).data
-        black = auto_levels(data)[0]
-        assert np.allclose(out, LevelsStep().apply(AstroImage(data, {}),
-                                                    auto_levels(data)).data)
+        img = AstroImage(data, is_linear=False)
+        out = LevelsStep().apply(img, run_option).data
+        black = auto_black(img).black
+        np.testing.assert_array_equal(out, apply_levels(img, black, 1.0, 1.0).data)
         assert black > 0
-    assert auto_levels(dim)[0] != auto_levels(bright)[0]   # re-measured, not carried
+    assert auto_black(AstroImage(dim, is_linear=False)).black != auto_black(
+        AstroImage(bright, is_linear=False)).black       # re-measured, not carried
 
 
 def test_crop_and_enhancements_help_point_at_presets():
@@ -2476,3 +2481,231 @@ def test_export_help_gives_the_c2_order_and_what_the_extras_do_not_do():
     assert "not the picture itself" in b
     mw = _src("nocturne/ui/main_window.py")
     assert "self._exported_key = self._gallery_key()" in mw.split("def _export_done")[1][:600]
+
+
+# ---- Levels, clip-aware (2026-10-14) ----------------------------------------
+
+def test_levels_help_auto_stops_at_the_warning_and_never_turns_a_colour_amber():
+    """'stops at the clipping warning … without pushing any colour past the limit
+    where the ▼ read-out turns amber': on a picture where the unlimited black
+    crushes blue past the limit, Auto stops, and every channel stays under it —
+    measured the read-out's way (CrushProbe is held equal to it in core tests)."""
+    from nocturne.core.inspect import CRUSHED_LIMIT
+    from nocturne.core.levels import CrushProbe, auto_black
+    from tests.core.test_levels_clip_aware import _stop_image
+    b = _plain(_body("levels"))
+    assert "It stops at the clipping warning." in b
+    assert "never turns a colour amber by itself" in b
+    img = _stop_image()
+    probe = CrushProbe(img)
+    a = auto_black(img)
+    assert max(probe.crushed(a.candidate)) >= CRUSHED_LIMIT, "fixture: unlimited Auto must cross"
+    assert a.stopped and a.black < a.candidate
+    assert all(c < CRUSHED_LIMIT for c in probe.crushed(a.black))
+
+
+def test_levels_help_quotes_the_auto_note_and_the_log_line_gives_both_numbers():
+    from nocturne.core.levels import AutoBlack, new_levels_option
+    from nocturne.ui.main_window import MainWindow
+    b = _plain(_body("levels"))
+    quoted = "Auto stopped at 0.031 so no colour is crushed past the warning limit"
+    assert quoted in b
+    mw = _src("nocturne/ui/main_window.py")
+    assert ('f"Auto stopped at {_floor_black(cached.black) / BLACK_STEPS:.3f} so no "\n'
+            '                    "colour is crushed past the warning limit. Drag Black point "\n'
+            '                    "right to go darker on purpose.")') in mw
+    assert "where it stopped, and where it would have gone without the limit" in b
+    resolved = type("R", (), {"auto": AutoBlack(0.031, 0.062, True)})()
+    line = MainWindow._levels_log_detail(new_levels_option(auto=True), resolved)
+    assert "0.031" in line and "unlimited Auto: 0.062" in line
+
+
+def test_levels_help_go_darker_by_dragging_black_point(qtbot, tmp_path):
+    """'To go darker on purpose, drag Black point to the right past where Auto
+    stopped … the read-out turns amber': the drag is not refused or capped, and
+    past Auto's black a channel does cross the limit."""
+    from nocturne.core.inspect import CRUSHED_LIMIT
+    from nocturne.core.levels import BLACK_STEPS, CrushProbe
+    from tests.ui.test_levels_clip_aware_ui import _at_levels
+    b = _plain(_body("levels"))
+    assert "To go darker on purpose, drag Black point to the right" in b
+    win = _at_levels(qtbot, tmp_path)
+    win._on_levels_auto()
+    p = win._panel
+    stopped_at = p.black_slider.value()
+    p.black_slider.setValue(stopped_at + 150)
+    assert p.black_slider.value() == stopped_at + 150
+    assert not p.auto_btn.isChecked()
+    probe = CrushProbe(win._preview_base("levels"))
+    assert max(probe.crushed(p.black_slider.value() / BLACK_STEPS)) >= CRUSHED_LIMIT
+
+
+def test_levels_help_which_sliders_pop_auto_out_and_which_keep_it(qtbot, tmp_path):
+    from tests.ui.test_levels_clip_aware_ui import _at_levels
+    b = _plain(_body("levels"))
+    assert "Nudge Black point, Midtones or White point and the button pops out" in b
+    assert "Moving a colour keeps Auto black point selected" in b
+    win = _at_levels(qtbot, tmp_path)
+    p = win._panel
+    for colour in (p.red_slider, p.green_slider, p.blue_slider):
+        win._on_levels_auto()
+        colour.setValue(colour.value() - 10)
+        assert p.auto_btn.isChecked(), "a colour slider popped Auto out"
+        colour.setValue(0)
+    for s in (p.black_slider, p.gamma_slider, p.white_slider):
+        win._on_levels_auto()
+        assert p.auto_btn.isChecked()
+        s.setValue(s.value() - 5)
+        assert not p.auto_btn.isChecked(), f"{s.objectName() or s} left Auto selected"
+
+
+def test_levels_help_lift_is_left_and_raises_the_floor_without_detail():
+    """'Drag a colour left to lift it: less of that colour is cut to black, and
+    lifted far enough its floor sits above zero. Lifting does not bring back
+    detail that was already lost — it only raises the floor.' Left is negative;
+    a channel already at zero in Levels' input comes out a raised constant, the
+    other channels untouched."""
+    from nocturne.core.image import AstroImage
+    from nocturne.core.levels import apply_levels
+    from nocturne.ui.pipeline import path_stages
+    from nocturne.ui.step_panels import build_panel
+    b = _plain(_body("levels"))
+    assert "Drag a colour left to lift it: less of that colour is cut to black" in b
+    assert "lifted far enough its floor sits above zero" in b and "right to darken" in b
+    assert "does not bring back detail that was already lost" in b
+    assert "it only raises the floor" in b
+    w = build_panel(next(s for s in path_stages() if s.id == "levels"))
+    try:
+        ends = [lbl.text() for lbl in w.findChildren(type(w.black_val))
+                if lbl.objectName() == "sliderEnd"]
+        assert ends == ["← lift", "darken →"], ends
+        assert w.blue_slider.minimum() < 0 < w.blue_slider.maximum()
+    finally:
+        w.deleteLater()
+    rng = np.random.default_rng(3)
+    d = (0.2 + 0.05 * rng.standard_normal((40, 40, 3))).astype(np.float32)
+    d[:20, :, 2] = 0.0                                  # blue lost before Levels
+    img = AstroImage(np.clip(d, 0, 1), is_linear=False)
+    plain = apply_levels(img, 0.02, 1.0, 1.0).data
+    lifted = apply_levels(img, 0.02, 1.0, 1.0, (0.0, 0.0, -0.05)).data
+    lost = lifted[:20, :, 2]
+    assert lost.min() > 0 and plain[:20, :, 2].max() == 0     # the floor rose
+    assert np.ptp(lost) == 0                                   # …and no detail came back
+    np.testing.assert_array_equal(lifted[..., :2], plain[..., :2])
+    # "less of that colour is cut to black" on a lift that stays above zero
+    nearly = apply_levels(img, 0.2, 1.0, 1.0, (0.0, 0.0, -0.05)).data
+    cut = apply_levels(img, 0.2, 1.0, 1.0).data
+    assert (nearly[20:, :, 2] == 0).sum() < (cut[20:, :, 2] == 0).sum()
+    darker = apply_levels(img, 0.02, 1.0, 1.0, (0.0, 0.0, 0.03)).data
+    assert darker[20:, :, 2].mean() < plain[20:, :, 2].mean()
+
+
+def test_levels_help_colour_sliders_hidden_on_mono(qtbot, tmp_path):
+    from nocturne.core.image import AstroImage
+    from tests.ui.test_levels_clip_aware_ui import _at_levels
+    assert "On a mono picture there is only one colour, so they are hidden." in _plain(
+        _body("levels"))
+    rng = np.random.default_rng(0)
+    mono = AstroImage((0.25 + 0.02 * rng.standard_normal((300, 400))).astype(np.float32),
+                      is_linear=False)
+    win = _at_levels(qtbot, tmp_path, mono)
+    assert win._panel.levels_colour_box.isHidden()
+
+
+def test_levels_help_a_recipe_auto_stops_at_the_same_limit():
+    from nocturne.core.levels import AUTO, AUTO_V2, parse_levels_option
+    from nocturne.recipe import deserialize_option
+    assert "stopping at the same warning limit" in _plain(_body("levels"))
+    p = parse_levels_option(deserialize_option("levels", AUTO))
+    assert p.auto and p.version == AUTO_V2
+
+
+def test_clipping_help_points_to_levels_and_a_colour_slider_lifts_amber():
+    """'Levels is where you decide clipping … One colour amber? That colour's
+    own slider in Levels lifts it.' On the fixture, a black dragged past Auto's
+    stop crushes blue past the limit; lifting blue alone, within the slider's
+    range, brings it back under, red and green unchanged."""
+    from nocturne.core.inspect import CRUSHED_LIMIT
+    from nocturne.core.levels import CrushProbe, auto_black
+    from tests.core.test_levels_clip_aware import _stop_image
+    b = _plain(_body("readout"))
+    assert "Levels is where you decide clipping." in b
+    assert "Auto black point stops at this warning, so it never turns a number amber" in b
+    assert "That colour's own slider in Levels lifts it." in b
+    img = _stop_image()
+    probe = CrushProbe(img)
+    darker = auto_black(img).black + 0.05                # gone darker on purpose
+    before = probe.crushed(darker)
+    assert before[2] >= CRUSHED_LIMIT
+    after = probe.crushed(darker, offsets=(0.0, 0.0, -0.1))   # the slider's far left
+    assert after[2] < CRUSHED_LIMIT and after[:2] == before[:2]
+
+
+def test_auto_enhance_and_recipes_help_say_auto_levels_stops_at_the_warning():
+    """Auto Enhance's Levels and a recipe's Auto are the button's Auto: on the
+    fixture where it stops, the run's picture is the stopped black, not the
+    unlimited one."""
+    from nocturne.core.auto_enhance import AUTO_LEVELS, run_auto_plan
+    from nocturne.core.levels import apply_levels, auto_black
+    from nocturne.settings import Settings
+    from tests.core.test_levels_clip_aware import _stop_image
+    ae = _plain(_body("auto-enhance"))
+    assert ("stopped short of it where it would crush a colour past the clipping warning "
+            "— the same Auto black point as the Levels step") in ae
+    rec = _plain(_body("recipes"))
+    assert "it stops at the same clipping warning the button does" in rec
+    assert "Nudge Black point, Midtones or White point afterwards" in rec
+    img = _stop_image()
+    a = auto_black(img)
+    assert a.stopped
+    (_n, _o, out), = run_auto_plan(img, [("levels", AUTO_LEVELS)], Settings()).results
+    np.testing.assert_array_equal(out.data, apply_levels(img, a.black, 1.0, 1.0).data)
+
+
+def test_levels_help_already_amber_means_no_more_regions_not_a_steady_number():
+    """The read-out SHOWS the raw crushed fraction; Auto limits the STRUCTURAL
+    figure, which only decides amber or grey. The old sentence ("no worse, give
+    or take the last digit") was false: here blue arrives amber, Auto keeps
+    its full black because the crushed regions barely move — and the shown
+    blue number climbs from 0.07% to over 13%."""
+    from nocturne.core.histogram import histogram
+    from nocturne.core.inspect import CRUSH_INVISIBLE, CRUSHED_LIMIT
+    from nocturne.core.inspect import channel_clipping_from_histogram as shown_fig
+    from nocturne.core.levels import CrushProbe, apply_levels, auto_black
+    from tests.core.test_levels_clip_aware import _amber_blue
+    b = _plain(_body("levels"))
+    assert "give or take the last digit" not in b and "comes out no worse" not in b
+    assert "A colour that was already amber gets no more crushed regions to speak of" in b
+    assert ("scattered single pixels can still be pushed to black, so the number shown, "
+            "which counts every pixel, can still climb") in b
+    img = _amber_blue(1)
+    probe = CrushProbe(img)
+    a = auto_black(img)
+    was, now = probe.crushed(0.0)[2], probe.crushed(a.black)[2]
+    assert was >= CRUSHED_LIMIT and now - was < CRUSH_INVISIBLE     # regions: held
+    before = shown_fig(histogram(img)).lo[2]
+    after = shown_fig(histogram(apply_levels(img, a.black, 1.0, 1.0))).lo[2]
+    assert after > 100 * before, (before, after)                    # shown: climbs
+
+
+def test_levels_help_an_already_stretched_picture_can_stop_earlier_than_the_warning():
+    """A picture that opens already stretched has its arrival subtracted by the
+    read-out; Auto judges the picture as it is (it must replay from its option
+    and input alone), so it can stop where the warning would have stayed grey."""
+    import nocturne.ui.main_window as mw
+    from nocturne.core.export import display_rgb8
+    from nocturne.core.histogram import histogram
+    from nocturne.core.inspect import channel_clipping_from_histogram, structural_channel_clipping
+    from nocturne.core.levels import apply_levels, auto_black
+    from tests.core.test_levels_clip_aware import _amber_blue
+    b = _plain(_body("levels"))
+    assert "On a picture that opened already stretched" in b
+    assert "so it can stop earlier than the warning would" in b
+    img = _amber_blue(10)                      # opened as it is: the import IS this
+    a = auto_black(img)
+    assert a.stopped and a.black < a.candidate
+    at_cand = apply_levels(img, a.candidate, 1.0, 1.0)
+    lo, _hi = mw._clip_values(channel_clipping_from_histogram(histogram(at_cand)), None,
+                              structural_channel_clipping(display_rgb8(at_cand)),
+                              structural_channel_clipping(display_rgb8(img)))
+    assert not any(v.over for v in lo), "the warning would have gone amber at the candidate"

@@ -21,11 +21,23 @@ from ..core import nr_models
 from .apply_button import ApplyButton
 from .curve_editor import CurveEditor
 from .reset_slider import ResetSlider
-from .theme import WARNING
+from .theme import CHANNEL_TINT, WARNING
 
 # Black-point slider resolution. Ten times the other two levels sliders —
-# see the levels panel for why.
-BLACK_STEPS = 1000
+# see the levels panel for why. Defined in core because Auto's search resolves
+# finer than one of its steps.
+from ..core.levels import BLACK_STEPS  # noqa: E402,F401 - re-exported
+from ..core.levels import new_levels_option  # noqa: E402
+
+# One colour's black-point offset: +-0.100 in the Black point's 0.001 steps.
+OFFSET_STEPS = 100
+
+
+def _offset_text(d: float) -> str:
+    """"0.000" at rest, signed with a true minus otherwise ("\u22120.015")."""
+    if round(d * BLACK_STEPS) == 0:
+        return "0.000"
+    return f"{d:+.3f}".replace("-", "\u2212")
 
 _PROCESS_OPTIONS = {
     "background": ["off", "light", "strong"],
@@ -377,6 +389,7 @@ def build_panel(
     opened_as_linear=None,
     on_levels_change=None,
     on_levels_auto=None,
+    on_levels_colour_change=None,
     on_sat_change=None,
     on_sat_apply=None,
     on_fringe_apply=None,
@@ -957,6 +970,7 @@ def build_panel(
         # nudged. That is the only sign of whether the recipe will store "derive
         # this per image" or three frozen numbers.
         auto_btn.setCheckable(True)
+        auto_btn.setObjectName("levelsAuto")
         auto_btn.setToolTip(
             "Derive the black point from this image. Stays selected while the "
             "values are still the derived ones — a recipe then re-derives them "
@@ -964,6 +978,12 @@ def build_panel(
         if on_levels_auto is not None:
             auto_btn.clicked.connect(lambda: on_levels_auto())
         controls.addWidget(auto_btn)
+        # Said only when Auto came in below its old rule (spec A): MainWindow
+        # fills and shows it while Auto is selected AND stopped. Under the
+        # button, because that is the choice it explains.
+        auto_note = _desc_label("")
+        auto_note.setVisible(False)
+        controls.addWidget(auto_note)
 
         # 1000 steps, not 100. The black point is the ONLY value Auto Levels
         # sets now, so it carries the whole step; and its useful range is about
@@ -976,26 +996,85 @@ def build_panel(
         gamma_val = QLabel("1.00")
         white_val = QLabel("1.00")
 
-        def _emit(*_):
+        # One colour's black point, as an offset from the shared one (spec B).
+        # Same 0.001 step as Black point; +-0.100 covers the measured need (a
+        # crushed R or B on his projects sits 0.01-0.03 under the shared black).
+        offset_sliders = [ResetSlider(0, minimum=-OFFSET_STEPS, maximum=OFFSET_STEPS)
+                          for _ in range(3)]
+        offset_vals = [QLabel(_offset_text(0.0)) for _ in range(3)]
+
+        def _offsets():
+            return tuple(s.value() / BLACK_STEPS for s in offset_sliders)
+
+        # What Apply commits from the controls alone. Auto is MainWindow's: it
+        # knows whether the black on the slider is still the derived one.
+        # A black finer than the slider's 0.001 grid — Auto's continuous one,
+        # or a committed value the panel was rebuilt from — as (slider position
+        # it shows at, exact value). While the slider stays there, the exact
+        # value is what is committed, so touching another control keeps the
+        # picture rather than snapping the black to the grid.
+        # Midtones and White point the same way: a hand-edited recipe or
+        # preset can hold 1.234, and a colour nudge must not snap it to 1.23.
+        w.exact_black = w.exact_gamma = w.exact_white = None
+
+        def _held(slider, held, scale):
+            if held is not None and held[0] == slider.value():
+                return held[1]
+            return slider.value() / scale
+
+        w.commit_option = lambda: new_levels_option(
+            _held(black, w.exact_black, BLACK_STEPS), _held(gamma, w.exact_gamma, 100.0),
+            _held(white, w.exact_white, 100.0), _offsets())
+        w.levels_offsets = _offsets
+
+        def _labels():
             black_val.setText(f"{black.value() / BLACK_STEPS:.3f}")
             gamma_val.setText(f"{gamma.value() / 100:.2f}")
             white_val.setText(f"{white.value() / 100:.2f}")
-            if on_levels_change is not None:
-                on_levels_change(
-                    black.value() / BLACK_STEPS, gamma.value() / 100.0,
-                    white.value() / 100.0
-                )
+            for s, v in zip(offset_sliders, offset_vals):
+                v.setText(_offset_text(s.value() / BLACK_STEPS))
 
-        w.neutral_option = (black.value() / BLACK_STEPS, gamma.value() / 100.0,
-                            white.value() / 100.0)
+        def _emit(*_):
+            _labels()
+            if on_levels_change is not None:
+                on_levels_change(w.commit_option())
+
+        def _set_values(black_exact, gamma_v, white_v, offsets):
+            """Show values WITHOUT emitting: a panel rebuilt from its commit
+            is not an edit. The black shows rounded DOWN; all three are kept
+            exact while their sliders stay where they were put."""
+            import math
+            pos = math.floor(round(float(black_exact) * BLACK_STEPS, 6))
+            g_pos, w_pos = round(float(gamma_v) * 100), round(float(white_v) * 100)
+            values = [(black, pos), (gamma, g_pos), (white, w_pos)]
+            values += [(s, round(float(d) * BLACK_STEPS))
+                       for s, d in zip(offset_sliders, offsets)]
+            for s, v in values:
+                s.blockSignals(True)
+                s.setValue(v)
+                s.blockSignals(False)
+            w.exact_black = (pos, float(black_exact))
+            w.exact_gamma = (g_pos, float(gamma_v))
+            w.exact_white = (w_pos, float(white_v))
+            _labels()
+        w.set_levels_values = _set_values
+
+        def _emit_colour(*_):
+            _labels()
+            # Its own hook: a colour move keeps Auto selected (spec B), where
+            # any of the three above makes the value a choice.
+            if on_levels_colour_change is not None:
+                on_levels_colour_change(w.commit_option())
+
+        w.neutral_option = w.commit_option()
         black.valueChanged.connect(_emit)
         gamma.valueChanged.connect(_emit)
         white.valueChanged.connect(_emit)
+        for s in offset_sliders:
+            s.valueChanged.connect(_emit_colour)
 
         apply_btn = ApplyButton("Apply Levels")
         apply_btn.setEnabled(apply_enabled)
-        w.commit_option = lambda: (black.value() / BLACK_STEPS, gamma.value() / 100.0,
-                                   white.value() / 100.0)
         if on_apply is not None:
             apply_btn.clicked.connect(lambda: on_apply(w.commit_option()))
 
@@ -1017,13 +1096,54 @@ def build_panel(
         controls.addLayout(white_row)
         controls.addWidget(white)
 
+        # Always visible on a colour picture (spec B: a crushed colour must be
+        # fixable where the amber is seen), one box so a mono picture hides it
+        # whole. The rule + section label are the Colour step's "optional".
+        colour_box = QWidget()
+        colour_box.setObjectName("panelBody")      # the card's ground, not a box
+        colour_lay = QVBoxLayout(colour_box)
+        colour_lay.setContentsMargins(0, 0, 0, 0)
+        colour_lay.addSpacing(14)
+        colour_lay.addWidget(_rule())
+        colour_lay.addSpacing(10)
+        section = QLabel("OPTIONAL — ONE COLOUR'S DARKEST LEVEL")
+        section.setObjectName("panelSectionLabel")
+        colour_lay.addWidget(section)
+        colour_lay.addWidget(_desc_label(
+            "For a colour that is crushed (amber above) or too dark. "
+            "Most pictures leave these at 0."))
+        for name, letter, s, v in zip(("Red", "Green", "Blue"), "RGB",
+                                      offset_sliders, offset_vals):
+            row = QHBoxLayout()
+            label = QLabel(name)
+            # The read-out's own channel colours, so "amber B above" and the
+            # slider that fixes it are visibly the same colour.
+            label.setStyleSheet(f"color: {CHANNEL_TINT[letter]};")
+            row.addWidget(label)
+            row.addWidget(v)
+            colour_lay.addLayout(row)
+            colour_lay.addWidget(s)
+        ends = QHBoxLayout()
+        for text, align in (("\u2190 lift", Qt.AlignmentFlag.AlignLeft),
+                            ("darken \u2192", Qt.AlignmentFlag.AlignRight)):
+            end = QLabel(text)
+            end.setObjectName("sliderEnd")
+            end.setAlignment(align)
+            ends.addWidget(end)
+        colour_lay.addLayout(ends)
+        controls.addWidget(colour_box)
+
         w.auto_btn = auto_btn
+        w.auto_note = auto_note
         w.black_slider = black
         w.gamma_slider = gamma
         w.white_slider = white
         w.black_val = black_val
         w.gamma_val = gamma_val
         w.white_val = white_val
+        w.red_slider, w.green_slider, w.blue_slider = offset_sliders
+        w.red_val, w.green_val, w.blue_val = offset_vals
+        w.levels_colour_box = colour_box
         w.apply_btn = w.primary_action = apply_btn
 
     elif stage.kind == "curves":

@@ -141,6 +141,61 @@ def structural_clipping(rgb: np.ndarray,
     return _worst_of(structural_channel_clipping(rgb, block, target_blocks))
 
 
+# Shadows crushed in one channel, as a fraction of the structural blocks, at
+# which the read-out turns amber. 0.05% (~2,500 px on an 8.3 MP frame, reached
+# around a 0.065 black point) is 91x the floor measured straight out of Stretch
+# (0.00055%, 28 px in R) — tighter than highlights on purpose, since crushed
+# background destroys faint nebulosity that cannot be recovered. ONE definition:
+# the read-out alarms on it and Auto Levels (v2) stops at it, so "Auto never
+# turns a channel amber" cannot drift into two numbers.
+CRUSHED_LIMIT = 0.0005
+
+# How far a channel that ARRIVED at or over the limit may rise and still count
+# as "no worse": 0.00005 = 0.005 percentage points of STRUCTURAL blocks, i.e. no
+# more crushed regions to speak of. It bounds the figure that decides amber or
+# grey, NOT the number the read-out shows: that is the raw crushed fraction,
+# and scattered single pixels pushed to zero can still raise it a lot (a blue
+# strip arriving amber: structural 0.167% -> 0.172% while the shown number went
+# 5.6% -> 33.3%, review 2026-10-14). Zero tolerance let one dim 3x3 block veto
+# Auto: blue arriving at 0.07% plus one block above zero dropped Auto from
+# 0.209 to 0.028 (review 2026-10-14).
+CRUSH_INVISIBLE = 0.00005
+
+
+def _structural_sample(arr: np.ndarray, block: int, target_blocks: int):
+    """The sampled block grid, (by, block, bx, block, C), or None when the
+    frame is smaller than one block. A VIEW: shared by the read-out and the
+    Levels search, so both look at exactly the same blocks."""
+    h, w = arr.shape[:2]
+    nby, nbx = h // block, w // block
+    if nby < 1 or nbx < 1:
+        return None
+    grid = arr[:nby * block, :nbx * block].reshape(nby, block, nbx, block, -1)
+    step = max(1, int((nby * nbx / max(1, target_blocks)) ** 0.5))
+    return grid[::step, :, ::step]
+
+
+def structural_block_peaks(data: np.ndarray,
+                           block: int = _STRUCTURE_BLOCK,
+                           target_blocks: int = _STRUCTURE_BLOCKS) -> np.ndarray | None:
+    """The brightest sample of every block `structural_channel_clipping` reads,
+    per channel, in the data's own units: (by, bx, C), or None if too small.
+
+    A block is crushed when EVERY pixel of it maps to 0, and a pointwise
+    monotonic mapping (Levels, then the 8-bit display cast) sends all of a
+    block to 0 exactly when it sends its brightest pixel there. So the figure
+    for any Levels setting is the fraction of these peaks that map to 0 — the
+    same answer as the full-frame read-out, on ~1/9 of its samples, which is
+    what lets Auto search without re-rendering the frame. NaN is "no data",
+    which the display paints black, so it counts as -inf here."""
+    arr = data if data.ndim == 3 else data[:, :, None]
+    sub = _structural_sample(arr, block, target_blocks)
+    if sub is None:
+        return None
+    sub = np.where(np.isnan(sub), -np.inf, sub)
+    return sub.max(axis=(1, 3))
+
+
 def structural_channel_clipping(rgb: np.ndarray,
                                 block: int = _STRUCTURE_BLOCK,
                                 target_blocks: int = _STRUCTURE_BLOCKS) -> ChannelClipping:
@@ -148,13 +203,9 @@ def structural_channel_clipping(rgb: np.ndarray,
     sampling, so its worst value IS the worst-channel figure."""
     if rgb is None or rgb.ndim != 3 or rgb.shape[2] < 3:
         return _NO_CHANNELS
-    h, w = rgb.shape[:2]
-    nby, nbx = h // block, w // block
-    if nby < 1 or nbx < 1:
+    sub = _structural_sample(rgb, block, target_blocks)
+    if sub is None:
         return _NO_CHANNELS
-    grid = rgb[:nby * block, :nbx * block].reshape(nby, block, nbx, block, -1)
-    step = max(1, int((nby * nbx / max(1, target_blocks)) ** 0.5))
-    sub = grid[::step, :, ::step]
     # `.all` over the two within-block axes: every pixel of the block is dead.
     dead = (sub == 0).all(axis=(1, 3))
     blown = (sub == 255).all(axis=(1, 3))

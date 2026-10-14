@@ -28,8 +28,13 @@ def _img(mean, seed=0):
 
 
 def test_auto_round_trips_through_a_recipe():
+    """Stored as the decision; read back as the CURRENT Auto (2026-10-14: a
+    recipe saying "auto" means re-derive the way a fresh press would), while a
+    saved project keeps the version-1 string it made its pixels with."""
+    from nocturne.core.levels import new_levels_option
     assert serialize_option("levels", AUTO) == AUTO
-    assert deserialize_option("levels", AUTO) == AUTO
+    assert deserialize_option("levels", AUTO) == new_levels_option(auto=True)
+    assert deserialize_option("levels", AUTO, project=True) == AUTO
 
 
 def test_a_saved_recipe_from_before_this_change_still_replays_its_numbers():

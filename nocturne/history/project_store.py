@@ -331,7 +331,7 @@ def load_project(path: str, cache_dir: str, *, on_progress=None) -> LoadedProjec
                 img = AstroImage(data, is_linear=step["is_linear"], metadata=step["metadata"])
                 project.record_precomputed(_migrate_step_name(step["name"]), step["option"], img)
             else:
-                native = deserialize_option(step["stage"], step["option"])
+                native = deserialize_option(step["stage"], step["option"], project=True)
                 step_obj = make_step(step["stage"], settings)
                 project.run_step(step_obj, native)
             check()

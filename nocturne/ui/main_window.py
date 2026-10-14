@@ -73,8 +73,9 @@ from .jobs_indicator import JobsBar, JobsIndicator
 from .activity_panel import ActivityChannel, ActivityPanel
 from .log_panel import format_log_entry
 from .pipeline import ENHANCE_NAMES, GEOMETRY_NAMES, POST_STRETCH_IDS, PROCESSING_ORDER, STEP_NAME, names_before, next_enabled, path_stages, prev_enabled
-from ..core.levels import apply_levels, auto_levels
-from ..recipe import LEVELS_AUTO
+from ..core.levels import (AUTO_VERSION, ResolvedLevels, apply_levels, auto_black,
+                           describe_offsets, new_levels_option, parse_levels_option,
+                           resolve_levels)
 from ..core.saturation import nebula_mask, nebula_saturate, saturate
 from ..core.local_contrast import apply_prepared as lc_apply, prepare as lc_prepare
 from ..core.hdr import apply_prepared as recover_apply, prepare as recover_prepare
@@ -93,7 +94,8 @@ import time as _time
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
 from ..core.histogram import histogram
 from ..core.inspect import (ChannelClipping, channel_clipping_from_histogram,
-                            paint_clipping, sample, structural_channel_clipping)
+                            paint_clipping, sample, structural_channel_clipping,
+                            CRUSHED_LIMIT)
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
 from .trim_dialog import TrimDialog
@@ -129,7 +131,7 @@ _CHANNEL_WORD = {"R": "red", "G": "green", "B": "blue", "L": "luminance"}
 
 
 _CLIP_AMBER_HI = 0.001     # 0.1% of highlights blown
-_CLIP_AMBER_LO = 0.0005    # 0.05% of shadows crushed
+_CLIP_AMBER_LO = CRUSHED_LIMIT   # 0.05% of shadows crushed — defined in core.inspect, where Auto Levels stops at it too
 # No "severe" (red) level: nothing measured so far says where clipping turns from
 # a mistake into a wreck, and a second trip point without a measurement behind
 # it would be a guess. One limit per end, applied to each channel on its own.
@@ -257,6 +259,22 @@ def _same_option(a, b) -> bool:
         return bool(a == b)
     except Exception:                       # pragma: no cover - defensive
         return False
+
+
+def _same_levels(a, b) -> bool:
+    """Two Levels options that make the same picture. Levels has had four
+    shapes (a (b, g, w) tuple, "auto", and the two dicts), so a legacy tuple
+    commit and the dict the panel sends today are the same edit; "auto"
+    (version 1) and a version-2 Auto are NOT — they derive different blacks."""
+    return _same_option(tuple(parse_levels_option(a)), tuple(parse_levels_option(b)))
+
+
+def _floor_black(black: float) -> int:
+    """Auto's black on the slider grid, rounded DOWN: Auto's own value is
+    continuous and sits just under the clipping limit, so a shown number
+    rounded up is one the user could drag to and cross it."""
+    import math
+    return math.floor(round(black * BLACK_STEPS, 6))
 
 
 # Channel tints for the hover readout. Andreas, 2026-09-13, on the pixel
@@ -770,6 +788,10 @@ class MainWindow(QMainWindow):
         # hand-set slider. A recipe stores the DECISION when they did, so it
         # re-derives per image instead of replaying one frame's noise floor.
         self._levels_auto = False
+        # (base token, AutoBlack): what the current Auto decided for the Levels
+        # input it was pressed on. Auto's search costs ~0.8 s on a 33 MP frame,
+        # and the preview, the colour sliders and the commit all need it.
+        self._levels_auto_cache = None
         self._levels_timer = QTimer(self)
         self._levels_timer.setSingleShot(True)
         self._levels_timer.timeout.connect(self._render_levels_preview)
@@ -2334,15 +2356,30 @@ class MainWindow(QMainWindow):
         Enhance and a user preset; `suffix` names which ("Auto Enhance
         (Natural)", "Preset (M 8)")."""
         stage_of = {v: k for k, v in STEP_NAME.items()}
-        for (name, option, img), engine in zip(run.results, run.engines):
+        resolved = run.resolved or (None,) * len(run.results)
+        levels_at = None
+        for (name, option, img), engine, res in zip(run.results, run.engines, resolved):
             self.project.record_precomputed(name, option, img)
-            label = str(self._step_log_label(stage_of.get(name, ""), option, engine) or "")
+            stage = stage_of.get(name, "")
+            label = str(self._step_log_label(stage, option, engine) or "")
+            # The manual Apply's words for the same Levels: where Auto stopped,
+            # a chosen black, any colour offsets (one helper, see _log_step).
+            detail = self._levels_log_detail(option, res) if stage == "levels" else ""
             # Its own line per stage, naming the run: the next line (an
             # Export, a Reset) would otherwise be taken as this stage's.
-            self.log_panel.append_entry(format_log_entry(name, label, None) + f" \u2014 {suffix}")
+            self.log_panel.append_entry(format_log_entry(name, label, None, detail=detail)
+                                        + f" \u2014 {suffix}")
             # And to the file, as _log_step does for a manual apply.
-            sessionlog.write(f"step  {name}" + (f" ({label})" if label else "")
+            sessionlog.write(f"step  {name}" + (f" ({label})" if label else "") + detail
                              + f" \u2014 {suffix}")
+            if stage == "levels":
+                levels_at = (len(self.project.entries()) - 1, option, res)
+        if levels_at is not None:
+            # Auto's decision on the very input now recorded before the Levels
+            # entry: returning to Levels reuses it instead of searching again.
+            at, option, res = levels_at
+            if self._leading_kept(self.project.entries(), names_before("levels")) == at:
+                self._keep_levels_auto(option, res, self._base_token("levels"))
         for (name, _reason), detail in zip(run.failures, run.failure_details):
             sessionlog.write(f"ERROR {suffix}: {name} failed\n{detail}")
         if run.results:
@@ -4547,6 +4584,18 @@ class MainWindow(QMainWindow):
             # and Apply upgrades it; arriving without touching renders nothing
             # and still shows the committed image (review 2026-10-11, I-1).
             return False
+        if step_id == "levels":
+            # By meaning, as in _controls_match_commit. A version-1 "auto"
+            # commit (an older project) never equals a rendered version-2
+            # preview, so pressing Auto there is pending and Apply upgrades it
+            # — Stretch's older-version rule, which falls out of the version
+            # being part of the option. Arriving renders nothing and leaves
+            # the committed picture on screen.
+            neutral = getattr(self._panel, "neutral_option", None)
+            if neutral is not None and _same_levels(neutral, value):
+                return True
+            committed = self._committed_option(step_id)
+            return committed is not None and _same_levels(committed, value)
         neutral = getattr(self._panel, "neutral_option", None)
         if neutral is not None and _same_option(neutral, value):
             return True
@@ -4695,8 +4744,17 @@ class MainWindow(QMainWindow):
             return False
         try:
             current = read()
-            if sid == "levels" and self._levels_auto:
-                current = LEVELS_AUTO           # what apply_current commits
+            if sid == "levels":
+                # What apply_current commits; compared by meaning, so a legacy
+                # (b, g, w) commit matches today's dict and a version-1 "auto"
+                # does not match a version-2 one (it derives another black).
+                p = parse_levels_option(committed)
+                if p.auto and p.version != AUTO_VERSION and not self._levels_auto:
+                    # An older Auto is shown as the numbers it produced (see
+                    # _seed_levels); untouched, those ARE the commit.
+                    seeded = getattr(panel, "levels_v1_seed", None)
+                    return seeded is not None and _same_levels(current, seeded)
+                return _same_levels(self._levels_commit_option(current), committed)
             elif sid == "curves":
                 current = self._curve_option(current)
         except Exception:                       # pragma: no cover - defensive
@@ -5200,11 +5258,12 @@ class MainWindow(QMainWindow):
         # Before the truncation below removes it: a recommit of an unlinked
         # stretch must not log the SPCC discard a second time.
         prior_stretch = self._committed_option("stretch") if stage_id == "stretch" else None
-        if stage_id == "levels" and self._levels_auto:
-            # Record the DECISION, not this image's measurement. Applying it now
-            # re-derives from the very image on screen, so the committed pixels
-            # are identical to the preview — `auto_levels` is deterministic.
-            option = LEVELS_AUTO
+        if stage_id == "levels":
+            # With Auto selected, record the DECISION (current Auto version +
+            # the colour offsets), not this image's measurement. Applying it
+            # re-derives from the very image on screen — or reuses the cached
+            # derivation of it — so the commit equals the preview.
+            option = self._levels_commit_option(option)
         if stage_id == "levels" and self.project.current().is_linear:
             # Levels remaps [black, white] in display space; on a still-linear
             # image (values ~0.003) any black point clips the whole frame to
@@ -5249,6 +5308,7 @@ class MainWindow(QMainWindow):
         applied_preview = getattr(self, slot, None) if slot is not None else None
         engine_box = getattr(self._panel, "engine_box", None)
         applied_engine = engine_box.currentText() if engine_box is not None else _UNSET
+        levels_token = self._base_token("levels") if stage_id == "levels" else None
 
         def on_result(result):
             # What RAN, not only what was chosen (ColorStep: a photometric
@@ -5257,6 +5317,9 @@ class MainWindow(QMainWindow):
             self.project.run_step(_PrecomputedStep(STEP_NAME[stage_id], result), recorded)
             self._mark_dirty()
             self._log_step(stage_id, option, base, result, step)
+            if stage_id == "levels":
+                self._keep_levels_auto(option, getattr(step, "last_resolved", None),
+                                       levels_token)
             if (stage_id == "stretch" and isinstance(option, dict)
                     and option.get("linked") is False and self._spcc_was_applied()
                     and not (isinstance(prior_stretch, dict)
@@ -5296,6 +5359,18 @@ class MainWindow(QMainWindow):
         than spend another 6.2 s on the same blur; `apply_prepared` is bit-
         identical to the plain function (tests/core/test_hdr.py). The recorded
         option is unchanged, and replay and export still call the plain step."""
+        if stage_id == "levels":
+            # Auto's search was already run on this very input when Auto was
+            # pressed: reuse it (same numbers, no second ~0.8 s). The resolved
+            # numbers ride on the step for the log line (Auto's stop).
+            cached = self._levels_cached_auto(option)
+            if cached is None:
+                return lambda: step.apply(base, option)
+
+            def work():
+                step.last_resolved = r = self._resolve_with(base, option, cached)
+                return step.apply_resolved(base, r)
+            return work
         attr = self._PREPARED.get(stage_id)
         if attr is not None:
             slot = self._prep_slots[attr]
@@ -5355,17 +5430,20 @@ class MainWindow(QMainWindow):
         """
         name = STEP_NAME[stage_id]
         label = self._step_log_label(stage_id, option, getattr(step, "last_engine", None))
-        self.log_panel.append_entry(format_log_entry(name, label, rms_delta(base, result)))
+        detail = (self._levels_log_detail(option, getattr(step, "last_resolved", None))
+                  if stage_id == "levels" else "")
+        self.log_panel.append_entry(
+            format_log_entry(name, label, rms_delta(base, result), detail=detail))
         # And to the file. The panel is wiped when a project closes and gone
         # when the app exits — which is exactly when somebody sits down to
         # write a support ticket.
-        sessionlog.write(f"step  {name}" + (f" ({label})" if label else ""))
+        sessionlog.write(f"step  {name}" + (f" ({label})" if label else "") + detail)
 
     @staticmethod
     def _step_log_label(stage_id: str, option, engine_tag) -> str:
         """The bracketed part of a step's log line; shared with Auto Enhance so
         its lines use the manual step's words for the same option and engine."""
-        if stage_id == "levels" and option == LEVELS_AUTO:
+        if stage_id == "levels" and parse_levels_option(option).auto:
             # The one Levels option that IS user-facing: it says the black point
             # will be re-derived per image, which a bare "Levels" cannot.
             label = "auto"
@@ -6074,29 +6152,158 @@ class MainWindow(QMainWindow):
         self._sync_step_controls()
 
     # --- levels live preview ---
-    def _on_levels_change(self, black: float, gamma: float, white: float) -> None:
-        """A Levels slider moved: stash the values and (re)start the debounce.
+    def _on_levels_change(self, option, gamma=None, white=None) -> None:
+        """Black point, Midtones or White point moved: stash what Apply would
+        commit and (re)start the debounce. `option` is the panel's manual
+        option; three numbers (black, gamma, white) are accepted too.
 
-        Moving a slider makes the value a CHOICE, so the recipe stores the
+        Moving one of these makes the value a CHOICE, so the recipe stores the
         numbers rather than "re-derive this". `_on_levels_auto` sets the sliders
         itself and so lands here three times — it re-asserts the flag afterwards.
         """
-        self._levels_pending = (black, gamma, white)
+        if not isinstance(option, dict):
+            option = new_levels_option(option, gamma, white)
+        self._levels_pending = option
         self._set_levels_auto(False)
         self._levels_timer.start(90)
         self._sync_step_controls()
 
+    def _on_levels_colour_change(self, option) -> None:
+        """A colour's black point moved. Auto stays selected (spec B): it
+        re-derives the shared black, and the offsets apply on top of it."""
+        self._levels_pending = self._levels_commit_option(option)
+        self._levels_timer.start(90)
+        self._sync_step_controls()
+
+    def _levels_commit_option(self, option):
+        """What Apply records for the panel's `option`: with Auto selected, the
+        current Auto version carrying the panel's colour offsets; otherwise
+        `option` as sent."""
+        if not self._levels_auto:
+            return option
+        return new_levels_option(offsets=parse_levels_option(option).offsets, auto=True)
+
     def _set_levels_auto(self, on: bool) -> None:
-        """Flag plus its only visible sign.
+        """Flag plus its visible signs.
 
         The nudge rule is otherwise invisible — a 0.001 nudge changes what the
         recipe stores — so the Auto button reading as active while the values are
         still the derived ones is what makes it legible before a recipe is saved.
+        The "Auto stopped at …" note belongs to that state too: it explains the
+        derived black, so it goes the moment the black is the user's.
         """
         self._levels_auto = bool(on)
         btn = getattr(self._panel, "auto_btn", None)
         if btn is not None:
             btn.setChecked(bool(on))
+        note = getattr(self._panel, "auto_note", None)
+        if note is not None:
+            cached = self._levels_cached_auto(new_levels_option(auto=True)) if on else None
+            stopped = cached is not None and cached.stopped
+            if stopped:
+                note.setText(
+                    f"Auto stopped at {_floor_black(cached.black) / BLACK_STEPS:.3f} so no "
+                    "colour is crushed past the warning limit. Drag Black point "
+                    "right to go darker on purpose.")
+            note.setVisible(stopped)
+
+    def _levels_auto_black(self):
+        """The current Auto's decision for the Levels input, computed once per
+        input (it is ~0.8 s on a 33 MP frame) and kept for the preview, the
+        colour sliders and the commit."""
+        token = self._base_token("levels")
+        cached = self._levels_auto_cache
+        if cached is not None and cached[0] == token:
+            return cached[1]
+        decided = auto_black(self._preview_base("levels"))
+        self._levels_auto_cache = (token, decided)
+        return decided
+
+    def _levels_cached_auto(self, option):
+        """The cached Auto decision when `option` is the current Auto and the
+        cache was made on today's Levels input; None otherwise (resolve it)."""
+        p = parse_levels_option(option)
+        cached = self._levels_auto_cache
+        if (not p.auto or p.version != AUTO_VERSION or cached is None
+                or self.project is None or cached[0] != self._base_token("levels")):
+            return None
+        return cached[1]
+
+    def _keep_levels_auto(self, option, resolved, token) -> None:
+        """Keep the Auto decision a commit just made (panel Apply, Auto
+        Enhance, a preset) for its input, so arriving at Levels next does not
+        run the ~0.8 s search again. Only for the current Auto, and only while
+        `token` is still the Levels input."""
+        decided = getattr(resolved, "auto", None)
+        p = parse_levels_option(option)
+        if (decided is None or not p.auto or p.version != AUTO_VERSION
+                or token is None or token != self._base_token("levels")):
+            return
+        self._levels_auto_cache = (token, decided)
+
+    @staticmethod
+    def _resolve_with(img, option, cached) -> ResolvedLevels:
+        """resolve_levels(img, option), reusing Auto's cached decision for this
+        very input when there is one — the same numbers, without the search."""
+        if cached is None:
+            return resolve_levels(img, option)
+        p = parse_levels_option(option)
+        return ResolvedLevels(cached.black, 1.0, 1.0, p.offsets, cached)
+
+    @staticmethod
+    def _levels_log_detail(option, resolved) -> str:
+        """The part of a Levels log line after its name (spec A, mockup): where
+        Auto stopped and why, or a hand-set black, then any colour offsets."""
+        p = parse_levels_option(option)
+        parts = []
+        if p.auto:
+            a = resolved.auto if resolved is not None else None
+            if a is not None and a.stopped:
+                # Both rounded DOWN, as the panel shows them, so the two
+                # numbers cannot disagree in the last digit.
+                parts.append(f"black {_floor_black(a.black) / BLACK_STEPS:.3f} \u2014 stopped at "
+                             "the clipping limit (unlimited Auto: "
+                             f"{_floor_black(a.candidate) / BLACK_STEPS:.3f})")
+        else:
+            # Rounded DOWN, as the panel's Black point label shows it.
+            parts.append(f"black {_floor_black(p.black) / BLACK_STEPS:.3f}")
+            if abs(p.gamma - 1.0) > 1e-9:
+                parts.append(f"midtones {p.gamma:.2f}")
+            if abs(p.white - 1.0) > 1e-9:
+                parts.append(f"white {p.white:.2f}")
+        offsets = describe_offsets(p.offsets)
+        if offsets:
+            parts.append(offsets)
+        return "".join(f" \u00b7 {x}" for x in parts)
+
+    def _seed_levels(self, panel) -> None:
+        """Show the COMMITTED Levels on a rebuilt panel, so returning to the
+        step and touching one control edits what is there instead of starting
+        from the defaults (review 2026-10-14: a colour nudge on a revisited
+        Auto committed black 0 and the sky jumped).
+
+        Current Auto: Auto selected, its cached decision, the note if it
+        stopped. Manual: its numbers, the black exact. A version-1 "auto"
+        (an older project): NOT selected — pressing Auto would give version 2,
+        a different picture — and the black is the exact one version 1
+        produced, so a move elsewhere keeps the look. Nothing is pending and
+        nothing renders on arrival: the panel equals the commit."""
+        committed = self._committed_option("levels")
+        if committed is None:
+            return
+        p = parse_levels_option(committed)
+        if p.auto and p.version == AUTO_VERSION:
+            decided = self._levels_auto_black()
+            panel.set_levels_values(decided.black, 1.0, 1.0, p.offsets)
+            panel.neutral_option = committed
+            self._set_levels_auto(True)
+        elif p.auto:
+            r = resolve_levels(self._preview_base("levels"), committed)
+            panel.set_levels_values(r.black, r.gamma, r.white, r.offsets)
+            panel.neutral_option = panel.levels_v1_seed = panel.commit_option()
+        else:
+            panel.set_levels_values(p.black, p.gamma, p.white, p.offsets)
+            panel.neutral_option = panel.commit_option()
 
     def _on_levels_auto(self) -> None:
         if self.project is None or self.current_stage_id() != "levels":
@@ -6105,24 +6312,23 @@ class MainWindow(QMainWindow):
             # values Auto never got as far as computing.
             self._set_levels_auto(False)
             return
-        # The PRE-Levels image — the same base the preview renders from and the
-        # commit re-applies to. `project.current()` is only the same thing until
-        # a Levels step has been applied; after one, Auto measured the ALREADY
-        # levelled image while the commit measured the original, and the two
-        # disagreed by 0.227 mean on a synthetic frame. That was a WYSIWYG break
-        # AND a wrong suggestion, both of which this fixes.
-        b, g, w = auto_levels(self._preview_base("levels").data)
-        # Setting the sliders fires _on_levels_change (which debounces a render).
-        self._panel.black_slider.setValue(round(b * BLACK_STEPS))
-        self._panel.gamma_slider.setValue(round(g * 100))
-        self._panel.white_slider.setValue(round(w * 100))
-        # AFTER the three setValue calls, never before: each one fires
-        # _on_levels_change, which clears the flag. Setting it first means the
-        # app wipes its own record and the recipe silently stores numbers while
-        # the button still reads Auto.
+        # Measured on the PRE-Levels image — the same base the preview renders
+        # from and the commit re-applies to. `project.current()` is only the
+        # same thing until a Levels step has been applied; after one, Auto
+        # measured the ALREADY levelled image while the commit measured the
+        # original (0.227 mean apart on a synthetic frame).
+        decided = self._levels_auto_black()
+        # Set without emitting (each emit would clear the flag Auto is about to
+        # set). The black is SHOWN rounded down — Auto's own value is continuous
+        # and dragging to a number rounded up could cross the limit — and kept
+        # exact underneath, so the preview, the commit and a later midtones
+        # nudge all use Auto's value, not the slider's.
+        panel = self._panel
+        panel.set_levels_values(decided.black, 1.0, 1.0, panel.levels_offsets())
         self._set_levels_auto(True)
+        self._levels_pending = self._levels_commit_option(self._panel.commit_option())
         self._render_levels_preview()
-        # The flag changes what Apply commits ("auto", not the numbers); the
+        # The flag changes what Apply commits (Auto, not the numbers); the
         # sliders' own syncs above all ran with it still False.
         self._sync_step_controls()
 
@@ -6379,18 +6585,20 @@ class MainWindow(QMainWindow):
         ring.setVisible(busy)
 
     def _render_levels_preview(self) -> None:
-        """Non-committing live preview of the current Levels settings."""
+        """Non-committing live preview of the current Levels settings, resolved
+        exactly as the commit resolves them (Auto's continuous black, not the
+        slider's rounded one), so the preview is the commit."""
         if self.project is None or self.current_stage_id() != "levels":
             return
-        if self._levels_pending is not None:
-            b, g, w = self._levels_pending
-        else:
-            b = self._panel.black_slider.value() / BLACK_STEPS
-            g = self._panel.gamma_slider.value() / 100.0
-            w = self._panel.white_slider.value() / 100.0
+        option = self._levels_pending
+        if option is None:
+            option = self._levels_commit_option(self._panel.commit_option())
         img = self._preview_base("levels")
-        self._request_preview("levels", (b, g, w),
-                              lambda: _display(apply_levels(img, b, g, w).data))
+        r = self._resolve_with(img, option, self._levels_cached_auto(option))
+        key = (r.black, r.gamma, r.white, tuple(r.offsets))
+        self._request_preview(
+            "levels", key,
+            lambda: _display(apply_levels(img, r.black, r.gamma, r.white, r.offsets).data))
 
     # --- stretch live preview ---
     def _on_stretch_change(self, amount: float) -> None:
@@ -7956,6 +8164,7 @@ class MainWindow(QMainWindow):
                               else None),
             on_levels_change=self._on_levels_change,
             on_levels_auto=self._on_levels_auto,
+            on_levels_colour_change=self._on_levels_colour_change,
             on_sat_change=self._on_sat_change,
             on_sat_apply=self._apply_saturation,
             on_lc_change=self._on_lc_change,
@@ -7999,6 +8208,15 @@ class MainWindow(QMainWindow):
                    if self._opened_as_tiff else ""))
         if stage.id == "curves":
             self._seed_curves(new_panel)
+        if stage.id == "levels" and loaded:
+            # A mono picture has one black point; the colour ones would do
+            # nothing (core ignores them), so they are not offered. Read off
+            # the Levels INPUT, which is what the offsets would act on.
+            # From the history's record, not the pixels: reading the input
+            # here loaded a full frame on every arrival.
+            shape = self.project.shape_at(
+                self._leading_kept(self.project.entries(), names_before("levels")))
+            new_panel.levels_colour_box.setVisible(len(shape) == 3 and shape[2] == 3)
         if stage.id == "curves" and loaded:
             new_panel.curve_editor.set_histogram(self._preview_base("curves").data)
         if stage.id == "export" and hasattr(new_panel, "burn_annotations"):
@@ -8043,6 +8261,8 @@ class MainWindow(QMainWindow):
         if stage.id == "saturation":
             self._setup_saturation()
         self._update_explainer()
+        if stage.id == "levels" and loaded:
+            self._seed_levels(new_panel)
         if stage.id == "crop":
             self._resolve_held_preset()      # a Save as Preset or delete since
         # The new Apply starts at the component's own default state; decide

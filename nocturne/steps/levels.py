@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..core.image import AstroImage
-from ..core.levels import AUTO, apply_levels, auto_levels
+from ..core.levels import apply_levels, resolve_levels
 from ..history.step import Step
 
 
@@ -15,12 +15,17 @@ class LevelsStep(Step):
         return ""
 
     def apply(self, img: AstroImage, option) -> AstroImage:
-        if option == AUTO:
-            # Derive from the image in front of us, not from whatever image the
-            # recipe's author had. `auto_levels` is deterministic — median and
-            # MAD, no randomness — so a saved PROJECT, which replays this step
-            # on the same pixels, still reproduces exactly.
-            black, gamma, white = auto_levels(img.data)
-        else:
-            black, gamma, white = option if option else (0.0, 1.0, 1.0)
-        return apply_levels(img, black, gamma, white)
+        # Auto derives from the image in front of us, not from whatever image
+        # the recipe's author had, in the version the option records ("auto"
+        # alone is version 1 — see core.levels.parse_levels_option). Both
+        # versions are deterministic, so a saved PROJECT, which replays this
+        # step on the same pixels, still reproduces exactly.
+        # Kept for the caller's log line: what Auto decided, and whether it
+        # stopped at the clipping limit.
+        self.last_resolved = r = resolve_levels(img, option)
+        return self.apply_resolved(img, r)
+
+    def apply_resolved(self, img: AstroImage, r) -> AstroImage:
+        """The step with its numbers already resolved — MainWindow reuses
+        Auto's cached search for the input the preview showed."""
+        return apply_levels(img, r.black, r.gamma, r.white, r.offsets)

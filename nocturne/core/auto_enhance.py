@@ -3,7 +3,7 @@ from __future__ import annotations
 import traceback
 from typing import NamedTuple
 
-from ..recipe import LEVELS_AUTO, serialize_option
+from ..recipe import serialize_option
 from ..settings import Settings, astap_valid, graxpert_valid, rcastro_valid
 from ..steps.factory import make_step
 from ..steps.noise_sharpen import FREE
@@ -12,6 +12,7 @@ from .color import ColorSettings
 from .crop import CropParams, detect_content_bounds
 from .filter_type import detect_data_type
 from .image import AstroImage
+from .levels import new_levels_option
 from .narrowband import GOLD_BLUE, palette_defaults
 
 
@@ -25,7 +26,7 @@ from .narrowband import GOLD_BLUE, palette_defaults
 
 AUTO_CROP_MARGIN = 0.02          # extra trim (fraction of each side) beyond the detected content rectangle, to clear soft/registration edges
 AUTO_BACKGROUND_STRENGTH = "strong"  # GraXpert extraction strength; GraXpert stays for Background (~20-40 s) even though it never denoises here
-AUTO_LEVELS = (0.0, 1.0, 1.0)    # build-time placeholder (identity black/gamma/white); overridden at apply time in run_auto_plan by LEVELS_AUTO, since a black-point only means something once the image has been stretched
+AUTO_LEVELS = (0.0, 1.0, 1.0)    # build-time placeholder (identity black/gamma/white); overridden at apply time in run_auto_plan by the current Auto (new_levels_option(auto=True)), since a black-point only means something once the image has been stretched
 AUTO_GREEN_FRINGE = 1.0          # full-strength green fringe removal, all three presets
 AUTO_DENOISE_STRONG = "strong"   # fixed level -- the image-based noise proxy didn't discriminate real Seestar data, so denoise always runs at "strong" (the engine follows _auto_denoise_engine)
 
@@ -215,6 +216,10 @@ class AutoRun(NamedTuple):
     # Aligned with `failures`: the whole exception with its traceback, for the
     # session log a support report is built from (the UI shows the short reason).
     failure_details: tuple[str, ...] = ()
+    # Aligned with `results`: Levels' resolved numbers (step.last_resolved), so
+    # the caller's log line can say where Auto stopped as the panel's does;
+    # None for every other step.
+    resolved: tuple = ()
 
 
 _REASON_MAX = 120
@@ -266,6 +271,7 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
     results: list[tuple[str, object, AstroImage]] = []
     failures: list[tuple[str, str]] = []
     engines: list[str | None] = []
+    resolved: list = []
     notes: list[str] = []
     details: list[str] = []
     for i, (stage_id, option) in enumerate(plan):
@@ -297,7 +303,10 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
                 # instead of freezing a black point measured off whichever
                 # frame happened to be open. The user never pressed Auto,
                 # so nothing in the UI could have corrected it.
-                option = LEVELS_AUTO
+                # The CURRENT Auto, versioned like the panel's press: it stops
+                # at the clipping warning limit (2026-10-14). The bare "auto"
+                # string is version 1 and replays as such in a saved project.
+                option = new_levels_option(auto=True)
             result = step.apply(img, option)
         except Exception as exc:
             failures.append((name, _short_reason(exc)))
@@ -307,6 +316,7 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
         recorded = getattr(step, "recorded_option", lambda o: o)(option)
         results.append((name, serialize_option(stage_id, recorded), img))
         engines.append(getattr(step, "last_engine", None))
+        resolved.append(getattr(step, "last_resolved", None))
         if getattr(step, "last_message", ""):
             notes.append(step.last_message)
-    return AutoRun(results, failures, engines, tuple(notes), tuple(details))
+    return AutoRun(results, failures, engines, tuple(notes), tuple(details), tuple(resolved))

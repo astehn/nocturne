@@ -4,7 +4,7 @@ import numpy as np
 from PySide6.QtGui import QImage
 
 from ..core.autostretch import autostretch  # noqa: F401 - re-exported
-from ..core.export import display_data
+from ..core.export import display_data, display_rgb8  # noqa: F401 - display_data re-exported
 from ..core.image import AstroImage, finite_or_zero
 
 
@@ -76,11 +76,9 @@ def to_rgb8(img: AstroImage, *, linked: bool = True) -> np.ndarray:
     NaN-aware it faithfully painted a whole autostretch-poisoned channel black
     instead."""
     # The SAME function the picture exporters use, so the canvas and the file
-    # cannot drift apart — see core.export.display_data.
-    data = display_data(img, linked=linked)
-    if data.ndim == 2:
-        data = np.repeat(data[:, :, None], 3, axis=2)
-    return (finite_or_zero(data) * 255 + 0.5).astype(np.uint8)
+    # cannot drift apart — see core.export.display_data. The cast itself lives
+    # in core (display_rgb8) because Auto Levels measures clipping through it.
+    return display_rgb8(img, linked=linked)
 
 
 def to_qimage(img: AstroImage, *, linked: bool = True) -> QImage:

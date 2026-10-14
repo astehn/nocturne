@@ -60,6 +60,8 @@ def _headline(name: str, ser) -> str:
     if isinstance(ser, (int, float, str)):
         return f"{ser}"
     if isinstance(ser, dict):
+        if name == "Levels":
+            return _levels_headline(ser)
         if name == "Stretch" and "amount" in ser:
             # The linkage changes what a stretch does to colour: the headline
             # says it, as the log line does ("0.12 unlinked").
@@ -96,7 +98,44 @@ _POSITIONAL_FIELDS = {
 }
 
 
+def _levels_auto_words(version: int) -> str:
+    from .inspect import CRUSHED_LIMIT
+    if version >= 2:
+        return (f"auto, stopped where needed so no colour is crushed past the "
+                f"{CRUSHED_LIMIT * 100:g}% clipping warning")
+    return "auto"
+
+
+def _levels_headline(ser: dict) -> str:
+    from .levels import describe_offsets, parse_levels_option
+    p = parse_levels_option(ser)
+    parts = ["auto (stops at the clipping limit)" if p.auto and p.version >= 2
+             else "auto" if p.auto else ""]
+    parts.append(describe_offsets(p.offsets))
+    return ", ".join(x for x in parts if x)
+
+
+def _levels_params(ser: dict) -> list[str]:
+    """The dict option in the panel's words: what each slider was set to, and
+    the colours moved (only when one was)."""
+    from .levels import describe_offsets, parse_levels_option
+    p = parse_levels_option(ser)
+    if p.auto:
+        lines = [f"- black point: {_levels_auto_words(p.version)}",
+                 "- midtones: 1.000", "- white point: 1.000"]
+    else:
+        # Three decimals, the offsets' precision: Auto's continuous black
+        # printed seventeen digits.
+        lines = [f"- black point: {p.black:.3f}", f"- midtones: {p.gamma:.3f}",
+                 f"- white point: {p.white:.3f}"]
+    if colours := describe_offsets(p.offsets):
+        lines.append(f"- one colour's black point: {colours}")
+    return lines
+
+
 def _render_params(ser, name: str = "") -> list[str]:
+    if isinstance(ser, dict) and name == "Levels":
+        return _levels_params(ser)
     if isinstance(ser, dict):
         return [f"- {k}: {v}" for k, v in ser.items()]
     if isinstance(ser, list):

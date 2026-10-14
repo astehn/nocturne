@@ -206,18 +206,24 @@ def test_run_auto_plan_records_flat_gamma_levels():
     # after one tap re-derives per image instead of freezing a black point taken
     # off whichever frame happened to be open. The guarantee this test exists for
     # is unchanged and is checked on the RESULT below.
-    from nocturne.core.levels import AUTO, auto_levels
-    assert recorded == AUTO
+    # Since 2026-10-14 the decision is the CURRENT Auto (version 2, which stops
+    # at the clipping warning limit), as the panel's Auto press records it —
+    # it was the bare "auto" string, which a saved project replays as version 1.
+    from nocturne.core.levels import AUTO_V2, apply_levels, auto_black, new_levels_option
+    assert recorded == new_levels_option(auto=True)
+    assert recorded["version"] == AUTO_V2
 
     # A real black point was applied, and gamma/white stayed flat — auto_levels'
     # adaptive gamma (~1.37) lifted midtones and produced the milky look that was
     # rejected, which is why flatness is the thing being guarded.
     stretched = [img for name, _opt, img in out if name == "Stretch"][-1]
-    black, gamma, white = auto_levels(stretched.data)
-    assert black > 0.0
-    assert gamma == 1.0
-    assert white == 1.0
+    decided = auto_black(stretched)
+    assert decided.black > 0.0
     levelled = [img for name, _opt, img in out if name == "Levels"][-1]
+    # Exactly version 2's black with gamma and white at 1.0 — the picture the
+    # panel's Auto press would give on this input.
+    np.testing.assert_array_equal(levelled.data,
+                                  apply_levels(stretched, decided.black, 1.0, 1.0).data)
     assert not np.allclose(levelled.data, stretched.data, atol=1e-6), (
         "Levels ran but changed nothing")
 

@@ -341,10 +341,13 @@ def test_a_substituted_engine_is_named(qtbot, tmp_path):
 
 
 def test_an_auto_levels_preset_records_auto(qtbot, tmp_path):
+    """A preset saying "auto" runs the CURRENT Auto and records it with its
+    version (2026-10-14), so the project replays what was made."""
+    from nocturne.core.levels import new_levels_option
     steps = [STEPS[0], {"stage": "levels", "option": "auto"}]
     win, p = _setup(qtbot, tmp_path, steps=steps)
     _choose(win, p); _box(win); win._apply_crop()
-    assert ("Levels", "auto") in win.project.entries()
+    assert ("Levels", new_levels_option(auto=True)) in win.project.entries()
 
 
 def test_the_split_stage_lists_match_their_sources():
@@ -549,7 +552,10 @@ def test_save_on_one_picture_apply_on_another_round_trip(qtbot, tmp_path, monkey
     a_entries = win.project.entries()
     assert [n for n, _ in a_entries] == ["Crop", "Stretch", "Levels", "Vibrance",
                                          "Starless Levels", "Star Spikes"], "fixture"
-    assert dict(a_entries)["Levels"] == "auto", "fixture: Auto must be what was pressed"
+    # Pressing Auto records the current Auto (version 2, spec C).
+    assert dict(a_entries)["Levels"] == {"auto": True, "version": 2,
+                                         "offsets": [0.0, 0.0, 0.0]}, (
+        "fixture: Auto must be what was pressed")
 
     win._go_to_id("export", user_initiated=False)
     assert win._panel.save_preset_btn.isEnabled()
@@ -574,7 +580,9 @@ def test_save_on_one_picture_apply_on_another_round_trip(qtbot, tmp_path, monkey
     for sa, sb in zip(a_steps, b_steps):
         assert deserialize_option(sb["stage"], sb["option"]) == \
             deserialize_option(sa["stage"], sa["option"]), sa["stage"]
-    assert dict(b_entries)["Levels"] == "auto"
+    # The preset re-derives Auto in the current version and records it so.
+    from nocturne.core.levels import new_levels_option
+    assert dict(b_entries)["Levels"] == new_levels_option(auto=True)
 
     # The same steps on B by hand, in a window of its own.
     hand = _win(qtbot, tmp_path / "hand")
