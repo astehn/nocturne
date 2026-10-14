@@ -2421,7 +2421,15 @@ def test_export_help_names_the_buttons_the_panel_has():
     # C2's line under the button is "Your exported picture in the public
     # gallery."; the dialog it opens names the site.
     assert _GALLERY_HINT == "Your exported picture in the public gallery."
-    assert "public gallery at \"\n" in sp or "nocturneastro.com. It is looked at" in sp
+    from PySide6.QtWidgets import QApplication, QLabel
+    from nocturne.ui.pipeline import path_stages
+    from nocturne.ui.step_panels import build_panel
+    QApplication.instance() or QApplication([])
+    panel = build_panel(next(s for s in path_stages() if s.id == "export"),
+                        wall_fields={"target": "M 31"}, wall_handle="@a")
+    dialog_words = " ".join(l.text() for l in panel.gallery_dialog.findChildren(QLabel))
+    assert "public gallery at nocturneastro.com" in dialog_words
+    panel.deleteLater()
     # Burn annotations appears only once solved, and the help says when.
     assert "plate-solved" in b and "Burn annotations" in b
     mw = _src("nocturne/ui/main_window.py")

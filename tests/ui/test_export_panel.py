@@ -639,8 +639,19 @@ def test_share_wakes_after_an_export_and_sleeps_after_an_edit(qtbot, tmp_path, m
 
 @pytest.mark.parametrize("how", ["failed", "cancelled"])
 def test_a_failed_or_cancelled_export_does_not_wake_share(qtbot, tmp_path, monkeypatch, how):
+    from nocturne.ui import main_window as mw
     win = _export_win(qtbot, tmp_path)
+    attempts = []
+    real = mw.save_tiff
+    monkeypatch.setattr(mw, "save_tiff", lambda *a, **k: attempts.append(1) or real(*a, **k))
     _do_export(qtbot, win, monkeypatch, tmp_path, ok=(how != "failed"), cancel=(how == "cancelled"))
+    if how == "failed":
+        # It really ran and really failed: the save raised and the user was told.
+        assert "Export failed" in win._warning.text(), win._warning.text()
+        assert not (tmp_path / "out.tiff").exists()
+    else:
+        assert attempts == [] and not (tmp_path / "out.tiff").exists(), "cancel wrote a file"
+        assert win._last_export is None
     win._sync_step_controls(); win._rebuild_panel()     # read back from the record itself
     assert not win._panel.gallery_btn.isEnabled()
     assert win._panel.gallery_hint.text() == "Available after you export."
@@ -657,3 +668,25 @@ def test_share_is_still_swept_while_busy_once_exported(qtbot, tmp_path, monkeypa
     assert not win._panel.gallery_btn.isEnabled(), "a refresh mid-job relit it"
     win._set_busy(False)
     assert win._panel.gallery_btn.isEnabled()
+
+
+
+@pytest.mark.parametrize("fmt", ["FITS", "Starless + Stars (two TIFFs)"])
+def test_every_kind_of_export_wakes_share(qtbot, tmp_path, monkeypatch, fmt):
+    """Not only the TIFF path: FITS and the Layers pair reach _export_done by
+    routes of their own (the pair through a folder and the star split)."""
+    from nocturne.ui import file_dialogs
+    win = _export_win(qtbot, tmp_path)
+    monkeypatch.setattr(file_dialogs, "save_file",
+                        staticmethod(lambda *a, **k: (str(tmp_path / "out.fits"), "")))
+    monkeypatch.setattr(file_dialogs, "choose_folder",
+                        staticmethod(lambda *a, **k: str(tmp_path)))
+    monkeypatch.setattr(win, "_split_tagged", lambda img: (img, img, "test split"))
+    assert not win._panel.gallery_btn.isEnabled()
+    win._panel.format_box.setCurrentText(fmt)
+    win._panel.export_btn.click()
+    qtbot.wait(50)
+    written = ["out.fits"] if fmt == "FITS" else ["starless.tif", "stars.tif"]
+    assert all((tmp_path / f).exists() for f in written), "fixture: nothing was exported"
+    assert win._panel.gallery_btn.isEnabled()
+    assert win._panel.gallery_hint.text() == "Your exported picture in the public gallery."
