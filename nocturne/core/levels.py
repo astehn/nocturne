@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from typing import NamedTuple
+
 import numpy as np
 
 from .image import AstroImage
 
 
-def apply_levels(img: AstroImage, black: float, gamma: float, white: float) -> AstroImage:
+def apply_levels(img: AstroImage, black: float, gamma: float, white: float,
+                 offsets=None) -> AstroImage:
     """Levels adjustment: remap [black, white] to [0, 1] then apply midtone gamma.
 
     Built in place after the first allocation, and the identity gamma is
@@ -14,11 +17,38 @@ def apply_levels(img: AstroImage, black: float, gamma: float, white: float) -> A
     Levels, which runs this on every debounced preview tick, always passes 1.0.
     The result is a FRESH array in both branches (np.subtract allocates it),
     so no caller can find itself aliasing the source.
+
+    `offsets` (red, green, blue) move ONE colour's black point: channel c uses
+    black + offsets[c], which may go below 0 and then LIFTS that colour's floor.
+    Ignored on a mono picture. All-zero takes the original scalar path, so an
+    option without offsets is bit-identical to every build before them.
     """
+    if offsets is not None and img.data.ndim == 3 and img.data.shape[2] == 3 \
+            and any(float(d) != 0.0 for d in offsets):
+        return _apply_levels_per_channel(img, black, gamma, white, offsets)
     white = max(white, black + 1e-4)
     out = np.subtract(img.data, black)          # the one allocation
     out /= (white - black)                      # a division, NOT a reciprocal
     np.clip(out, 0.0, 1.0, out=out)             # multiply: they differ by a ULP
+    if gamma != 1.0:
+        out = np.power(out, 1.0 / max(gamma, 1e-3))
+    return AstroImage(out.astype(np.float32, copy=False),
+                      is_linear=img.is_linear, metadata=dict(img.metadata))
+
+
+def _apply_levels_per_channel(img, black, gamma, white, offsets) -> AstroImage:
+    """The scalar path with one black per channel. The per-channel numbers are
+    computed in float64 exactly as the scalar path computes its one number,
+    then handed to float32 arithmetic as the scalar is — so a channel whose
+    offset is 0 comes out bit-identical to the scalar path's."""
+    blacks = [float(black) + float(d) for d in offsets]
+    whites = [max(white, b + 1e-4) for b in blacks]
+    b32 = np.array(blacks, dtype=np.float64).astype(img.data.dtype)
+    span = np.array([w - b for w, b in zip(whites, blacks)],
+                    dtype=np.float64).astype(img.data.dtype)
+    out = np.subtract(img.data, b32)
+    out /= span
+    np.clip(out, 0.0, 1.0, out=out)
     if gamma != 1.0:
         out = np.power(out, 1.0 / max(gamma, 1e-3))
     return AstroImage(out.astype(np.float32, copy=False),
@@ -95,3 +125,212 @@ def auto_levels(data: np.ndarray) -> tuple[float, float, float]:
     mad = float(np.nanmedian(np.abs(lum - med)))
     black = float(np.clip(med - _BLACK_SIGMA * mad, 0.0, 0.5))
     return black, 1.0, 1.0
+
+
+# --- Auto, version 2: stop at the clipping warning --------------------------
+#
+# Measured on 14 of Andreas' projects (2026-10-14, Stretch v2 then Auto):
+# version 1 pushed 12/14 into the read-out's amber, typically 0.5-1.5% crushed
+# in R and B with G ~0 — one shared black point crushes R and B >=5x more than
+# G. Version 2 keeps version 1's black as the CANDIDATE and takes the largest
+# black at or below it that turns no channel amber by itself and makes no
+# already-amber channel worse. Gamma and white stay 1.0.
+AUTO_V1 = 1
+AUTO_V2 = 2
+AUTO_VERSION = AUTO_V2
+"""The Auto a fresh press (and a recipe or preset saying "auto") runs. A
+saved project's history entry names its version, so a later version can
+never change a picture that was already made."""
+
+BLACK_STEPS = 1000
+"""Positions on the Black point slider (three decimals). The UI imports it;
+Auto's search resolves finer than one of these steps."""
+
+# Bisection stops when the bracket is narrower than a quarter slider step: the
+# answer is then within one step of the true largest black, which is what the
+# slider can show anyway. ~11 halvings from a 0.5 candidate.
+_AUTO_RESOLUTION = 1.0 / (4 * BLACK_STEPS)
+
+
+class AutoBlack(NamedTuple):
+    """What Auto decided. `candidate` is version 1's black (median - 3.5 MAD);
+    `stopped` is True only when version 2 came in below it — the one case the
+    panel and the log explain."""
+
+    black: float
+    candidate: float
+    stopped: bool
+
+
+class CrushProbe:
+    """Per-channel structural crushed figure of `apply_levels(img, ...)`, as
+    the clipping read-out would measure it — without rendering the frame.
+
+    Exactly `structural_channel_clipping(display_rgb8(apply_levels(img, ...))).lo`
+    for a non-linear picture (a test holds the two equal): the read-out's own
+    blocks and sampling (`structural_block_peaks`), the same `apply_levels`,
+    the same 8-bit cast (`display_rgb8`). Only the peaks are re-mapped per
+    query, which is what makes Auto's search cheap on a 33 MP frame."""
+
+    def __init__(self, img: AstroImage) -> None:
+        from .inspect import structural_block_peaks
+        peaks = structural_block_peaks(img.data)
+        self.channels = 0 if peaks is None else peaks.shape[2]
+        # Mono back to 2-D, so display_rgb8 greys it to RGB as it does the frame.
+        self._peaks = peaks[:, :, 0] if self.channels == 1 else peaks
+
+    def crushed(self, black: float = 0.0, gamma: float = 1.0, white: float = 1.0,
+                offsets=None) -> tuple[float, ...]:
+        """Fraction (0-1) of structural blocks crushed to 0, per channel."""
+        if self._peaks is None:
+            return ()
+        from .export import display_rgb8
+        mapped = apply_levels(AstroImage(self._peaks, is_linear=False),
+                              black, gamma, white, offsets)
+        rgb = display_rgb8(mapped)          # mono peaks come back as grey RGB
+        dead = (rgb == 0).reshape(-1, 3).mean(axis=0)
+        return tuple(float(v) for v in dead[:1 if self.channels == 1 else 3])
+
+
+def auto_black(img: AstroImage, version: int = AUTO_VERSION) -> AutoBlack:
+    """Auto's black point for `img`, in the given version.
+
+    Version 1 is `auto_levels` as it always was. Version 2 bisects on the
+    black in [0, candidate] — the crushed figure only grows with the black, so
+    the passing set is an interval from 0 — for the largest black at which
+    every channel is under `CRUSHED_LIMIT` or no worse than it arrived. At or
+    over the limit counts as over, because that is where the read-out turns
+    amber. A LINEAR picture has no structural read-out to stay under (it is
+    autostretched for display), so it keeps the candidate.
+    """
+    candidate = float(auto_levels(img.data)[0])
+    if int(version) == AUTO_V1 or candidate <= 0.0 or img.is_linear:
+        return AutoBlack(candidate, candidate, False)
+    from .inspect import CRUSHED_LIMIT
+    probe = CrushProbe(img)
+    if probe.channels == 0:
+        return AutoBlack(candidate, candidate, False)
+    arrived = probe.crushed()
+
+    def ok(b: float) -> bool:
+        return all(now < CRUSHED_LIMIT or now <= was
+                   for now, was in zip(probe.crushed(b), arrived))
+
+    if ok(candidate):
+        return AutoBlack(candidate, candidate, False)
+    lo, hi = 0.0, candidate                 # ok(0) holds: identity == arrival
+    while hi - lo > _AUTO_RESOLUTION:
+        mid = 0.5 * (lo + hi)
+        if ok(mid):
+            lo = mid
+        else:
+            hi = mid
+    return AutoBlack(lo, candidate, True)
+
+
+# --- the history option -----------------------------------------------------
+#
+# Shapes a Levels option has had, all still read:
+#   (b, g, w) tuple / [b, g, w] list    manual, before colour offsets
+#   "auto"                              Auto version 1 IN A SAVED PROJECT
+#                                       (a recipe or preset "auto" is turned
+#                                       into the current Auto by recipe.py)
+#   "" / None                           identity
+#   {"auto": True, "version": 2, "offsets": [r, g, b]}
+#   {"black": b, "gamma": g, "white": w, "offsets": [r, g, b]}
+_ZERO_OFFSETS = (0.0, 0.0, 0.0)
+
+
+class LevelsParams(NamedTuple):
+    auto: bool
+    version: int            # meaningful only when auto
+    black: float            # ignored when auto: re-derived from the image
+    gamma: float
+    white: float
+    offsets: tuple          # (red, green, blue) added to the black point
+
+
+def _offsets_of(value) -> tuple:
+    try:
+        r, g, b = value
+        return (float(r), float(g), float(b))
+    except (TypeError, ValueError):
+        return _ZERO_OFFSETS
+
+
+def parse_levels_option(option) -> LevelsParams:
+    """Every shape a Levels option has had, as one value."""
+    if option == AUTO:
+        return LevelsParams(True, AUTO_V1, 0.0, 1.0, 1.0, _ZERO_OFFSETS)
+    if isinstance(option, dict):
+        offsets = _offsets_of(option.get("offsets", _ZERO_OFFSETS))
+        if option.get("auto"):
+            try:
+                version = int(option.get("version", AUTO_V1))
+            except (TypeError, ValueError):
+                version = AUTO_V1
+            return LevelsParams(True, version, 0.0, 1.0, 1.0, offsets)
+        return LevelsParams(False, AUTO_V1, float(option.get("black", 0.0)),
+                            float(option.get("gamma", 1.0)),
+                            float(option.get("white", 1.0)), offsets)
+    if isinstance(option, (tuple, list)) and len(option) == 3:
+        b, g, w = option
+        return LevelsParams(False, AUTO_V1, float(b), float(g), float(w), _ZERO_OFFSETS)
+    return LevelsParams(False, AUTO_V1, 0.0, 1.0, 1.0, _ZERO_OFFSETS)
+
+
+def new_levels_option(black: float = 0.0, gamma: float = 1.0, white: float = 1.0,
+                      offsets=_ZERO_OFFSETS, *, auto: bool = False) -> dict:
+    """The option for a Levels step made NOW. Auto records the current version,
+    so a later version cannot change it on replay; a manual one records its
+    three numbers. Both carry the colour offsets."""
+    offs = [float(v) for v in _offsets_of(offsets)]
+    if auto:
+        return {"auto": True, "version": AUTO_VERSION, "offsets": offs}
+    return {"black": float(black), "gamma": float(gamma), "white": float(white),
+            "offsets": offs}
+
+
+def levels_option_dict(option) -> dict | None:
+    """A dict-shaped option in its canonical form (the shape
+    `new_levels_option` writes, keeping its recorded version), or None for the
+    legacy tuple/"auto" shapes, which are stored as they always were."""
+    if not isinstance(option, dict):
+        return None
+    p = parse_levels_option(option)
+    if p.auto:
+        return {"auto": True, "version": p.version, "offsets": list(p.offsets)}
+    return {"black": p.black, "gamma": p.gamma, "white": p.white,
+            "offsets": list(p.offsets)}
+
+
+class ResolvedLevels(NamedTuple):
+    black: float
+    gamma: float
+    white: float
+    offsets: tuple
+    auto: AutoBlack | None   # what Auto decided, when the option was Auto
+
+
+def resolve_levels(img: AstroImage, option) -> ResolvedLevels:
+    """The numbers `option` means on `img`: Auto re-derived in its recorded
+    version, manual as stored. The step applies exactly these, and a preview
+    that wants to equal the step calls this too."""
+    p = parse_levels_option(option)
+    if p.auto:
+        a = auto_black(img, p.version)
+        return ResolvedLevels(a.black, 1.0, 1.0, p.offsets, a)
+    return ResolvedLevels(p.black, p.gamma, p.white, p.offsets, None)
+
+
+_OFFSET_WORDS = ("red", "green", "blue")
+
+
+def describe_offsets(offsets) -> str:
+    """"blue −0.015" — the colours moved, in the panel's three decimals and a
+    true minus sign; "" when none moved."""
+    parts = []
+    for word, d in zip(_OFFSET_WORDS, _offsets_of(offsets)):
+        if d != 0.0:
+            parts.append(f"{word} {d:+.3f}".replace("-", "\u2212"))
+    return ", ".join(parts)

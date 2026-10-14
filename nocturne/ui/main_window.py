@@ -93,7 +93,8 @@ import time as _time
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
 from ..core.histogram import histogram
 from ..core.inspect import (ChannelClipping, channel_clipping_from_histogram,
-                            paint_clipping, sample, structural_channel_clipping)
+                            paint_clipping, sample, structural_channel_clipping,
+                            CRUSHED_LIMIT)
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
 from .trim_dialog import TrimDialog
@@ -129,7 +130,7 @@ _CHANNEL_WORD = {"R": "red", "G": "green", "B": "blue", "L": "luminance"}
 
 
 _CLIP_AMBER_HI = 0.001     # 0.1% of highlights blown
-_CLIP_AMBER_LO = 0.0005    # 0.05% of shadows crushed
+_CLIP_AMBER_LO = CRUSHED_LIMIT   # 0.05% of shadows crushed — defined in core.inspect, where Auto Levels stops at it too
 # No "severe" (red) level: nothing measured so far says where clipping turns from
 # a mistake into a wreck, and a second trip point without a measurement behind
 # it would be a guess. One limit per end, applied to each channel on its own.

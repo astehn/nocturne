@@ -51,6 +51,21 @@ def display_data(img: AstroImage, *, linked: bool = True) -> np.ndarray:
             else np.clip(img.data, 0.0, 1.0))
 
 
+def display_rgb8(img: AstroImage, *, linked: bool = True) -> np.ndarray:
+    """The uint8 H×W×3 array the canvas displays — `display_data`, grey
+    repeated to three channels for a mono picture, cast to 8 bits.
+
+    In core so that Auto Levels can measure clipping through the very
+    conversion the read-out uses (`ui.preview.to_rgb8` is this function):
+    "Auto never turns a channel amber" then holds by construction rather than
+    by two copies of a cast agreeing. Non-finite values become 0.0 before the
+    cast (`finite_or_zero`), as the histogram and export do."""
+    data = display_data(img, linked=linked)
+    if data.ndim == 2:
+        data = np.repeat(data[:, :, None], 3, axis=2)
+    return (finite_or_zero(data) * 255 + 0.5).astype(np.uint8)
+
+
 def save_tiff(img: AstroImage, path: str, icc: bytes | None = None, *,
               linked: bool = True) -> None:
     # 16-bit TIFF for both mono and color (preserves dynamic range for further

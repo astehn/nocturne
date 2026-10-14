@@ -2403,7 +2403,9 @@ def test_presets_help_auto_levels_re_measures_and_the_rest_is_as_saved():
     assert "Auto black point" in b and "re-measures" in b and "values you saved" in b
     auto = up.Preset(id="a", name="a", steps=({"stage": "levels", "option": LEVELS_AUTO},))
     fixed = up.Preset(id="f", name="f", steps=({"stage": "levels", "option": [0.1, 1.0, 1.0]},))
-    assert up.preset_plan(auto, Settings()).plan == [("levels", LEVELS_AUTO)]
+    # "auto" reaches the run as the CURRENT Auto (2026-10-14), still re-derived.
+    from nocturne.core.levels import new_levels_option
+    assert up.preset_plan(auto, Settings()).plan == [("levels", new_levels_option(auto=True))]
     assert up.preset_plan(fixed, Settings()).plan == [("levels", (0.1, 1.0, 1.0))]
     rng = np.random.default_rng(7)
     dim = (0.10 + 0.01 * rng.standard_normal((32, 32, 3))).astype(np.float32)

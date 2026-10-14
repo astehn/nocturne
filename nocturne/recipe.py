@@ -11,6 +11,7 @@ from .ui.pipeline import STEP_NAME, ENHANCE_NAMES, GEOMETRY_NAMES
 
 _NAME_TO_STAGE = {name: sid for sid, name in STEP_NAME.items()}
 from .core.levels import AUTO as LEVELS_AUTO   # re-exported: the one definition
+from .core.levels import levels_option_dict, new_levels_option
 from . import RELEASE_STAGE, __version__
 
 _NAME_TO_STAGE["Crop"] = "crop"  # geometry op — no longer in STEP_NAME but still recipe-serializable
@@ -114,6 +115,11 @@ def serialize_option(stage_id, option):
         # saved before this still means exactly what it did.
         if option == LEVELS_AUTO:
             return LEVELS_AUTO
+        # The dict (2026-10-14: Auto's version, colour offsets) is stored in
+        # its canonical shape, keeping the version it was made with.
+        as_dict = levels_option_dict(option)
+        if as_dict is not None:
+            return as_dict
         b, g, w = option if option else (0.0, 1.0, 1.0)
         return [b, g, w]
     if stage_id == "stretch":
@@ -189,7 +195,10 @@ def _from_saved_dict(stage_id, value: dict):
     return deserialize_option(stage_id, value)
 
 
-def deserialize_option(stage_id, value):
+def deserialize_option(stage_id, value, *, project: bool = False):
+    """`project=True` for a saved PROJECT's history, which must replay exactly
+    what it made; the default reads a recipe or preset, which re-applies a
+    DECISION to a new picture. The two differ for Levels "auto" only."""
     if stage_id == "enhance":
         return value
     if stage_id == "crop":
@@ -205,7 +214,13 @@ def deserialize_option(stage_id, value):
     if stage_id == "tint":
         return tuple(value) if value else (0.0, 0.0)
     if stage_id == "levels":
-        return LEVELS_AUTO if value == LEVELS_AUTO else tuple(value)
+        if value == LEVELS_AUTO:
+            # In a project, "auto" is version 1: the pixels it made. In a
+            # recipe or preset it means "re-derive on this picture", which is
+            # what a fresh press does now — the current version.
+            return LEVELS_AUTO if project else new_levels_option(auto=True)
+        as_dict = levels_option_dict(value)
+        return as_dict if as_dict is not None else tuple(value)
     if stage_id == "rotate":
         return CropParams(rotate=90)
     if stage_id == "flip_h":

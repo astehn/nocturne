@@ -24,8 +24,9 @@ from .reset_slider import ResetSlider
 from .theme import WARNING
 
 # Black-point slider resolution. Ten times the other two levels sliders —
-# see the levels panel for why.
-BLACK_STEPS = 1000
+# see the levels panel for why. Defined in core because Auto's search resolves
+# finer than one of its steps.
+from ..core.levels import BLACK_STEPS  # noqa: E402,F401 - re-exported
 
 _PROCESS_OPTIONS = {
     "background": ["off", "light", "strong"],
