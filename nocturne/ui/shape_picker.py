@@ -223,6 +223,14 @@ class SegmentRow(QWidget):
         if text in self._labels:
             self._buttons[self._labels.index(text)].setChecked(True)
 
+    def currentIndex(self) -> int:  # noqa: N802
+        return self._group.checkedId()
+
+    def setCurrentIndex(self, i: int) -> None:  # noqa: N802
+        # QComboBox's name, so a row can stand in where a dropdown was.
+        if 0 <= i < len(self._buttons):
+            self._buttons[i].setChecked(True)
+
     def _on_toggled(self, i: int, checked: bool) -> None:
         if checked:
             self.currentTextChanged.emit(self._labels[i])
