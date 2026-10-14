@@ -34,8 +34,9 @@ class LoadedProject:
     project: Any            # nocturne.history.project.Project
     solve_state: Any
     source_label: str
-    # (hi_frac, lo_frac) already clipped when the image was first imported, or
-    # None for a raw linear import. Purely a readout baseline -- see
+    # (hi, lo) already clipped when the image was first imported — per-channel
+    # tuples when the bundle carries `clip_baseline_rgb` (2026-10-14 on), else
+    # the older worst-channel pair of floats — or None for a raw linear import. Purely a readout baseline -- see
     # MainWindow._capture_clip_baseline. Optional in the manifest, so a bundle
     # written before it existed simply loads as None.
     clip_baseline: Any = None
@@ -134,6 +135,29 @@ def _array_to_bytes(arr: np.ndarray) -> bytes:
 PREVIEW_NAME = "preview.jpg"
 
 
+def _worst_pair(cb):
+    """(hi, lo) as two floats — the shape every build before 2026-10-14 reads."""
+    if not cb:
+        return None
+    return [float(v) if isinstance(v, (int, float)) else float(max(v, default=0.0))
+            for v in cb]
+
+
+def _per_channel_pair(cb):
+    if not cb or any(isinstance(v, (int, float)) for v in cb):
+        return None
+    return [[float(x) for x in v] for v in cb]
+
+
+def _loaded_baseline(manifest):
+    """Prefer the per-channel figures; fall back to the worst-channel pair."""
+    if rgb := manifest.get("clip_baseline_rgb"):
+        return tuple(tuple(float(x) for x in v) for v in rgb)
+    if cb := manifest.get("clip_baseline"):
+        return tuple(float(v) for v in cb)
+    return None
+
+
 def save_project(project, path, *, solve_state=None, source_label: str = "",
                   clip_baseline=None, on_progress=None, preview_jpeg: bytes | None = None) -> None:
     """Write `project`'s full undo history (up to its current position) as a
@@ -201,7 +225,10 @@ def save_project(project, path, *, solve_state=None, source_label: str = "",
                 # bump. Bumping would make every new bundle unopenable by 0.7.1
                 # and earlier, which is far too high a price for a readout
                 # baseline that older builds simply ignore.
-                "clip_baseline": list(clip_baseline) if clip_baseline else None,
+                # The worst-channel PAIR stays exactly what earlier builds read;
+                # the per-channel figures are a second optional key they ignore.
+                "clip_baseline": _worst_pair(clip_baseline),
+                "clip_baseline_rgb": _per_channel_pair(clip_baseline),
                 "base": {"is_linear": base.is_linear, "metadata": _normalize_metadata(base.metadata)},
                 "steps": steps,
             }
@@ -317,6 +344,6 @@ def load_project(path: str, cache_dir: str, *, on_progress=None) -> LoadedProjec
         project=project,
         solve_state=manifest.get("solve"),
         source_label=manifest.get("source_label", ""),
-        clip_baseline=(tuple(cb) if (cb := manifest.get("clip_baseline")) else None),
+        clip_baseline=_loaded_baseline(manifest),
         saved_app_version=manifest.get("app_version") or None,
     )

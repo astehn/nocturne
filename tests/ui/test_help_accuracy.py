@@ -275,6 +275,23 @@ def test_clipping_help_explains_the_import_baseline():
     assert "Show clipping" in b
 
 
+def test_clipping_help_describes_the_readout_that_ships():
+    """The help names the two arrows, the per-number amber, the tooltip
+    qualifiers and the toggle beside the numbers — each checked against the
+    code that draws them, so a later redesign has to update both."""
+    b = _body("readout")
+    sp = _src("nocturne/ui/side_panel.py")
+    mw = _src("nocturne/ui/main_window.py")
+    assert "▼" in b and "▲" in b and '("▼"' in sp and '("▲"' in sp
+    assert "crushed to black" in b and "Crushed to black" in sp
+    assert "blown to white" in b and "Blown to white" in sp
+    assert "only that number, never the" in b and "WARNING" in sp
+    assert "crushed on import" in b and "on import" in mw
+    assert "scattered noise" in b.lower() and "Scattered noise, not lost detail" in mw
+    assert "beside the numbers" in b and 'QPushButton("Show clipping")' in sp
+    assert "The clipping line" not in b and "Tick <b>Show clipping" not in b
+
+
 def test_no_topic_is_an_empty_stub():
     for t in h._TOPIC_LIST:
         words = len(re.sub(r"<[^>]+>", " ", t.body).split())

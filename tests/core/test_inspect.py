@@ -784,3 +784,51 @@ def test_the_same_hole_on_a_black_ground():
     dark = np.all(out == 0, axis=2)
     assert not dark.any(), (
         f"{int(dark.all(axis=1).sum())} rows of untouched ground on the black ground")
+
+
+# --- per-channel figures: the read-out shows all three, every time ----------
+
+from nocturne.core.inspect import (ChannelClipping, channel_clipping_from_histogram,  # noqa: E402
+                                   structural_channel_clipping, structural_clipping)
+
+
+def test_channel_clipping_reports_every_channel_not_just_the_worst():
+    c = channel_clipping_from_histogram(_hist(r_bot=120, g_bot=7, b_top=40, total=1000))
+    assert c.names == ("R", "G", "B")
+    assert c.lo == pytest.approx((0.12, 0.007, 0.0))
+    assert c.hi == pytest.approx((0.0, 0.0, 0.04))
+
+
+def test_channel_clipping_agrees_with_the_worst_channel_figure():
+    """Same method, same histogram: the worst of the three must BE the old
+    worst-channel number, or the two read-outs could describe one picture
+    differently."""
+    h = _hist(r_top=5, g_top=30, b_top=1, r_bot=3, g_bot=9, b_bot=2, total=1000)
+    per, worst = channel_clipping_from_histogram(h), clipping_from_histogram(h)
+    assert max(per.hi) == worst.hi_frac and max(per.lo) == worst.lo_frac
+
+
+def test_channel_clipping_mono_and_empty():
+    counts = np.zeros(256, np.int64)
+    counts[0], counts[128] = 25, 75
+    c = channel_clipping_from_histogram({"l": counts})
+    assert c.names == ("L",) and c.lo == pytest.approx((0.25,)) and c.hi == (0.0,)
+    assert channel_clipping_from_histogram({}) == ChannelClipping((), (), ())
+    z = channel_clipping_from_histogram({"l": np.zeros(256, np.int64)})
+    assert z.lo == (0.0,) and z.hi == (0.0,)
+
+
+def test_structural_channel_clipping_is_per_channel_and_agrees_with_the_worst():
+    rgb = np.full((60, 60, 3), 128, np.uint8)
+    rgb[:12, :12, 0] = 0          # a red-dead REGION
+    rgb[30:36, 30:36, 2] = 255    # a smaller blown blue region
+    per, worst = structural_channel_clipping(rgb), structural_clipping(rgb)
+    assert per.names == ("R", "G", "B")
+    assert per.lo[0] > 0 and per.lo[1] == 0.0 and per.lo[2] == 0.0
+    assert per.hi[2] > 0 and per.hi[0] == 0.0 and per.hi[1] == 0.0
+    assert max(per.lo) == worst.lo_frac and max(per.hi) == worst.hi_frac
+
+
+def test_structural_channel_clipping_of_nothing_is_empty():
+    assert structural_channel_clipping(None) == ChannelClipping((), (), ())
+    assert structural_channel_clipping(np.zeros((2, 2, 3), np.uint8)) == ChannelClipping((), (), ())

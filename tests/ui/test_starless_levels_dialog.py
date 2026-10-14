@@ -1191,3 +1191,15 @@ def test_closing_cancels_only_a_split_still_running(qtbot, split):
     gate.set()
     assert running._token.cancelled is True, "closing mid-split left the engine running"
     _settle()
+
+
+def test_show_clipping_is_named_and_explained_as_in_the_main_window(qtbot):
+    """One legend: the dialog's toggle carries the main window's name and its
+    legend word for word, so a mark never means two things in two places."""
+    from nocturne.ui.side_panel import CLIP_LEGEND, ClipReadout
+    d = _dlg(qtbot)
+    main = ClipReadout()
+    qtbot.addWidget(main)
+    assert d.clip_check.text() == main.toggle.text() == "Show clipping"
+    assert CLIP_LEGEND in d.clip_check.toolTip()
+    assert CLIP_LEGEND in main.toggle.toolTip()

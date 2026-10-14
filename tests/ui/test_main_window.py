@@ -1170,16 +1170,32 @@ def test_levels_auto_sets_sliders(qtbot, tmp_path):
     assert abs(win._panel.black_slider.value() / BLACK_STEPS - b) < 0.002
 
 
+def _cells(win):
+    """{(end, channel): value label} of the clipping read-out."""
+    r = win._side.clip_readout
+    return {(e, ch): r.value_label(e, i) for e in ("lo", "hi") for i, ch in enumerate("RGB")}
+
+
+def _shown(win):
+    return {k: lab.text() for k, lab in _cells(win).items()}
+
+
+def _amber(win):
+    """The cells drawn amber — past their limit."""
+    from nocturne.ui.theme import WARNING
+    return {k for k, lab in _cells(win).items() if WARNING in lab.styleSheet()}
+
+
 def test_clipping_line_is_hidden_before_stretch(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     assert win._canvas_img.is_linear is True
     # The slot stays (fixed height, so the panel below never jumps at
-    # Stretch) but says why there is no figure yet, and can't be ticked.
+    # Stretch) but says why there is no figure yet, and can't be toggled.
     from nocturne.ui.side_panel import LINEAR_CLIP_TEXT
-    assert win._clip_line.text() == LINEAR_CLIP_TEXT
-    assert not win._clip_line.isEnabled()
-    assert not win._clip_check.isEnabled()
+    r = win._side.clip_readout
+    assert r.is_linear() and r.linear_label.text() == LINEAR_CLIP_TEXT
+    assert not win._clip_toggle.isEnabled()
 
 
 def test_clipping_line_appears_once_the_image_is_stretched(qtbot, tmp_path):
@@ -1188,9 +1204,8 @@ def test_clipping_line_appears_once_the_image_is_stretched(qtbot, tmp_path):
     win._go_to_id("stretch")
     win.apply_current(0.5)
     assert win._canvas_img.is_linear is False
-    assert win._clip_line.isEnabled() and win._clip_check.isEnabled()
-    assert "blown to white" in win._clip_line.text()
-    assert "crushed to zero" in win._clip_line.text()
+    assert not win._side.clip_readout.is_linear() and win._clip_toggle.isEnabled()
+    assert all(t.endswith("%") for t in _shown(win).values()) and len(_shown(win)) == 6
 
 
 def test_clipping_line_reports_a_crushed_shadow_percentage(qtbot, tmp_path):
@@ -1200,9 +1215,10 @@ def test_clipping_line_reports_a_crushed_shadow_percentage(qtbot, tmp_path):
     win._go_to_id("stretch")
     win.apply_current(0.5)
     win._show_preview(np.zeros((24, 24, 3), np.float32))   # everything crushed
-    # "every channel", not "red": all three died equally, and naming one of
-    # them would be a claim the picture does not support.
-    assert "100.0% of every channel crushed to zero" in win._clip_line.text()
+    shown = _shown(win)
+    assert [shown[("lo", c)] for c in "RGB"] == ["100.0%"] * 3
+    assert [shown[("hi", c)] for c in "RGB"] == ["0.0%"] * 3
+    assert "100.0% of the red channel is crushed to zero" in _cells(win)[("lo", "R")].toolTip()
 
 
 def test_clipping_line_reports_blown_highlights(qtbot, tmp_path):
@@ -1212,12 +1228,15 @@ def test_clipping_line_reports_blown_highlights(qtbot, tmp_path):
     win._go_to_id("stretch")
     win.apply_current(0.5)
     win._show_preview(np.ones((24, 24, 3), np.float32))
-    assert "100.0% of every channel blown to white" in win._clip_line.text()
+    shown = _shown(win)
+    assert [shown[("hi", c)] for c in "RGB"] == ["100.0%"] * 3
+    assert "100.0% of the blue channel is blown to white" in _cells(win)[("hi", "B")].toolTip()
 
 
-def _preview_with_clipped(win, black=0, white=0, side=200, scatter=False):
+def _preview_with_clipped(win, black=0, white=0, side=200, scatter=False, channels=(0, 1, 2)):
     """A mid-grey preview carrying a crushed square of side `black` and a blown
     square of side `white`, so a known clipped fraction reaches the amber logic.
+    Returns the set of amber cells.
 
     SQUARES, not the first N pixels of the flattened array, which is what this
     helper used to write. The alarm judges STRUCTURE — clipping that survives a
@@ -1229,22 +1248,26 @@ def _preview_with_clipped(win, black=0, white=0, side=200, scatter=False):
 
     `scatter=True` places the same number of pixels at random instead, which is
     the noise case: 400 scattered pixels (1% of the frame) measure 0.000%.
+    `channels` limits the clipping to those channels.
     """
     import numpy as np
+    ch = list(channels)
     data = np.full((side, side, 3), 0.5, np.float32)
     if scatter:
         rng = np.random.default_rng(0)
         flat = data.reshape(-1, 3)
         idx = rng.choice(side * side, black + white, replace=False)
-        flat[idx[:black]] = 0.0
-        flat[idx[black:]] = 1.0
+        for c in ch:
+            flat[idx[:black], c] = 0.0
+            flat[idx[black:], c] = 1.0
     else:
-        if black:
-            data[:black, :black] = 0.0
-        if white:
-            data[:white, side - white:] = 1.0
+        for c in ch:
+            if black:
+                data[:black, :black, c] = 0.0
+            if white:
+                data[:white, side - white:, c] = 1.0
     win._show_preview(data)
-    return win._clip_line.text()
+    return _amber(win)
 
 
 def test_floor_level_clipping_stays_quiet(qtbot, tmp_path):
@@ -1256,7 +1279,7 @@ def test_floor_level_clipping_stays_quiet(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)
-    assert "⚠" not in _preview_with_clipped(win, black=1, white=1)
+    assert _preview_with_clipped(win, black=1, white=1) == set()
 
 
 def test_real_shadow_clipping_raises_the_amber_warning(qtbot, tmp_path):
@@ -1267,7 +1290,25 @@ def test_real_shadow_clipping_raises_the_amber_warning(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)
-    assert "⚠" in _preview_with_clipped(win, black=6)      # 6x6 -> 0.092%
+    assert _preview_with_clipped(win, black=6) == {("lo", "R"), ("lo", "G"), ("lo", "B")}
+    tip = _cells(win)[("lo", "R")].toolTip()
+    assert "over the 0.05% limit" in tip.lower() and "black point" in tip
+
+
+def test_only_the_channel_over_the_limit_turns_amber(qtbot, tmp_path):
+    """His IC 1396A complaint: the whole line went amber, the fine values with
+    it. Only red is crushed here, so only red's shadow value may change — the
+    other five must be drawn exactly as before, not merely 'not amber'."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    _preview_with_clipped(win)                       # nothing clipped
+    before = {k: lab.styleSheet() for k, lab in _cells(win).items()}
+    assert _preview_with_clipped(win, black=12, channels=(0,)) == {("lo", "R")}
+    for k, lab in _cells(win).items():
+        if k != ("lo", "R"):
+            assert lab.styleSheet() == before[k], k
 
 
 def test_scattered_noise_below_black_does_not_raise_the_warning(qtbot, tmp_path):
@@ -1280,15 +1321,16 @@ def test_scattered_noise_below_black_does_not_raise_the_warning(qtbot, tmp_path)
 
     400 scattered pixels here is 1% of the frame, twenty times the shadow trip
     point, and must stay quiet. The number is still REPORTED — the overlay marks
-    exactly those pixels — but it is not a fault.
+    exactly those pixels — but it is not a fault, and its tooltip says so.
     """
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)
-    text = _preview_with_clipped(win, black=400, scatter=True)
-    assert "⚠" not in text, text
-    assert "scattered noise" in text, text
+    assert _preview_with_clipped(win, black=400, scatter=True) == set()
+    assert _shown(win)[("lo", "R")] == "1.0%"
+    assert "scattered noise, not lost detail" in _cells(win)[("lo", "R")].toolTip().lower()
+    assert "scattered noise" not in _cells(win)[("hi", "R")].toolTip().lower()
 
 
 def test_highlights_are_deliberately_laxer_than_shadows(qtbot, tmp_path):
@@ -1298,8 +1340,39 @@ def test_highlights_are_deliberately_laxer_than_shadows(qtbot, tmp_path):
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("stretch")
     win.apply_current(0.5)
-    assert "⚠" not in _preview_with_clipped(win, white=3)      # 3x3 -> 0.023%
-    assert "⚠" in _preview_with_clipped(win, white=9)          # 9x9 -> 0.207%
+    assert _preview_with_clipped(win, white=3) == set()                       # 3x3 -> 0.023%
+    assert _preview_with_clipped(win, white=9) == {("hi", c) for c in "RGB"}  # 9x9 -> 0.207%
+
+
+def test_the_toggle_drives_the_overlay_like_the_old_checkbox(qtbot, tmp_path):
+    import numpy as np
+    from PySide6.QtGui import qRed
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    data = np.full((24, 24, 3), 0.5, np.float32)
+    data[..., 0] = 0.0
+    win._show_preview(data)
+    win._clip_toggle.click()
+    assert win._clip_toggle.isChecked() and win._show_clipping
+    assert qRed(win.image_view._item.pixmap().toImage().pixel(5, 5)) > 200
+    win._clip_toggle.click()
+    assert not win._show_clipping
+    assert qRed(win.image_view._item.pixmap().toImage().pixel(5, 5)) < 200
+
+
+def test_the_toggle_is_not_remembered_between_windows(qtbot, tmp_path):
+    """As the checkbox was: an overlay that came back on its own at the next
+    launch would read as the picture being damaged."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._clip_toggle.click()
+    win.close()
+    again = _window(qtbot, tmp_path)
+    assert not again._clip_toggle.isChecked() and not again._show_clipping
 
 
 def test_clipping_overlay_paints_on_a_non_levels_step(qtbot, tmp_path):
@@ -1341,8 +1414,8 @@ def test_the_overlay_colours_the_channel_that_died(qtbot, tmp_path):
     px = win.image_view._item.pixmap().toImage().pixel(5, 5)
     assert qRed(px) > 200 and qGreen(px) < 130 and qBlue(px) < 130, \
         "red-only clipping must be marked RED, not white and not blue"
-    assert "of red crushed to zero" in win._clip_line.text(), \
-        "and the summary must name the channel, not just say 'shadows'"
+    assert _shown(win)[("lo", "R")] == "100.0%" and _shown(win)[("lo", "G")] == "0.0%", \
+        "and the read-out must say which channel, not just 'shadows'"
 
 
 def test_the_overlay_mark_is_additive_across_dead_channels(qtbot, tmp_path):
@@ -3824,16 +3897,16 @@ def _crushed_image(frac_black=0.30):
 
 def test_an_already_crushed_import_does_not_start_amber(qtbot, tmp_path):
     """The cry-wolf case. A processed file arrives 30% crushed; the user has
-    done nothing, so the line must be calm — and must still say 30%."""
+    done nothing, so the read-out must be calm — and must still say 30%."""
     win = _window(qtbot, tmp_path)
     win.open_image(_crushed_image(), "processed.tif")
     win._update_clipping_line()
 
-    assert "30.0%" in win._clip_line.text(), "the true total is still reported"
-    assert "crushed to zero" in win._clip_line.text()
-    assert "on import" in win._clip_line.text(), "and it says the damage predates you"
-    assert "⚠" not in win._clip_line.text(), "nothing the user did — no alarm"
-    assert WARNING not in win._clip_line.styleSheet()
+    assert _shown(win)[("lo", "R")] == "30.0%", "the true total is still reported"
+    tip = _cells(win)[("lo", "R")].toolTip()
+    assert "crushed to zero" in tip
+    assert "30.0% crushed on import" in tip, "and it says the damage predates you"
+    assert _amber(win) == set(), "nothing the user did — no alarm"
 
 
 def test_the_alarm_still_fires_for_damage_the_session_adds(qtbot, tmp_path):
@@ -3843,9 +3916,8 @@ def test_the_alarm_still_fires_for_damage_the_session_adds(qtbot, tmp_path):
     win.open_image(_crushed_image(0.30), "processed.tif")
     win._show_preview(np.zeros((20, 20, 3), np.float32))   # user crushes the rest
 
-    assert "⚠" in win._clip_line.text(), "30% -> 100% is the user's doing"
-    assert WARNING in win._clip_line.styleSheet()
-    assert "100.0% of every channel crushed to zero" in win._clip_line.text()
+    assert _amber(win) == {("lo", c) for c in "RGB"}, "30% -> 100% is the user's doing"
+    assert _shown(win)[("lo", "G")] == "100.0%"
 
 
 def test_a_raw_linear_import_gets_no_baseline(qtbot, tmp_path):
@@ -3859,8 +3931,35 @@ def test_a_raw_linear_import_gets_no_baseline(qtbot, tmp_path):
     win._go_to_id("stretch")
     win.apply_current(0.5)
     win._show_preview(np.zeros((24, 24, 3), np.float32))
-    assert "⚠" in win._clip_line.text(), "raw workflow must still alarm"
-    assert "on import" not in win._clip_line.text()
+    assert ("lo", "R") in _amber(win), "raw workflow must still alarm"
+    assert "on import" not in _cells(win)[("lo", "R")].toolTip()
+
+
+def test_a_previous_images_baseline_does_not_silence_the_next(qtbot, tmp_path):
+    """The structural baseline belongs to ONE image. Carried over to a raw
+    master opened next, an earlier import's 30% would excuse the user's own
+    crushing on the workflow the limits were calibrated for."""
+    win = _window(qtbot, tmp_path)
+    win.open_image(_crushed_image(0.30), "processed.tif")
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    data = np.full((24, 24, 3), 0.5, np.float32)
+    data[:5] = 0.0             # ~21% as a region: LESS than the last image had
+    win._show_preview(data)
+    assert _amber(win) >= {("lo", c) for c in "RGB"}
+
+
+def test_an_old_bundles_worst_channel_baseline_still_reads(qtbot, tmp_path):
+    """Bundles saved before the per-channel read-out carry (hi, lo) as two
+    worst-channel numbers. They must keep working: applied to every channel,
+    which is exactly what the old worst-channel alarm compared against."""
+    win = _window(qtbot, tmp_path)
+    win.open_image(_crushed_image(0.30), "processed.tif")
+    win._clip_baseline = (0.0, 0.30)
+    win._update_clipping_line()
+    assert "30.0% crushed on import" in _cells(win)[("lo", "B")].toolTip()
+    assert _amber(win) == set()
 
 
 def test_the_baseline_survives_a_save_and_reopen(qtbot, tmp_path):
@@ -3877,6 +3976,114 @@ def test_the_baseline_survives_a_save_and_reopen(qtbot, tmp_path):
     save_project(win.project, p, clip_baseline=baseline)
     loaded = load_project(p, str(tmp_path / "cache2"))
     assert loaded.clip_baseline == baseline
+
+
+def _manifest(path):
+    import json, zipfile
+    with zipfile.ZipFile(path) as z:
+        return json.loads(z.read("manifest.json"))
+
+
+def _rewrite_manifest(src, dst, edit):
+    import json, zipfile
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w") as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "manifest.json":
+                m = json.loads(data)
+                edit(m)
+                data = json.dumps(m).encode()
+            zout.writestr(item, data)
+
+
+def test_a_bundle_from_this_build_still_reads_in_the_old_shape(qtbot, tmp_path):
+    """Both ways compatible: `clip_baseline` stays the old worst-channel PAIR
+    of floats that earlier builds read (`base_hi, base_lo = ...` then
+    subtract), and the per-channel figures ride under a new optional key."""
+    from nocturne.history.project_store import save_project
+    win = _window(qtbot, tmp_path)
+    a = np.full((20, 20, 3), 0.5, np.float32)
+    a.reshape(-1, 3)[:120, 0] = 0.0          # 30% of red only
+    a.reshape(-1, 3)[:40, 2] = 0.0           # 10% of blue
+    win.open_image(AstroImage(a, is_linear=False), "processed.tif")
+    p = str(tmp_path / "b.nocturne")
+    save_project(win.project, p, clip_baseline=win._clip_baseline)
+    m = _manifest(p)
+    pair = m["clip_baseline"]
+    assert len(pair) == 2 and all(isinstance(v, float) for v in pair)
+    assert pair == [0.0, pytest.approx(0.30)]                  # (hi, lo), worst channel
+    assert m["clip_baseline_rgb"][1] == [pytest.approx(0.30), 0.0, pytest.approx(0.10)]
+    base_hi, base_lo = tuple(pair)                             # what the old loader does
+    assert 0.5 - base_lo == pytest.approx(0.2)
+
+
+def test_an_old_manifest_with_float_baselines_loads_and_reads(qtbot, tmp_path):
+    from nocturne.history.project_store import save_project, load_project
+    win = _window(qtbot, tmp_path)
+    win.open_image(_crushed_image(0.30), "processed.tif")
+    p, old = str(tmp_path / "b.nocturne"), str(tmp_path / "old.nocturne")
+    save_project(win.project, p, clip_baseline=win._clip_baseline)
+
+    def as_old_build(m):
+        m["clip_baseline"] = [0.0, 0.3]
+        m.pop("clip_baseline_rgb", None)
+    _rewrite_manifest(p, old, as_old_build)
+    loaded = load_project(old, str(tmp_path / "cache4"))
+    assert loaded.clip_baseline == (0.0, 0.3)
+    win2 = _window(qtbot, tmp_path)
+    win2._open_project(old)
+    win2._update_clipping_line()
+    tip = _cells(win2)[("lo", "G")].toolTip()
+    assert "up to 30.0% crushed on import (worst channel)" in tip
+    # The import crushed a REGION; calling the same pixels scattered noise
+    # beside it would contradict the line above.
+    assert "scattered noise" not in tip.lower()
+    assert _amber(win2) == set()
+
+
+def test_an_already_crushed_import_stays_grey_after_reopen(qtbot, tmp_path):
+    """The structural baseline is not in the bundle; it is rebuilt from the
+    import (state 0) the same way open measures it. Without that the reopened
+    picture went amber while its tooltip said the damage predated the user."""
+    win = _window(qtbot, tmp_path)
+    win.open_image(_crushed_image(0.30), "processed.tif")
+    at_open = win._structural_baseline
+    p = str(tmp_path / "b.nocturne")
+    win._do_save_project(p)
+    win2 = _window(qtbot, tmp_path)
+    win2._open_project(p)
+    assert win2._structural_baseline == at_open
+    win2._update_clipping_line()
+    assert _amber(win2) == set()
+    assert "30.0% crushed on import" in _cells(win2)[("lo", "R")].toolTip()
+
+
+def test_close_project_and_reopen_reset_both_baselines(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))                 # raw: no baseline
+    raw = str(tmp_path / "raw.nocturne")
+    win._do_save_project(raw)
+    win.open_image(_crushed_image(0.30), "processed.tif")
+    assert win._structural_baseline is not None
+    win._open_project(raw)
+    assert win._clip_baseline is None and win._structural_baseline is None
+    win.open_image(_crushed_image(0.30), "processed.tif")
+    win._close_project()
+    assert win._clip_baseline is None and win._structural_baseline is None
+
+
+def test_an_old_scalar_baseline_does_not_hide_scattered_noise(qtbot, tmp_path):
+    """A worst-channel figure may belong to a different channel; it must not
+    excuse — or explain away — another channel's scattered pixels."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._clip_baseline = (0.0, 0.002)          # worst channel 0.2%, maybe not G's
+    assert _preview_with_clipped(win, black=400, scatter=True) == set()   # 1.0% each
+    tip = _cells(win)[("lo", "G")].toolTip()
+    assert "scattered noise" in tip.lower(), "above the bound: still explained"
+    assert "up to 0.2% crushed on import (worst channel)" in tip
 
 
 def test_a_bundle_without_a_baseline_still_loads(qtbot, tmp_path):
@@ -3897,6 +4104,7 @@ def test_a_bundle_without_a_baseline_still_loads(qtbot, tmp_path):
             if item.filename == "manifest.json":
                 m = json.loads(data)
                 del m["clip_baseline"]
+                m.pop("clip_baseline_rgb", None)   # nor its later companion
                 data = json.dumps(m).encode()
             zout.writestr(item, data)
 
@@ -6201,18 +6409,75 @@ def test_the_status_slot_fits_its_fullest_states(qtbot, tmp_path):
         QApplication.instance().setStyleSheet("")
 
 
-def test_the_clip_line_shows_its_qualifier_and_the_tooltip_keeps_it(qtbot, tmp_path):
-    from PySide6.QtWidgets import QApplication, QLabel
-    line = ("1.0% of red blown to white  ·  1.0% of green crushed to zero"
-            "  — scattered noise, not lost detail")
+def _readout_fits(win):
+    """Every read-out cell and the toggle drawn at the size it asks for, inside
+    the slot, on one line each."""
+    from PySide6.QtCore import QPoint
+    slot = win._side.clip_slot
+    r = win._side.clip_readout
+    bad = []
+    cells = [r.arrow(e) for e in ("lo", "hi")]
+    cells += [r.letter_label(e, i) for e in ("lo", "hi") for i in range(3)]
+    cells += [r.value_label(e, i) for e in ("lo", "hi") for i in range(3)]
+    for w in cells + [win._clip_toggle]:
+        hint = w.sizeHint()
+        if w.width() < hint.width() or w.height() < min(hint.height(), slot.height()):
+            bad.append((w.objectName(), w.text(), w.size().toTuple(), hint.toTuple()))
+        x0 = w.mapTo(slot, QPoint(0, 0))
+        if x0.x() < 0 or x0.y() < 0 or x0.x() + w.width() > slot.width() \
+                or x0.y() + w.height() > slot.height():
+            bad.append(("outside the slot", w.text()))
+    return bad
+
+
+def test_the_readout_fits_its_widest_state_at_both_window_sizes(qtbot, tmp_path):
+    """100.0% in every cell, in bold amber, with the toggle's full label: no
+    cell squeezed or cut at 1280x800 or 1440x900, and the slot one line
+    shorter than the old line-plus-checkbox (54 px)."""
+    from PySide6.QtWidgets import QApplication
+    from nocturne.ui.side_panel import CLIP_SLOT_MIN_H, ClipValue
     try:
         win = _themed(qtbot, tmp_path)
-        win._side.set_clipping(line, "Measured per CHANNEL, not per pixel.")
-        qtbot.wait(20)
-        assert win._clip_line.text() == line
-        assert QLabel.text(win._clip_line) == line          # rendered in full, no "…"
-        tip = win._clip_line.toolTip()
-        assert line in tip and "Measured per CHANNEL" in tip
+        full = [ClipValue(c, 1.0, True, "") for c in "RGB"]
+        for size in ((1280, 800), (1440, 900)):
+            win.resize(*size); qtbot.wait(30)
+            win._side.set_clipping(full, full)
+            qtbot.wait(20)
+            assert _readout_fits(win) == [], size
+            assert win._clip_toggle.text() == "Show clipping"
+            win._side.set_clipping(None)
+            qtbot.wait(20)
+            lab = win._side.clip_readout.linear_label
+            assert lab.heightForWidth(lab.width()) <= win._side.clip_slot.height(), size
+        assert win._side.clip_slot.height() == win._side.clip_readout.needed_height()
+        assert win._side.clip_slot.height() >= CLIP_SLOT_MIN_H
+        assert win._side.clip_slot.height() <= 54 - 16, "one line less than the old read-out"
+    finally:
+        QApplication.instance().setStyleSheet("")
+
+
+def test_the_readout_grows_with_a_taller_font_and_nothing_clips(qtbot, tmp_path):
+    """The slot is sized from the read-out's own font, not a constant: a font
+    with ~19 px lines must still fit both rows and the toggle."""
+    from PySide6.QtWidgets import QApplication
+    from nocturne.ui.side_panel import ClipValue
+    from nocturne.ui.theme import build_stylesheet
+    big = ("QLabel#clipArrow, QLabel#clipLetter, QLabel#clipValue, QLabel#clipLinear"
+           " { font-size: 17px; }")
+    try:
+        win = _themed(qtbot, tmp_path)
+        h0 = win._side.clip_slot.height()
+        QApplication.instance().setStyleSheet(build_stylesheet() + big)
+        qtbot.wait(30)
+        r = win._side.clip_readout
+        assert r.value_label("lo", 0).fontMetrics().lineSpacing() >= 19
+        full = [ClipValue(c, 1.0, True, "") for c in "RGB"]
+        for size in ((1280, 800), (1440, 900)):
+            win.resize(*size); qtbot.wait(30)
+            win._side.set_clipping(full, full)
+            qtbot.wait(20)
+            assert _readout_fits(win) == [], size
+        assert win._side.clip_slot.height() > h0
     finally:
         QApplication.instance().setStyleSheet("")
 

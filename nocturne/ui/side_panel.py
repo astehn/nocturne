@@ -15,12 +15,15 @@ Reset whenever something ran.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, Qt
-from PySide6.QtWidgets import (QCheckBox, QFrame, QHBoxLayout, QLabel,
-                               QPushButton, QScrollArea,
-                               QSizePolicy, QVBoxLayout, QWidget)
+from typing import NamedTuple, Sequence
+
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel,
+                               QPushButton, QScrollArea, QSizePolicy,
+                               QStackedWidget, QVBoxLayout, QWidget)
 
 from .progress_ring import ProgressRing
+from .theme import CHANNEL_TINT, TEXT, TEXT_DIM, WARNING
 
 # Measured 2026-09-25 at RIGHT_PANE_W (label width 382 px) under the app
 # theme (Fusion + build_stylesheet), offscreen and cocoa alike: text lines
@@ -30,12 +33,34 @@ from .progress_ring import ProgressRing
 # macOS style is smaller (busy 72, error 66). The old guess, 64, squeezed
 # Cancel to 14 px.
 STATUS_SLOT_H = 75
-# Two clip lines (16 px each themed, 15-16 unthemed) + spacing 2 + the
-# checkbox (18 themed, 20 unthemed) = 54. The longest real line, "…crushed
-# to zero — scattered noise, not lost detail", wraps to two lines at 382 px;
-# the old 40 left one line and elided the qualifier.
-CLIP_SLOT_H = 54
+# The clipping read-out's slot is sized from its OWN font (two rows of line
+# spacing + 2, or the toggle if taller), so a larger font grows it instead of
+# clipping it. This is only the floor: measured 2026-10-14 under the app theme
+# at RIGHT_PANE_W on cocoa, rows 16 px -> 34, toggle 23. The old
+# line-plus-checkbox slot was 54; at 1280x800 the 18-20 px saved went to the
+# step card and histogram, at 1440x900 to the histogram. Widest row (all
+# 100.0%, bold) ends at x=258 of 376; the toggle starts at 291.
+CLIP_SLOT_MIN_H = 34
 LINEAR_CLIP_TEXT = "Clipping is shown once the image is stretched."
+# One legend for every clipping view — the main window's toggle and Starless
+# Levels' own — so a mark never means two things in two places.
+CLIP_LEGEND = ("The mark's colour is the channel that died:\n"
+               "  red / green / blue — that one channel is at zero\n"
+               "  yellow / magenta / cyan — those two are\n"
+               "  white — all three, so the pixel really is black\n"
+               "Amber marks a channel blown to white instead.")
+CLIP_TOGGLE_TIP = ("Show clipping — paint the clipped pixels on the picture, "
+                   "live, even mid-slider.\n\n" + CLIP_LEGEND)
+_PER_CHANNEL_NOTE = (
+    "Measured per CHANNEL, not per pixel. A pixel whose red alone sits at zero "
+    "still shows colour from green and blue — but the red signal there is "
+    "gone, and no later adjustment brings it back. In an HOO palette, red "
+    "carries Ha.")
+_ARROW = {"lo": ("▼", "▼ Crushed to black — how much of each channel sits at "
+                      "zero, in the shadows.\n\n" + _PER_CHANNEL_NOTE),
+          "hi": ("▲", "▲ Blown to white — how much of each channel sits at "
+                      "full, in the highlights.\n\n" + _PER_CHANNEL_NOTE)}
+_WIDEST_VALUE = "100.0%"
 # What the step's scrolling zone gets BEFORE the histogram grows back toward
 # its natural height: 208 px is what that zone measured at 1280x800 under the
 # app stylesheet on main before the consistent-panels branch (2026-09-25), when
@@ -123,6 +148,203 @@ class _ElidingLabel(QLabel):
         super().setText("\n".join(visible))
 
 
+class ClipValue(NamedTuple):
+    """One figure of the read-out: a channel's clipped fraction at one end,
+    whether it is past the limit, and the words that explain it."""
+    channel: str
+    frac: float
+    over: bool
+    tooltip: str
+
+
+class ClipReadout(QWidget):
+    """Two fixed lines — ▼ crushed, ▲ blown — each R G B in the same place
+    every time, with the Show clipping toggle beside them.
+
+    The old single sentence named only the worst channel and was amber as a
+    whole, so its wording and length changed from picture to picture and the
+    eye stopped reading it (Andreas, IC 1396A, 2026-10-14). Now nothing moves:
+    every cell has a fixed width, and only a value past its limit changes
+    colour. What the sentence used to say lives in each value's tooltip."""
+
+    ENDS = ("lo", "hi")
+    heightChanged = Signal(int)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+
+        self._stack = QStackedWidget()
+        self._stack.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        numbers = QWidget()
+        grid = QGridLayout(numbers)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(4)
+        grid.setVerticalSpacing(2)
+        self._arrows: dict[str, QLabel] = {}
+        self._letters: dict[tuple[str, int], QLabel] = {}
+        self._values: dict[tuple[str, int], QLabel] = {}
+        for r, end in enumerate(self.ENDS):
+            glyph, tip = _ARROW[end]
+            arrow = QLabel(glyph)
+            arrow.setObjectName("clipArrow")
+            arrow.setToolTip(tip)
+            grid.addWidget(arrow, r, 0)
+            self._arrows[end] = arrow
+            for i, ch in enumerate("RGB"):
+                letter = QLabel(ch)
+                letter.setObjectName("clipLetter")
+                letter.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                value = QLabel("0.0%")
+                value.setObjectName("clipValue")
+                # Left, against its own letter: right-aligned, a short value
+                # sat nearer the NEXT letter and "7.4%  G" read as green's.
+                value.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                grid.addWidget(letter, r, 1 + 2 * i)
+                grid.addWidget(value, r, 2 + 2 * i)
+                self._letters[(end, i)] = letter
+                self._values[(end, i)] = value
+        grid.setColumnStretch(7, 1)
+        self._numbers = numbers
+        self.linear_label = QLabel(LINEAR_CLIP_TEXT)
+        self.linear_label.setObjectName("clipLinear")
+        self.linear_label.setWordWrap(True)
+        self.linear_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self._stack.addWidget(numbers)
+        self._stack.addWidget(self.linear_label)
+        row.addWidget(self._stack, 1)
+
+        # Checkable, like Crop's segment buttons; the full name fits beside the
+        # numbers at the fixed pane width (measured, see CLIP_SLOT_MIN_H).
+        self.toggle = QPushButton("Show clipping")
+        self.toggle.setObjectName("shapeSeg")
+        self.toggle.setCheckable(True)
+        self.toggle.setToolTip(CLIP_TOGGLE_TIP)
+        self.toggle.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        row.addWidget(self.toggle, 0, Qt.AlignmentFlag.AlignVCenter)
+
+        self._fitted_for = None
+        self._fit_pending = False
+        # A restyle reaches the labels after (or before) this widget, in no
+        # promised order, so each one reports its own and the fit runs once
+        # everything has been repolished.
+        for w in [*self._arrows.values(), *self._letters.values(),
+                  *self._values.values(), self.linear_label, self.toggle]:
+            w.installEventFilter(self)
+        self.setFixedHeight(self.needed_height())
+        self.set_values([ClipValue(c, 0.0, False, "") for c in "RGB"],
+                        [ClipValue(c, 0.0, False, "") for c in "RGB"])
+
+    # -- access, for MainWindow and the tests --
+    def arrow(self, end: str) -> QLabel:
+        return self._arrows[end]
+
+    def letter_label(self, end: str, i: int) -> QLabel:
+        return self._letters[(end, i)]
+
+    def value_label(self, end: str, i: int) -> QLabel:
+        return self._values[(end, i)]
+
+    def is_linear(self) -> bool:
+        return self._stack.currentWidget() is self.linear_label
+
+    # -- state --
+    def set_linear(self) -> None:
+        self._stack.setCurrentWidget(self.linear_label)
+        self.linear_label.setEnabled(False)
+        self.toggle.setEnabled(False)
+
+    def set_values(self, lo: Sequence[ClipValue], hi: Sequence[ClipValue]) -> None:
+        for end, vals in (("lo", lo), ("hi", hi)):
+            for i in range(3):
+                letter, value = self._letters[(end, i)], self._values[(end, i)]
+                shown = i < len(vals)
+                letter.setVisible(shown)
+                value.setVisible(shown)
+                if not shown:
+                    continue
+                v = vals[i]
+                letter.setText(v.channel)
+                tint = CHANNEL_TINT.get(v.channel, TEXT)
+                letter.setStyleSheet(f"color: {tint}; font-weight: 600;")
+                value.setText(f"{v.frac * 100:.1f}%")
+                # Grey when fine, amber past the limit — and nothing else
+                # changes, so the eye goes straight to the one that matters.
+                value.setStyleSheet(f"color: {WARNING}; font-weight: 700;" if v.over
+                                    else f"color: {TEXT_DIM};")
+                value.setToolTip(v.tooltip)
+        self._stack.setCurrentWidget(self._numbers)
+        self.linear_label.setEnabled(True)
+        self.toggle.setEnabled(True)
+
+    # -- fixed cell widths --
+    def needed_height(self) -> int:
+        """Two rows of the read-out's font plus their spacing, or the toggle
+        if that is taller, never below the measured floor. The linear message
+        wraps to at most two lines of the same font, so it fits too."""
+        labels = [self._values[("lo", 0)], self._letters[("lo", 0)],
+                  self._arrows["lo"], self.linear_label]
+        row = 0
+        for lab in labels:
+            lab.ensurePolished()
+            row = max(row, lab.fontMetrics().lineSpacing(), lab.sizeHint().height()
+                      if lab is not self.linear_label else 0)
+        self.toggle.ensurePolished()
+        spacing = self._numbers.layout().verticalSpacing()
+        return max(CLIP_SLOT_MIN_H, 2 * row + spacing, self.toggle.sizeHint().height())
+
+    def _refit(self) -> None:
+        self._fit_pending = False
+        self._fit_cells()
+        h = self.needed_height()
+        if h != self.height():
+            self.setFixedHeight(h)
+            self.heightChanged.emit(h)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+        if event.type() in (QEvent.Type.StyleChange, QEvent.Type.FontChange) \
+                and not self._fit_pending:
+            self._fit_pending = True
+            # With `self` as context: a read-out deleted before the timer fires
+            # (a closed window) takes the call with it.
+            QTimer.singleShot(0, self, self._refit)
+        return super().eventFilter(obj, event)
+
+    def _fit_cells(self) -> None:
+        """Every value cell as wide as its widest possible text in BOLD, so a
+        value turning amber or reaching 100% never moves its neighbours. From
+        the polished font, since the stylesheet sets the size."""
+        value = self._values[("lo", 0)]
+        value.ensurePolished()
+        key = (value.font().key(), self._letters[("lo", 0)].font().key())
+        if key == self._fitted_for:
+            return
+        self._fitted_for = key
+        bold = value.font()
+        bold.setWeight(bold.Weight.Bold)
+        from PySide6.QtGui import QFontMetrics
+        # The spare room trails the value, so it separates channel groups.
+        w_val = QFontMetrics(bold).horizontalAdvance(_WIDEST_VALUE) + 12
+        letter = self._letters[("lo", 0)]
+        letter.ensurePolished()
+        lf = letter.font()
+        lf.setWeight(lf.Weight.DemiBold)
+        w_let = max(QFontMetrics(lf).horizontalAdvance(c) for c in "RGBL") + 2
+        for lab in self._values.values():
+            lab.setFixedWidth(w_val)
+        for lab in self._letters.values():
+            lab.setFixedWidth(w_let)
+        for lab in self._arrows.values():
+            lab.ensurePolished()
+            lab.setFixedWidth(lab.fontMetrics().horizontalAdvance("▼") + 2)
+
+    def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        self._refit()
+        super().showEvent(event)
+
+
 class SidePanel(QWidget):
     def __init__(self, width: int, parent=None) -> None:
         super().__init__(parent)
@@ -137,14 +359,14 @@ class SidePanel(QWidget):
 
         # clipping slot — fixed height, always present
         self.clip_slot = QWidget()
-        self.clip_slot.setFixedHeight(CLIP_SLOT_H)
         clip_lay = QVBoxLayout(self.clip_slot)
         clip_lay.setContentsMargins(0, 0, 0, 0)
-        clip_lay.setSpacing(2)
-        self.clip_line = _ElidingLabel("importMeta")
-        self.clip_check = QCheckBox("Show clipping")
-        clip_lay.addWidget(self.clip_line, 1)
-        clip_lay.addWidget(self.clip_check)
+        clip_lay.setSpacing(0)
+        self.clip_readout = ClipReadout()
+        self.clip_toggle = self.clip_readout.toggle
+        clip_lay.addWidget(self.clip_readout)
+        self.clip_slot.setFixedHeight(self.clip_readout.height())
+        self.clip_readout.heightChanged.connect(self.clip_slot.setFixedHeight)
         self.layout_.addWidget(self.clip_slot)
 
         # ONE card (Ruling R6, the approved mockup): a rounded BG_2 frame
@@ -374,17 +596,12 @@ class SidePanel(QWidget):
             self._rebalance()
         return super().eventFilter(obj, event)
 
-    def set_clipping(self, text: str | None, tooltip: str = "") -> None:
-        """None = linear. The slot keeps its height either way, so the panel
-        below does not jump when the image passes Stretch."""
-        if text is None:
-            self.clip_line.setText(LINEAR_CLIP_TEXT)
-            self.clip_line.setToolTip("")
-            self.clip_line.setEnabled(False)
-            self.clip_check.setEnabled(False)
+    def set_clipping(self, lo: Sequence[ClipValue] | None,
+                     hi: Sequence[ClipValue] | None = None) -> None:
+        """None = linear: the message takes the numbers' place and the toggle
+        greys. The slot keeps its height either way, so the panel below does
+        not jump when the image passes Stretch."""
+        if lo is None:
+            self.clip_readout.set_linear()
         else:
-            self.clip_line.setText(text)
-            # The full line first, so an elided qualifier is always one hover away.
-            self.clip_line.setToolTip(f"{text}\n\n{tooltip}" if tooltip else text)
-            self.clip_line.setEnabled(True)
-            self.clip_check.setEnabled(True)
+            self.clip_readout.set_values(lo, hi or [])

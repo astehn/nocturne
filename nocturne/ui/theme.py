@@ -36,6 +36,9 @@ DANGER_DIM = "#c47a72"
 TEXT = "#e6e6e6"
 TEXT_DIM = "#8a9099"
 TEXT_FAINT = "#5e636b"
+# Channel letters and values wherever a figure belongs to one channel (the hover
+# pill, the clipping read-out). Tints, not pure hues: see main_window._tinted.
+CHANNEL_TINT = {"R": "#ff8a80", "G": "#8fe38f", "B": "#8ab4f8"}
 # Opacity for a hand-painted control (curve editor, range handles, stepper)
 # while it is disabled. 0.4 lands the brightest strokes (TEXT, the curve) near
 # TEXT_FAINT on the dark grounds, matching the stylesheet's :disabled rules.
@@ -228,6 +231,9 @@ QFrame#stepFrame QWidget#stepCard
 QLabel#helpHeader {{ font-size: 12px; }}
 QLabel#stepDesc {{ color: {TEXT_DIM}; font-size: 12px; padding-bottom: 6px; }}
 QLabel#importMeta {{ color: {TEXT}; font-size: 13px; padding-bottom: 6px; }}
+QLabel#clipArrow, QLabel#clipLetter, QLabel#clipValue {{ font-size: 13px; }}
+QLabel#clipArrow {{ color: {TEXT_DIM}; }}
+QLabel#clipLinear {{ color: {TEXT_FAINT}; font-size: 13px; }}
 QWidget#welcome {{ background: transparent; }}
 QLabel#welcomeTitle {{ font-size: 30px; font-weight: 700; color: #ffffff; }}
 QLabel#welcomeTag {{ font-size: 14px; color: {TEXT_DIM}; }}
