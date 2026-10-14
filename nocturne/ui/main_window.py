@@ -65,7 +65,7 @@ from . import help_content
 from .about_dialog import AboutDialog
 from .help_dialog import HelpDialog
 from .provenance_dialog import ProvenanceDialog
-from .theme import ACCENT, WARNING, TEXT_DIM
+from .theme import ACCENT, CHANNEL_TINT, WARNING
 from .batch_dialog import BatchDialog
 from .image_view import ImageView
 from .job_queue import JobQueue, StackJob
@@ -92,13 +92,13 @@ from ..core.tasks import current as current_token
 import time as _time
 from .preview import rgb_to_qimage, to_qimage, to_rgb8
 from ..core.histogram import histogram
-from ..core.inspect import (clipping_from_histogram, paint_clipping, sample,
-                            structural_clipping)
+from ..core.inspect import (ChannelClipping, channel_clipping_from_histogram,
+                            paint_clipping, sample, structural_channel_clipping)
 from .settings_dialog import SettingsDialog
 from .share_dialog import ShareDialog
 from .trim_dialog import TrimDialog
 from .apply_button import ApplyButton
-from .side_panel import SidePanel
+from .side_panel import ClipValue, SidePanel
 from .solve_panel import SolvePanel, SolveWindow
 
 # The inline curve editor: its size on main, and the least it may shrink to
@@ -125,26 +125,75 @@ BUSY_DELAY_MS = 400   # ms before busy visuals appear; sub-threshold ops show no
 # without going quiet on a real mistake. Shadows trip at 0.05% (~2,500 px, around a
 # 0.065 black point) — 91x its floor, and tighter than highlights on purpose, since
 # crushed background destroys faint nebulosity that cannot be recovered.
-_CHANNEL_WORD = {"R": "red", "G": "green", "B": "blue", "L": "luminance",
-                 "ALL": "every channel"}
-
-
-def _clip_phrase(frac: float, channel: str, verb: str) -> str:
-    """"6.6% of red crushed to zero" rather than "6.6% shadows (R)".
-
-    The old form was accurate and unreadable. It never said the measurement is
-    PER CHANNEL, so the natural way to check it — is this pixel black? — tests
-    something the warning was never claiming, finds healthy colour, and makes
-    the tool look wrong. Naming the channel and what happened to it removes the
-    guess."""
-    pct = f"{frac * 100:.1f}%"
-    if frac > 0 and channel:
-        return f"{pct} of {_CHANNEL_WORD.get(channel, channel.lower())} {verb}"
-    return f"{pct} {verb}"
+_CHANNEL_WORD = {"R": "red", "G": "green", "B": "blue", "L": "luminance"}
 
 
 _CLIP_AMBER_HI = 0.001     # 0.1% of highlights blown
 _CLIP_AMBER_LO = 0.0005    # 0.05% of shadows crushed
+# No "severe" (red) level: nothing measured so far says where clipping turns from
+# a mistake into a wreck, and a second trip point without a measurement behind
+# it would be a guess. One limit per end, applied to each channel on its own.
+
+_CLIP_END = {
+    "lo": ("crushed to zero", "crushed", _CLIP_AMBER_LO,
+           "Move the black point back down (Levels or Curves) until this turns grey."),
+    "hi": ("blown to white", "blown", _CLIP_AMBER_HI,
+           "Move the white point back up until this turns grey."),
+}
+
+
+def _per_channel(pair, n: int) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """A (hi, lo) baseline as per-channel tuples. Bundles saved before the
+    per-channel read-out hold one worst-channel number per end: applied to
+    every channel, it is exactly what the old worst-channel alarm compared."""
+    if not pair:
+        return (0.0,) * n, (0.0,) * n
+    hi, lo = pair
+
+    def fit(v):
+        if isinstance(v, (int, float)):
+            return (float(v),) * n
+        v = tuple(float(x) for x in v)
+        return v if len(v) == n else (max(v, default=0.0),) * n
+    return fit(hi), fit(lo)
+
+
+def _clip_values(raw: ChannelClipping, raw_base, structural: ChannelClipping | None,
+                 structural_base: ChannelClipping | None):
+    """(lo, hi) rows of ClipValue for the side panel.
+
+    REPORT THE RAW FIGURE, ALARM ON STRUCTURE, JUDGE WHAT THE SESSION ADDED —
+    the three rules of the old one-line warning, now per channel. The raw
+    fraction is what "Show clipping" marks, so it is the number shown; the
+    colour comes from clipping that survives a 3x3 mean (scattered noise below
+    the black point is not lost detail — Andreas' M 31, 2026-09-04), minus
+    what the image already had when it arrived (an already-processed import
+    would otherwise sit amber with nothing the user could do)."""
+    n = len(raw.names)
+    base_hi, base_lo = _per_channel(raw_base, n)
+    rows = {}
+    for end, fracs, base in (("lo", raw.lo, base_lo), ("hi", raw.hi, base_hi)):
+        verb, short, limit, advice = _CLIP_END[end]
+        row = []
+        for i, (ch, frac) in enumerate(zip(raw.names, fracs)):
+            j = min(i, 2)    # a mono picture reaches the canvas as grey RGB
+            s_now = getattr(structural, end)[j] if structural and structural.names else 0.0
+            s_was = (getattr(structural_base, end)[j]
+                     if structural_base and structural_base.names else 0.0)
+            over = max(0.0, s_now - s_was) >= limit
+            word = _CHANNEL_WORD.get(ch, ch.lower())
+            tip = f"{frac * 100:.1f}% of the {word} channel is {verb}."
+            if base[i] > 0:
+                tip += (f" {base[i] * 100:.1f}% {short} on import — only what your "
+                        f"editing adds past that counts toward the warning.")
+            if over:
+                tip += f"\nOver the {limit * 100:g}% limit. {advice}"
+            elif frac - base[i] >= limit:
+                tip += ("\nScattered noise, not lost detail: single pixels, not a "
+                        "region — Noise Reduction smooths them away.")
+            row.append(ClipValue(ch, frac, over, tip))
+        rows[end] = row
+    return rows["lo"], rows["hi"]
 
 _PRESET_TIP_ON = "Save this edit (everything after the crop) as a preset for similar pictures."
 _PRESET_TIP_OFF = ("Save as Preset — process a picture through to Enhancements first: "
@@ -199,7 +248,7 @@ def _same_option(a, b) -> bool:
 # TINTS, not the pure hues. #f00/#0f0/#00f on this dark pill are hard to read at
 # 13px and blue is the worst of the three; these sit at roughly the same
 # lightness as each other and as the surrounding text.
-_CHANNEL_TINT = {"R": "#ff8a80", "G": "#8fe38f", "B": "#8ab4f8"}
+_CHANNEL_TINT = CHANNEL_TINT
 
 
 def _tinted(label: str, text: str) -> str:
@@ -860,9 +909,8 @@ class MainWindow(QMainWindow):
         self._info_strip.setObjectName("importMeta")   # readable style
         self._info_strip.setWordWrap(True)
         right.histogram_zone.addWidget(self._info_strip)
-        self._clip_line = right.clip_line
-        self._clip_check = right.clip_check
-        self._clip_check.toggled.connect(self._on_show_clipping)
+        self._clip_toggle = right.clip_toggle
+        self._clip_toggle.toggled.connect(self._on_show_clipping)
         self.solve_panel = SolvePanel()
         self.solve_panel.set_layers(dict(self.settings.annotation_layers))
         self.solve_panel.set_density(self.settings.annotation_density)
@@ -6202,7 +6250,7 @@ class MainWindow(QMainWindow):
         rgb = to_rgb8(img, linked=self._view_linked)
         # Free ride on the array the canvas needed anyway. Not computed for a
         # linear image because the clipping line is hidden there.
-        self._structural_clip = None if img.is_linear else structural_clipping(rgb)
+        self._structural_clip = None if img.is_linear else structural_channel_clipping(rgb)
         if self._show_clipping and not img.is_linear:
             paint_clipping(rgb)      # in place, over the picture
         self._canvas_img = img
@@ -8145,88 +8193,30 @@ class MainWindow(QMainWindow):
         if base is None or base.is_linear:
             self._clip_baseline = None
             return
-        c = clipping_from_histogram(histogram(base))
-        self._clip_baseline = (c.hi_frac, c.lo_frac)
+        c = channel_clipping_from_histogram(histogram(base))
+        self._clip_baseline = (c.hi, c.lo)      # per channel, (hi, lo) as before
         # The alarm judges structure, so its baseline has to be structural too —
         # comparing a structural figure against a raw one would report every
         # already-processed import as damage the session caused.
-        sc = structural_clipping(to_rgb8(base))
-        self._structural_baseline = (sc.hi_frac, sc.lo_frac)
+        self._structural_baseline = structural_channel_clipping(to_rgb8(base))
 
     def _update_clipping_line(self) -> None:
-        """Clipped-pixel summary under the info strip. No figures while the
-        image is linear — the slot stays, disabled, saying clipping is shown
-        once the image is stretched: before Stretch, 'clipped' can only mean
+        """The clipping read-out under the info strip. No figures while the
+        image is linear — the slot stays, saying clipping is shown once the
+        image is stretched: before Stretch, 'clipped' can only mean
         sensor-saturated at capture, which no edit caused and none can fix,
         and reporting it there would train the user to ignore the warning that
         matters."""
         img = self._canvas_img
         if img is None or img.is_linear:
-            self._clip_line.setStyleSheet("")   # drop a stale amber alarm colour
             self._side.set_clipping(None)
             return
-        c = clipping_from_histogram(self.histogram_view.hist())
-        hi = _clip_phrase(c.hi_frac, c.hi_channel, "blown to white")
-        lo = _clip_phrase(c.lo_frac, c.lo_channel, "crushed to zero")
-        text = f"{hi}  ·  {lo}"
-        clip_tooltip = (
-            "Measured per CHANNEL, not per pixel. A pixel whose red alone sits "
-            "at zero still shows colour from green and blue — but the red "
-            "signal there is gone, and no later adjustment brings it back. In "
-            "an HOO palette, red carries Ha.")
-        self._clip_check.setToolTip(
-            "The mark's colour is the channel that died:\n"
-            "  red / green / blue — that one channel is at zero\n"
-            "  yellow / magenta / cyan — those two are\n"
-            "  white — all three, so the pixel really is black\n"
-            "Amber marks a channel blown to white instead.")
-
-        # The TOTAL is always what's reported — those shadows really are gone,
-        # and hiding that from someone editing an already-crushed file would be
-        # its own lie. Only the ALARM is judged on what this session added, so
-        # an image that arrived damaged doesn't sit amber from the first Stretch
-        # with no action that could ever clear it.
-        base_hi, base_lo = self._clip_baseline or (0.0, 0.0)
-        added_hi = max(0.0, c.hi_frac - base_hi)
-        added_lo = max(0.0, c.lo_frac - base_lo)
-        # Name the dimension rather than printing a bare number: with different
-        # highlight and shadow baselines, "(2.8% on import)" sitting beside two
-        # percentages says nothing about which one it belongs to.
-        was = []
-        if base_hi > 0:
-            was.append(f"{base_hi * 100:.1f}% blown")
-        if base_lo > 0:
-            was.append(f"{base_lo * 100:.1f}% crushed")
-        if was:
-            text += f"  ({', '.join(was)} on import)"
-
-        # ALARM ON STRUCTURE, REPORT THE RAW FIGURE. The two differ by a lot and
-        # both are wanted. Bin 0 of the histogram is dominated by isolated
-        # pixels whose noise dipped below the black point: on Andreas' M 31
-        # mosaic after Stretch + Auto Levels, 13.43% of blue sat at zero across
-        # 400,964 regions of median size ONE pixel, and a 3x3 mean left 0.020%.
-        # Alarming on that made the line amber on every stretched image, naming
-        # a channel, for damage Noise Reduction undoes — the cry-wolf failure
-        # this feature was designed to avoid, reported by Andreas 2026-09-04.
-        #
-        # The raw number stays the number shown, because "Show clipping" marks
-        # exactly those pixels (clip_masks tests `rgb == 0`); a headline that
-        # disagreed with the overlay beside it would be a WYSIWYG break.
-        sc = self._structural_clip
-        s_base_hi, s_base_lo = self._structural_baseline or (0.0, 0.0)
-        s_hi = max(0.0, (sc.hi_frac if sc else 0.0) - s_base_hi)
-        s_lo = max(0.0, (sc.lo_frac if sc else 0.0) - s_base_lo)
-        alarm = s_hi >= _CLIP_AMBER_HI or s_lo >= _CLIP_AMBER_LO
-
-        # Say so when the reported number is noise, rather than leaving a large
-        # percentage sitting there unexplained. Only when there is a real gap:
-        # repeating it on a clean frame would be noise of a different kind.
-        if not alarm and (added_lo >= _CLIP_AMBER_LO or added_hi >= _CLIP_AMBER_HI):
-            text += "  — scattered noise, not lost detail"
-
-        colour = WARNING if alarm else TEXT_DIM
-        self._clip_line.setStyleSheet(f"color: {colour};")
-        self._side.set_clipping(f"{'⚠ ' if alarm else ''}{text}", clip_tooltip)
+        raw = channel_clipping_from_histogram(self.histogram_view.hist())
+        if not raw.names:
+            raw = ChannelClipping(("R", "G", "B"), (0.0,) * 3, (0.0,) * 3)
+        lo, hi = _clip_values(raw, self._clip_baseline, self._structural_clip,
+                              self._structural_baseline)
+        self._side.set_clipping(lo, hi)
 
     def _update_info_strip(self) -> None:
         """One-line capture readout under the histogram: resolution · total

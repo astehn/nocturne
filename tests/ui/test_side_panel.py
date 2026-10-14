@@ -2,7 +2,8 @@ import shiboken6
 from PySide6.QtCore import QEvent, QPoint
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from nocturne.ui.side_panel import CLIP_SLOT_H, LINEAR_CLIP_TEXT, STATUS_SLOT_H, SidePanel
+from nocturne.ui.side_panel import (CLIP_SLOT_H, LINEAR_CLIP_TEXT, STATUS_SLOT_H, ClipValue,
+                                    SidePanel)
 
 
 def _side(qtbot, h=700):
@@ -52,17 +53,116 @@ def test_the_status_slot_is_reserved_and_fixed(qtbot):
     assert _y(s, s.next_btn) == y_next and s.scroll.height() == y_scroll_h
 
 
+def _vals(lo=(0.0, 0.0, 0.0), hi=(0.0, 0.0, 0.0), over=()):
+    """(lo, hi) ClipValue rows; `over` names the (end, index) pairs past the limit."""
+    def row(end, fracs):
+        return [ClipValue(ch, f, (end, i) in over, f"{end} {ch} tip")
+                for i, (ch, f) in enumerate(zip("RGB", fracs))]
+    return row("lo", lo), row("hi", hi)
+
+
 def test_the_clipping_slot_keeps_its_height_before_and_after_stretch(qtbot):
     s = _side(qtbot)
     y_scroll = _y(s, s.scroll)
     s.set_clipping(None)
-    assert s.clip_line.text() == LINEAR_CLIP_TEXT
+    assert s.clip_readout.linear_label.text() == LINEAR_CLIP_TEXT
     qtbot.wait(20)
     assert _y(s, s.scroll) == y_scroll
-    s.set_clipping("⚠ 0.0% red blown · 7.5% blue crushed " * 3, tooltip="t")
+    s.set_clipping(*_vals(lo=(0.03, 0.0, 0.0), over={("lo", 0)}))
     qtbot.wait(20)
     assert _y(s, s.scroll) == y_scroll
     assert s.clip_slot.height() == CLIP_SLOT_H
+
+
+def test_the_readout_always_shows_six_values_in_fixed_places(qtbot):
+    s = _side(qtbot)
+    r = s.clip_readout
+    for lo, hi in (((0.03, 0.0, 0.0), (0.0, 0.0, 0.0)),
+                   ((0.0, 0.0, 0.0), (0.002, 0.004, 0.06)),
+                   ((1.0, 1.0, 1.0), (1.0, 1.0, 1.0))):
+        s.set_clipping(*_vals(lo, hi))
+        qtbot.wait(10)
+        for end, fracs in (("lo", lo), ("hi", hi)):
+            for i, (ch, f) in enumerate(zip("RGB", fracs)):
+                assert r.letter_label(end, i).text() == ch
+                assert r.letter_label(end, i).isVisible()
+                assert r.value_label(end, i).text() == f"{f * 100:.1f}%"
+                assert r.value_label(end, i).isVisible()
+        assert not r.linear_label.isVisible()
+    # Fixed places: every value sits at the same x whatever it says.
+    xs = [r.value_label("lo", i).x() for i in range(3)]
+    s.set_clipping(*_vals(lo=(0.0, 0.0, 0.0)))
+    qtbot.wait(10)
+    assert [r.value_label("lo", i).x() for i in range(3)] == xs
+    assert [r.value_label("hi", i).x() for i in range(3)] == xs
+
+
+def test_only_the_value_over_the_limit_changes_colour(qtbot):
+    from nocturne.ui.theme import WARNING
+    s = _side(qtbot)
+    r = s.clip_readout
+    s.set_clipping(*_vals())
+    before = {(e, i): r.value_label(e, i).styleSheet() for e in ("lo", "hi") for i in range(3)}
+    s.set_clipping(*_vals(lo=(0.03, 0.0, 0.0), over={("lo", 0)}))
+    assert WARNING in r.value_label("lo", 0).styleSheet()
+    assert WARNING not in before[("lo", 0)]
+    for key, sheet in before.items():
+        if key != ("lo", 0):
+            assert r.value_label(*key).styleSheet() == sheet, key   # unchanged, not merely "not amber"
+
+
+def test_each_arrow_says_which_end_it_is(qtbot):
+    s = _side(qtbot)
+    r = s.clip_readout
+    assert r.arrow("lo").text() == "▼" and r.arrow("hi").text() == "▲"
+    assert "crushed to black" in r.arrow("lo").toolTip().lower()
+    assert "blown to white" in r.arrow("hi").toolTip().lower()
+
+
+def test_a_value_carries_its_own_tooltip(qtbot):
+    s = _side(qtbot)
+    s.set_clipping(*_vals(lo=(0.03, 0.0, 0.0)))
+    assert s.clip_readout.value_label("lo", 0).toolTip() == "lo R tip"
+    assert s.clip_readout.value_label("hi", 2).toolTip() == "hi B tip"
+
+
+def test_a_mono_image_shows_one_value_per_end(qtbot):
+    s = _side(qtbot)
+    r = s.clip_readout
+    s.set_clipping([ClipValue("L", 0.25, True, "t")], [ClipValue("L", 0.0, False, "t")])
+    qtbot.wait(10)
+    assert r.value_label("lo", 0).text() == "25.0%" and r.letter_label("lo", 0).text() == "L"
+    assert not r.value_label("lo", 1).isVisible() and not r.value_label("hi", 2).isVisible()
+
+
+def test_linear_shows_the_message_in_the_same_space_and_disables_the_toggle(qtbot):
+    s = _side(qtbot)
+    r = s.clip_readout
+    s.set_clipping(*_vals())
+    qtbot.wait(10)
+    h = r.height()
+    assert s.clip_toggle.isEnabled()
+    s.set_clipping(None)
+    qtbot.wait(10)
+    assert r.linear_label.isVisible() and r.linear_label.text() == LINEAR_CLIP_TEXT
+    assert not r.value_label("lo", 0).isVisible()
+    assert not s.clip_toggle.isEnabled()
+    assert r.height() == h
+
+
+def test_the_toggle_sits_beside_the_numbers(qtbot):
+    s = _side(qtbot)
+    s.set_clipping(*_vals())
+    qtbot.wait(10)
+    t, r = s.clip_toggle, s.clip_readout
+    assert t.isCheckable() and not t.isChecked()
+    right_of_values = r.value_label("lo", 2).mapTo(s, QPoint(r.value_label("lo", 2).width(), 0)).x()
+    assert t.mapTo(s, QPoint(0, 0)).x() >= right_of_values
+    top = r.value_label("lo", 0).mapTo(s, QPoint(0, 0)).y()
+    bottom = r.value_label("hi", 0).mapTo(s, QPoint(0, r.value_label("hi", 0).height())).y()
+    mid = t.mapTo(s, QPoint(0, t.height() // 2)).y()
+    assert abs(mid - (top + bottom) / 2) <= 2, "vertically centred on the two lines"
+    assert "clipping" in t.toolTip().lower() and "channel that died" in t.toolTip()
 
 
 def test_set_panel_replaces_in_place(qtbot):

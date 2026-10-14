@@ -34,7 +34,8 @@ class LoadedProject:
     project: Any            # nocturne.history.project.Project
     solve_state: Any
     source_label: str
-    # (hi_frac, lo_frac) already clipped when the image was first imported, or
+    # (hi, lo) already clipped when the image was first imported — each a
+    # per-channel tuple since 2026-10-14, one worst-channel float before — or
     # None for a raw linear import. Purely a readout baseline -- see
     # MainWindow._capture_clip_baseline. Optional in the manifest, so a bundle
     # written before it existed simply loads as None.
@@ -317,6 +318,7 @@ def load_project(path: str, cache_dir: str, *, on_progress=None) -> LoadedProjec
         project=project,
         solve_state=manifest.get("solve"),
         source_label=manifest.get("source_label", ""),
-        clip_baseline=(tuple(cb) if (cb := manifest.get("clip_baseline")) else None),
+        clip_baseline=(tuple(tuple(v) if isinstance(v, list) else v for v in cb)
+                       if (cb := manifest.get("clip_baseline")) else None),
         saved_app_version=manifest.get("app_version") or None,
     )
