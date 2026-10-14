@@ -674,8 +674,9 @@ class StarlessLevelsDialog(QDialog):
         return "Right now that is " + " and ".join(parts) + "."
 
     def _update_clip_line(self) -> None:
-        """State which end is showing, then the total in words, the way the
-        main window does.
+        """State which end is showing, then the total in words — the main
+        window's rule: its read-out always shows the total and judges only the
+        colour on what the session added; here the marks are what is judged.
 
         The end has to be said out loud — Andreas' first report of trouble
         ("the overlay does not seem to fill the entire image area") was a dark

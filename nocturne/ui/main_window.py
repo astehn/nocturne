@@ -136,26 +136,39 @@ _CLIP_AMBER_LO = 0.0005    # 0.05% of shadows crushed
 
 _CLIP_END = {
     "lo": ("crushed to zero", "crushed", _CLIP_AMBER_LO,
-           "Move the black point back down (Levels or Curves) until this turns grey."),
+           "Move the black point back down (Levels) or ease the step that crushed it."),
     "hi": ("blown to white", "blown", _CLIP_AMBER_HI,
-           "Move the white point back up until this turns grey."),
+           "Move the white point back up (Levels) or ease the step that blew it."),
 }
 
 
-def _per_channel(pair, n: int) -> tuple[tuple[float, ...], tuple[float, ...]]:
-    """A (hi, lo) baseline as per-channel tuples. Bundles saved before the
-    per-channel read-out hold one worst-channel number per end: applied to
-    every channel, it is exactly what the old worst-channel alarm compared."""
+def _per_channel(pair, n: int):
+    """A (hi, lo) baseline as per-channel tuples, plus whether they are EXACT.
+    Bundles saved before the per-channel read-out hold one worst-channel number
+    per end: an upper bound for every channel, not that channel's figure — so
+    it is reported as "up to", and never used to explain a channel away."""
     if not pair:
-        return (0.0,) * n, (0.0,) * n
+        return (0.0,) * n, (0.0,) * n, True
     hi, lo = pair
+    exact = True
 
     def fit(v):
+        nonlocal exact
         if isinstance(v, (int, float)):
+            exact = False
             return (float(v),) * n
         v = tuple(float(x) for x in v)
-        return v if len(v) == n else (max(v, default=0.0),) * n
-    return fit(hi), fit(lo)
+        if len(v) == n:
+            return v
+        exact = False
+        return (max(v, default=0.0),) * n
+    return fit(hi), fit(lo), exact
+
+
+def _structural_baseline_of(base) -> ChannelClipping:
+    """The alarm's baseline: structural, per channel, from the import. One
+    function for open and reopen, so the two cannot measure differently."""
+    return structural_channel_clipping(to_rgb8(base))
 
 
 def _clip_values(raw: ChannelClipping, raw_base, structural: ChannelClipping | None,
@@ -170,7 +183,7 @@ def _clip_values(raw: ChannelClipping, raw_base, structural: ChannelClipping | N
     what the image already had when it arrived (an already-processed import
     would otherwise sit amber with nothing the user could do)."""
     n = len(raw.names)
-    base_hi, base_lo = _per_channel(raw_base, n)
+    base_hi, base_lo, exact = _per_channel(raw_base, n)
     rows = {}
     for end, fracs, base in (("lo", raw.lo, base_lo), ("hi", raw.hi, base_hi)):
         verb, short, limit, advice = _CLIP_END[end]
@@ -184,11 +197,13 @@ def _clip_values(raw: ChannelClipping, raw_base, structural: ChannelClipping | N
             word = _CHANNEL_WORD.get(ch, ch.lower())
             tip = f"{frac * 100:.1f}% of the {word} channel is {verb}."
             if base[i] > 0:
-                tip += (f" {base[i] * 100:.1f}% {short} on import — only what your "
-                        f"editing adds past that counts toward the warning.")
+                was = (f"{base[i] * 100:.1f}% {short} on import" if exact else
+                       f"up to {base[i] * 100:.1f}% {short} on import (worst channel)")
+                tip += (f"\nOn arrival: {was} — only what your editing adds past "
+                        f"that counts toward the warning.")
             if over:
                 tip += f"\nOver the {limit * 100:g}% limit. {advice}"
-            elif frac - base[i] >= limit:
+            elif frac - (base[i] if exact else 0.0) >= limit:
                 tip += ("\nScattered noise, not lost detail: single pixels, not a "
                         "region — Noise Reduction smooths them away.")
             row.append(ClipValue(ch, frac, over, tip))
@@ -4130,7 +4145,13 @@ class MainWindow(QMainWindow):
         # it now would bake this session's own clipping into the baseline and
         # permanently silence the warning.
         self._clip_baseline = loaded.clip_baseline
-        self._structural_baseline = None    # not in the bundle; never the last image's
+        # Not in the bundle, so rebuilt from the IMPORT (state 0) exactly as
+        # open measured it — never from the current, mid-edit state, and never
+        # the previous image's. Without it a reopened already-crushed import
+        # went amber while its tooltip said the damage predated the user.
+        self._structural_baseline = None
+        if loaded.clip_baseline is not None and not self.project.is_linear_at(0):
+            self._structural_baseline = _structural_baseline_of(self.project.state_at(0))
         self._saved_app_version = loaded.saved_app_version
         self._project_path = path
         self._dirty = False
@@ -6250,7 +6271,7 @@ class MainWindow(QMainWindow):
         self._previews.forget()
         rgb = to_rgb8(img, linked=self._view_linked)
         # Free ride on the array the canvas needed anyway. Not computed for a
-        # linear image because the clipping line is hidden there.
+        # linear image: the read-out shows no figures there.
         self._structural_clip = None if img.is_linear else structural_channel_clipping(rgb)
         if self._show_clipping and not img.is_linear:
             paint_clipping(rgb)      # in place, over the picture
@@ -8202,7 +8223,7 @@ class MainWindow(QMainWindow):
         # The alarm judges structure, so its baseline has to be structural too —
         # comparing a structural figure against a raw one would report every
         # already-processed import as damage the session caused.
-        self._structural_baseline = structural_channel_clipping(to_rgb8(base))
+        self._structural_baseline = _structural_baseline_of(base)
 
     def _update_clipping_line(self) -> None:
         """The clipping read-out under the info strip. No figures while the

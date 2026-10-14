@@ -2,7 +2,7 @@ import shiboken6
 from PySide6.QtCore import QEvent, QPoint, Qt
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from nocturne.ui.side_panel import (CLIP_SLOT_H, LINEAR_CLIP_TEXT, STATUS_SLOT_H, ClipValue,
+from nocturne.ui.side_panel import (CLIP_SLOT_MIN_H, LINEAR_CLIP_TEXT, STATUS_SLOT_H, ClipValue,
                                     SidePanel)
 
 
@@ -71,7 +71,7 @@ def test_the_clipping_slot_keeps_its_height_before_and_after_stretch(qtbot):
     s.set_clipping(*_vals(lo=(0.03, 0.0, 0.0), over={("lo", 0)}))
     qtbot.wait(20)
     assert _y(s, s.scroll) == y_scroll
-    assert s.clip_slot.height() == CLIP_SLOT_H
+    assert s.clip_slot.height() == s.clip_readout.needed_height() >= CLIP_SLOT_MIN_H
 
 
 def test_the_readout_always_shows_six_values_in_fixed_places(qtbot):

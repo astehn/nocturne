@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import NamedTuple, Sequence
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtWidgets import (QFrame, QGridLayout, QHBoxLayout, QLabel,
                                QPushButton, QScrollArea, QSizePolicy,
                                QStackedWidget, QVBoxLayout, QWidget)
@@ -33,13 +33,14 @@ from .theme import CHANNEL_TINT, TEXT, TEXT_DIM, WARNING
 # macOS style is smaller (busy 72, error 66). The old guess, 64, squeezed
 # Cancel to 14 px.
 STATUS_SLOT_H = 75
-# The clipping read-out: two value lines + spacing 2, the Show clipping toggle
-# beside them rather than under them. Measured 2026-10-14 under the app theme at
-# RIGHT_PANE_W: lines 16 px on cocoa (17 offscreen), toggle 23, so 34 / 36 —
-# 36 holds both. The old line-plus-checkbox slot was 54; the 18 px saved went to
-# the step card (+11) and histogram (+7) at 1280x800, all to the histogram at
-# 1440x900. Widest row: values end at x=258 of 376, toggle starts at 291.
-CLIP_SLOT_H = 36
+# The clipping read-out's slot is sized from its OWN font (two rows of line
+# spacing + 2, or the toggle if taller), so a larger font grows it instead of
+# clipping it. This is only the floor: measured 2026-10-14 under the app theme
+# at RIGHT_PANE_W on cocoa, rows 16 px -> 34, toggle 23. The old
+# line-plus-checkbox slot was 54; at 1280x800 the 18-20 px saved went to the
+# step card and histogram, at 1440x900 to the histogram. Widest row (all
+# 100.0%, bold) ends at x=258 of 376; the toggle starts at 291.
+CLIP_SLOT_MIN_H = 34
 LINEAR_CLIP_TEXT = "Clipping is shown once the image is stretched."
 # One legend for every clipping view — the main window's toggle and Starless
 # Levels' own — so a mark never means two things in two places.
@@ -167,6 +168,7 @@ class ClipReadout(QWidget):
     colour. What the sentence used to say lives in each value's tooltip."""
 
     ENDS = ("lo", "hi")
+    heightChanged = Signal(int)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -215,7 +217,7 @@ class ClipReadout(QWidget):
         row.addWidget(self._stack, 1)
 
         # Checkable, like Crop's segment buttons; the full name fits beside the
-        # numbers at the fixed pane width (measured, see CLIP_SLOT_H).
+        # numbers at the fixed pane width (measured, see CLIP_SLOT_MIN_H).
         self.toggle = QPushButton("Show clipping")
         self.toggle.setObjectName("shapeSeg")
         self.toggle.setCheckable(True)
@@ -224,6 +226,14 @@ class ClipReadout(QWidget):
         row.addWidget(self.toggle, 0, Qt.AlignmentFlag.AlignVCenter)
 
         self._fitted_for = None
+        self._fit_pending = False
+        # A restyle reaches the labels after (or before) this widget, in no
+        # promised order, so each one reports its own and the fit runs once
+        # everything has been repolished.
+        for w in [*self._arrows.values(), *self._letters.values(),
+                  *self._values.values(), self.linear_label, self.toggle]:
+            w.installEventFilter(self)
+        self.setFixedHeight(self.needed_height())
         self.set_values([ClipValue(c, 0.0, False, "") for c in "RGB"],
                         [ClipValue(c, 0.0, False, "") for c in "RGB"])
 
@@ -270,6 +280,38 @@ class ClipReadout(QWidget):
         self.toggle.setEnabled(True)
 
     # -- fixed cell widths --
+    def needed_height(self) -> int:
+        """Two rows of the read-out's font plus their spacing, or the toggle
+        if that is taller, never below the measured floor. The linear message
+        wraps to at most two lines of the same font, so it fits too."""
+        labels = [self._values[("lo", 0)], self._letters[("lo", 0)],
+                  self._arrows["lo"], self.linear_label]
+        row = 0
+        for lab in labels:
+            lab.ensurePolished()
+            row = max(row, lab.fontMetrics().lineSpacing(), lab.sizeHint().height()
+                      if lab is not self.linear_label else 0)
+        self.toggle.ensurePolished()
+        spacing = self._numbers.layout().verticalSpacing()
+        return max(CLIP_SLOT_MIN_H, 2 * row + spacing, self.toggle.sizeHint().height())
+
+    def _refit(self) -> None:
+        self._fit_pending = False
+        self._fit_cells()
+        h = self.needed_height()
+        if h != self.height():
+            self.setFixedHeight(h)
+            self.heightChanged.emit(h)
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
+        if event.type() in (QEvent.Type.StyleChange, QEvent.Type.FontChange) \
+                and not self._fit_pending:
+            self._fit_pending = True
+            # With `self` as context: a read-out deleted before the timer fires
+            # (a closed window) takes the call with it.
+            QTimer.singleShot(0, self, self._refit)
+        return super().eventFilter(obj, event)
+
     def _fit_cells(self) -> None:
         """Every value cell as wide as its widest possible text in BOLD, so a
         value turning amber or reaching 100% never moves its neighbours. From
@@ -299,13 +341,8 @@ class ClipReadout(QWidget):
             lab.setFixedWidth(lab.fontMetrics().horizontalAdvance("▼") + 2)
 
     def showEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        self._fit_cells()
+        self._refit()
         super().showEvent(event)
-
-    def changeEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        if event.type() in (QEvent.Type.StyleChange, QEvent.Type.FontChange):
-            self._fit_cells()
-        super().changeEvent(event)
 
 
 class SidePanel(QWidget):
@@ -322,13 +359,14 @@ class SidePanel(QWidget):
 
         # clipping slot — fixed height, always present
         self.clip_slot = QWidget()
-        self.clip_slot.setFixedHeight(CLIP_SLOT_H)
         clip_lay = QVBoxLayout(self.clip_slot)
         clip_lay.setContentsMargins(0, 0, 0, 0)
         clip_lay.setSpacing(0)
         self.clip_readout = ClipReadout()
         self.clip_toggle = self.clip_readout.toggle
         clip_lay.addWidget(self.clip_readout)
+        self.clip_slot.setFixedHeight(self.clip_readout.height())
+        self.clip_readout.heightChanged.connect(self.clip_slot.setFixedHeight)
         self.layout_.addWidget(self.clip_slot)
 
         # ONE card (Ruling R6, the approved mockup): a rounded BG_2 frame

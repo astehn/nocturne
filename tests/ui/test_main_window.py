@@ -3978,6 +3978,111 @@ def test_the_baseline_survives_a_save_and_reopen(qtbot, tmp_path):
     assert loaded.clip_baseline == baseline
 
 
+def _manifest(path):
+    import json, zipfile
+    with zipfile.ZipFile(path) as z:
+        return json.loads(z.read("manifest.json"))
+
+
+def _rewrite_manifest(src, dst, edit):
+    import json, zipfile
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w") as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "manifest.json":
+                m = json.loads(data)
+                edit(m)
+                data = json.dumps(m).encode()
+            zout.writestr(item, data)
+
+
+def test_a_bundle_from_this_build_still_reads_in_the_old_shape(qtbot, tmp_path):
+    """Both ways compatible: `clip_baseline` stays the old worst-channel PAIR
+    of floats that earlier builds read (`base_hi, base_lo = ...` then
+    subtract), and the per-channel figures ride under a new optional key."""
+    from nocturne.history.project_store import save_project
+    win = _window(qtbot, tmp_path)
+    a = np.full((20, 20, 3), 0.5, np.float32)
+    a.reshape(-1, 3)[:120, 0] = 0.0          # 30% of red only
+    a.reshape(-1, 3)[:40, 2] = 0.0           # 10% of blue
+    win.open_image(AstroImage(a, is_linear=False), "processed.tif")
+    p = str(tmp_path / "b.nocturne")
+    save_project(win.project, p, clip_baseline=win._clip_baseline)
+    m = _manifest(p)
+    pair = m["clip_baseline"]
+    assert len(pair) == 2 and all(isinstance(v, float) for v in pair)
+    assert pair == [0.0, pytest.approx(0.30)]                  # (hi, lo), worst channel
+    assert m["clip_baseline_rgb"][1] == [pytest.approx(0.30), 0.0, pytest.approx(0.10)]
+    base_hi, base_lo = tuple(pair)                             # what the old loader does
+    assert 0.5 - base_lo == pytest.approx(0.2)
+
+
+def test_an_old_manifest_with_float_baselines_loads_and_reads(qtbot, tmp_path):
+    from nocturne.history.project_store import save_project, load_project
+    win = _window(qtbot, tmp_path)
+    win.open_image(_crushed_image(0.30), "processed.tif")
+    p, old = str(tmp_path / "b.nocturne"), str(tmp_path / "old.nocturne")
+    save_project(win.project, p, clip_baseline=win._clip_baseline)
+
+    def as_old_build(m):
+        m["clip_baseline"] = [0.0, 0.3]
+        m.pop("clip_baseline_rgb", None)
+    _rewrite_manifest(p, old, as_old_build)
+    loaded = load_project(old, str(tmp_path / "cache4"))
+    assert loaded.clip_baseline == (0.0, 0.3)
+    win2 = _window(qtbot, tmp_path)
+    win2._open_project(old)
+    win2._update_clipping_line()
+    tip = _cells(win2)[("lo", "G")].toolTip()
+    assert "up to 30.0% crushed on import (worst channel)" in tip
+    assert _amber(win2) == set()
+
+
+def test_an_already_crushed_import_stays_grey_after_reopen(qtbot, tmp_path):
+    """The structural baseline is not in the bundle; it is rebuilt from the
+    import (state 0) the same way open measures it. Without that the reopened
+    picture went amber while its tooltip said the damage predated the user."""
+    win = _window(qtbot, tmp_path)
+    win.open_image(_crushed_image(0.30), "processed.tif")
+    at_open = win._structural_baseline
+    p = str(tmp_path / "b.nocturne")
+    win._do_save_project(p)
+    win2 = _window(qtbot, tmp_path)
+    win2._open_project(p)
+    assert win2._structural_baseline == at_open
+    win2._update_clipping_line()
+    assert _amber(win2) == set()
+    assert "30.0% crushed on import" in _cells(win2)[("lo", "R")].toolTip()
+
+
+def test_close_project_and_reopen_reset_both_baselines(qtbot, tmp_path):
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))                 # raw: no baseline
+    raw = str(tmp_path / "raw.nocturne")
+    win._do_save_project(raw)
+    win.open_image(_crushed_image(0.30), "processed.tif")
+    assert win._structural_baseline is not None
+    win._open_project(raw)
+    assert win._clip_baseline is None and win._structural_baseline is None
+    win.open_image(_crushed_image(0.30), "processed.tif")
+    win._close_project()
+    assert win._clip_baseline is None and win._structural_baseline is None
+
+
+def test_an_old_scalar_baseline_does_not_hide_scattered_noise(qtbot, tmp_path):
+    """A worst-channel figure may belong to a different channel; it must not
+    excuse — or explain away — another channel's scattered pixels."""
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    win._clip_baseline = (0.0, 0.30)
+    assert _preview_with_clipped(win, black=400, scatter=True) == set()
+    tip = _cells(win)[("lo", "G")].toolTip()
+    assert "scattered noise" in tip.lower()
+    assert "up to 30.0% crushed on import (worst channel)" in tip
+
+
 def test_a_bundle_without_a_baseline_still_loads(qtbot, tmp_path):
     """Backward compatibility: bundles written before this existed have no such
     key, and must load as 'no baseline' rather than raising."""
@@ -3996,6 +4101,7 @@ def test_a_bundle_without_a_baseline_still_loads(qtbot, tmp_path):
             if item.filename == "manifest.json":
                 m = json.loads(data)
                 del m["clip_baseline"]
+                m.pop("clip_baseline_rgb", None)   # nor its later companion
                 data = json.dumps(m).encode()
             zout.writestr(item, data)
 
@@ -6326,7 +6432,7 @@ def test_the_readout_fits_its_widest_state_at_both_window_sizes(qtbot, tmp_path)
     cell squeezed or cut at 1280x800 or 1440x900, and the slot one line
     shorter than the old line-plus-checkbox (54 px)."""
     from PySide6.QtWidgets import QApplication
-    from nocturne.ui.side_panel import CLIP_SLOT_H, ClipValue
+    from nocturne.ui.side_panel import CLIP_SLOT_MIN_H, ClipValue
     try:
         win = _themed(qtbot, tmp_path)
         full = [ClipValue(c, 1.0, True, "") for c in "RGB"]
@@ -6340,8 +6446,35 @@ def test_the_readout_fits_its_widest_state_at_both_window_sizes(qtbot, tmp_path)
             qtbot.wait(20)
             lab = win._side.clip_readout.linear_label
             assert lab.heightForWidth(lab.width()) <= win._side.clip_slot.height(), size
-        assert win._side.clip_slot.height() == CLIP_SLOT_H
-        assert CLIP_SLOT_H <= 54 - 16, "one line less than the old read-out"
+        assert win._side.clip_slot.height() == win._side.clip_readout.needed_height()
+        assert win._side.clip_slot.height() >= CLIP_SLOT_MIN_H
+        assert win._side.clip_slot.height() <= 54 - 16, "one line less than the old read-out"
+    finally:
+        QApplication.instance().setStyleSheet("")
+
+
+def test_the_readout_grows_with_a_taller_font_and_nothing_clips(qtbot, tmp_path):
+    """The slot is sized from the read-out's own font, not a constant: a font
+    with ~19 px lines must still fit both rows and the toggle."""
+    from PySide6.QtWidgets import QApplication
+    from nocturne.ui.side_panel import ClipValue
+    from nocturne.ui.theme import build_stylesheet
+    big = ("QLabel#clipArrow, QLabel#clipLetter, QLabel#clipValue, QLabel#clipLinear"
+           " { font-size: 17px; }")
+    try:
+        win = _themed(qtbot, tmp_path)
+        h0 = win._side.clip_slot.height()
+        QApplication.instance().setStyleSheet(build_stylesheet() + big)
+        qtbot.wait(30)
+        r = win._side.clip_readout
+        assert r.value_label("lo", 0).fontMetrics().lineSpacing() >= 19
+        full = [ClipValue(c, 1.0, True, "") for c in "RGB"]
+        for size in ((1280, 800), (1440, 900)):
+            win.resize(*size); qtbot.wait(30)
+            win._side.set_clipping(full, full)
+            qtbot.wait(20)
+            assert _readout_fits(win) == [], size
+        assert win._side.clip_slot.height() > h0
     finally:
         QApplication.instance().setStyleSheet("")
 

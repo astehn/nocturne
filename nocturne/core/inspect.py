@@ -293,7 +293,7 @@ def paint_clipping(rgb: np.ndarray, out: np.ndarray | None = None,
     colour, which is the point of the legend.
 
     ONE implementation, because the legend is a thing the user LEARNS. The main
-    window's Show Clipping tooltip teaches channel colour = crushed, amber =
+    window's Show clipping tooltip teaches channel colour = crushed, amber =
     blown; a second painting with its own scheme meant white said "all three
     crushed" on the canvas and "all three blown" in a dialog, so a user who
     pulled the white point in and saw white specks read them as exactly the
