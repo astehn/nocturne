@@ -2261,12 +2261,16 @@ def test_presets_help_names_the_real_controls():
     mw = _src("nocturne/ui/main_window.py")
     sp = _src("nocturne/ui/step_panels.py")
     pb = _src("nocturne/ui/preset_browser.py")
-    # Save as Preset… is a Project menu item and the Enhancements button.
+    # Save as Preset… is a Project menu item and the Export button (moved off
+    # Enhancements 2026-10-14).
     assert "Save as Preset…" in b
     assert 'project_menu.addAction("Save as Preset…"' in mw
-    assert 'QPushButton(load_icon("save-preset"), "Save as Preset…")' in sp
-    assert "Project menu" in b and "top of the Enhancements" in b
-    assert "Export step" in b                       # the menu item's gate includes export
+    export = sp.split('elif stage.kind == "export":')[1].split("else:  # placeholder")[0]
+    assert 'QPushButton(load_icon("save-preset"), "Save as Preset…")' in export
+    assert "Save as Preset" not in sp.split('elif stage.kind == "enhance":')[1].split(
+        "elif stage.kind ==")[0].replace("No Save as Preset", "")
+    assert "Project menu" in b and "Export step" in b
+    assert "Enhancements step" not in b, "the button is no longer there"
     # Presets… on Crop, under Guides, the chosen preset directly under it, and
     # the Apply label it produces.
     assert "Presets…" in b and 'QPushButton("Presets…")' in sp
@@ -2399,3 +2403,31 @@ def test_presets_help_auto_levels_re_measures_and_the_rest_is_as_saved():
 def test_crop_and_enhancements_help_point_at_presets():
     assert "Presets…" in _body("crop")
     assert "Save as Preset…" in _body("enhancements")
+
+
+# ---- Export redesign (2026-10-14) ----
+
+def test_export_help_names_the_buttons_the_panel_has():
+    from nocturne.ui.step_panels import _FORMAT_TILES, _GALLERY_HINT
+    b = _plain(_body("export"))
+    for label, sub, _icon in _FORMAT_TILES:
+        assert label in b, f"the {label} button is not in the help"
+    assert "Format" in b and "Export…" in b
+    assert "P3" in b and "Display P3" in b      # the button's short name and the space's
+    # The gallery is behind a button, in a window of its own.
+    assert "Share to the gallery…" in b and "window" in b
+    sp = _src("nocturne/ui/step_panels.py")
+    assert 'QPushButton(load_icon("upload"), "Share to the gallery…")' in sp
+    assert "nocturneastro.com" in _GALLERY_HINT
+    # Burn annotations appears only once solved, and the help says when.
+    assert "plate-solved" in b and "Burn annotations" in b
+    mw = _src("nocturne/ui/main_window.py")
+    assert "burn_annotations.setVisible(solved)" in mw
+    # Save as Preset… is on this step now.
+    assert "Save as Preset…" in b
+
+
+def test_enhancements_help_no_longer_puts_the_preset_button_on_its_own_step():
+    b = _plain(_body("enhancements"))
+    assert "button at the top of this step" not in b
+    assert "Export step" in b
