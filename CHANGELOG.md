@@ -2,6 +2,27 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.53.0] — 2026-10-14
+
+Your own presets, a clearer clipping warning, and clipping you choose.
+
+### Added
+- Your own presets: when a picture looks right, Save as Preset… (on Export, or in the Project menu) keeps its steps. On a similar picture, Crop → Presets… picks one, and Apply Crop + ‹name› runs it as normal, editable steps. The preset browser shows a grid or a compact list, with search, sorting, rename and delete. A preset made on an already-stretched picture only runs on pictures that open stretched, and vice versa.
+- Per-colour black points in Levels: Red, Green and Blue sliders lift one colour off zero (which clears its warning) or darken it.
+- Plate solve explains itself: rest the pointer on the scale bar, a grid label or N. For example, 15′ is 15 arcminutes, half the width of the full Moon.
+- Recipes and presets now include Star Spikes, Starless Levels and the Enhancements taps.
+
+### Changed
+- Levels' Auto black point stops at the clipping warning, so it never crushes a colour on its own. It says so when it stops short, and dragging Black point further is your choice. Skies after Auto are often lighter than before. Old projects keep the Auto they were made with; Auto Enhance, recipes, Batch and presets use the new one.
+- The clipping read-out under the histogram is two fixed lines: ▼ crushed to black and ▲ blown to white, for R, G and B. Only a value over the limit turns amber, and Show clipping is a button beside it.
+- Export: format and colour space are buttons, and the gallery has its own small window. Share to the gallery becomes available once you've exported this version. Save as Preset is here. Everything under "Optional" is optional and doesn't save your picture.
+- Colour: Sky balance and Photometric (SPCC) are buttons.
+- Projects saved with 0.53.0 can't be opened in older versions of Nocturne.
+
+### Fixed
+- The progress label in Auto Enhance and presets named the previous stage instead of the current one.
+- Opening a master after a picture that was already crushed could hide the new master's own clipping.
+
 ## [0.52.0] — 2026-10-13
 
 Nocturne for Windows, presets for Auto Enhance, and Starless + Stars for everyone.
