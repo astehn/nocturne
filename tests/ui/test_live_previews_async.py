@@ -180,7 +180,7 @@ def test_a_preview_is_not_the_step_working(qtbot, tmp_path, monkeypatch, hold):
     qtbot.waitUntil(lambda: fired == [True], timeout=2000)
     assert len(h.calls) == 1 and h.calls, "the effect is still held: the UI thread ran meanwhile"
     win._panel.gamma_slider.setValue(170)          # the slider still moves
-    assert win._levels_pending[1] == 1.7
+    assert win._levels_pending["gamma"] == 1.7
     h.release()
     h.release()
     _settle(qtbot, win)
@@ -227,7 +227,8 @@ def test_apply_mid_preview_commits_the_controls_and_drops_the_preview(
     win._apply_current_step()
     from nocturne.steps.levels import LevelsStep
     name, option = win.project.entries()[-1]
-    assert name == "Levels" and tuple(option)[1] == pytest.approx(2.2)
+    from nocturne.core.levels import parse_levels_option
+    assert name == "Levels" and parse_levels_option(option).gamma == pytest.approx(2.2)
     assert np.array_equal(win.project.current().data,
                           LevelsStep().apply(base, option).data)
     _assert_dropped(qtbot, win, h)

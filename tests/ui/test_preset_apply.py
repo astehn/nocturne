@@ -552,7 +552,10 @@ def test_save_on_one_picture_apply_on_another_round_trip(qtbot, tmp_path, monkey
     a_entries = win.project.entries()
     assert [n for n, _ in a_entries] == ["Crop", "Stretch", "Levels", "Vibrance",
                                          "Starless Levels", "Star Spikes"], "fixture"
-    assert dict(a_entries)["Levels"] == "auto", "fixture: Auto must be what was pressed"
+    # Pressing Auto records the current Auto (version 2, spec C).
+    assert dict(a_entries)["Levels"] == {"auto": True, "version": 2,
+                                         "offsets": [0.0, 0.0, 0.0]}, (
+        "fixture: Auto must be what was pressed")
 
     win._go_to_id("export", user_initiated=False)
     assert win._panel.save_preset_btn.isEnabled()

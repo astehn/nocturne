@@ -118,7 +118,10 @@ def test_remove_green_panel_slider_previews_live(qtbot):
     assert changes[-1] == 0.25                # slider drives the live preview
 
 
-def test_levels_panel_emits_tuple(qtbot):
+def test_levels_panel_emits_the_manual_option(qtbot):
+    """The panel's Apply sends today's manual dict (spec C: it carries the
+    colour offsets); Auto is substituted by MainWindow, which knows the flag."""
+    from nocturne.core.levels import new_levels_option
     got = []
     w = build_panel(_stage("levels"), on_apply=got.append)
     qtbot.addWidget(w)
@@ -127,7 +130,7 @@ def test_levels_panel_emits_tuple(qtbot):
     w.gamma_slider.setValue(150)
     w.white_slider.setValue(90)
     w.apply_btn.click()
-    assert got == [(0.20, 1.50, 0.90)]
+    assert got == [new_levels_option(0.20, 1.50, 0.90, (0.0, 0.0, 0.0))]
 
 
 def test_black_point_slider_resolves_finer_than_a_hundredth(qtbot):
@@ -143,7 +146,7 @@ def test_black_point_slider_resolves_finer_than_a_hundredth(qtbot):
     qtbot.addWidget(w)                           # own the widget; no app from a sibling test
     w.black_slider.setValue(81)                  # 0.081, a real auto_levels output
     w.apply_btn.click()
-    assert got[0][0] == 0.081
+    assert got[0]["black"] == 0.081
     assert "0.081" in w.black_val.text()
 
 
@@ -151,7 +154,7 @@ def test_levels_panel_controls(qapp):
     from PySide6.QtWidgets import QCheckBox
     seen = {}
     w = build_panel(_stage("levels"),
-                    on_levels_change=lambda b, g, wt: seen.setdefault("chg", (b, g, wt)),
+                    on_levels_change=lambda opt: seen.setdefault("chg", opt),
                     on_levels_auto=lambda: seen.setdefault("auto", True))
     assert hasattr(w, "auto_btn")
     labels = " ".join(l.text() for l in w.findChildren(__import__("PySide6.QtWidgets", fromlist=["QLabel"]).QLabel))

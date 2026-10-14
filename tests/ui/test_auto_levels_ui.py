@@ -88,7 +88,9 @@ def test_applying_after_auto_records_the_decision(qtbot, tmp_path):
     win.apply_current((0.031, 1.0, 1.0))       # what the panel sends
     name, option = win.project.entries()[-1]
     assert name == "Levels"
-    assert option == "auto", f"recorded {option!r} instead of the decision"
+    # The CURRENT Auto (version 2, spec C), with the colour offsets it ran with.
+    assert option == {"auto": True, "version": 2, "offsets": [0.0, 0.0, 0.0]}, (
+        f"recorded {option!r} instead of the decision")
 
 
 def test_applying_after_a_nudge_records_the_numbers(qtbot, tmp_path):
@@ -162,13 +164,13 @@ def test_auto_measures_the_same_image_the_commit_will(qtbot, tmp_path):
     step has been applied; after one they diverged by 0.227 mean on a synthetic
     frame — the preview showed one picture and Apply produced another.
     """
-    from nocturne.core.levels import auto_levels
+    from nocturne.core.levels import auto_black
 
     win = _levels_window(qtbot, tmp_path)
     win.apply_current((0.05, 1.0, 1.0))      # a Levels step now exists
     win._go_to_id("levels")
     win._on_levels_auto()
-    expected = auto_levels(win._preview_base("levels").data)
+    expected = (auto_black(win._preview_base("levels")).black,)
     shown = (win._panel.black_slider.value() / 1000.0,
              win._panel.gamma_slider.value() / 100.0,
              win._panel.white_slider.value() / 100.0)

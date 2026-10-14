@@ -188,6 +188,9 @@ QPushButton#shapeSeg {{ background: {BG_3}; border: 1px solid #3a3d43; border-ra
 QPushButton#shapeSeg:focus {{ border-color: {ACCENT_HI}; }}
 QPushButton#shapeSeg:hover {{ border-color: {TEXT_FAINT}; }}
 QPushButton#shapeSeg:checked {{ background: rgba(74, 144, 226, 46); border-color: {ACCENT}; }}
+/* Levels' Auto reads as SELECTED while the black is still the derived one
+   (approved mockup 2026-10-14); unstyled, the indicator was invisible. */
+QPushButton#levelsAuto:checked {{ background: rgba(74, 144, 226, 46); border: 1px solid {ACCENT}; }}
 QPushButton#shapeSeg:disabled {{ color: {TEXT_FAINT}; border-color: #34373c; }}
 QPushButton#shapeSeg:checked:disabled {{ background: rgba(74, 144, 226, 18); border-color: #34373c; }}
 /* A one-glyph button in a narrow fixed width (Share's ↺). */
@@ -302,6 +305,8 @@ QPushButton#pickPanel:focus {{ border-color: {ACCENT_HI}; }}
    says so. Amber, not red — it is a real cost, not a mistake. */
 QLabel#pickCaveat {{ color: {WARNING}; font-size: 11px; }}
 QLabel#panelSectionLabel {{ color: {TEXT_DIM}; font-size: 11px; font-weight: 600; letter-spacing: 1px; }}
+/* What a bipolar slider's two ends do (Levels' colour black points). */
+QLabel#sliderEnd {{ color: {TEXT_FAINT}; font-size: 11px; }}
 QFrame#objectListPanel {{ background: rgba(16, 22, 33, 0.94); border: 1px solid {BORDER};
     border-radius: 10px; }}
 QLabel#objectListTitle {{ color: {TEXT}; font-size: 12px; font-weight: 600; }}
