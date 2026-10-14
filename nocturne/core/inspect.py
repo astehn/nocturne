@@ -42,52 +42,64 @@ class Clipping(NamedTuple):
 _NO_CLIPPING = Clipping(0.0, "", 0.0, "")
 
 
-def clipping_from_histogram(hist) -> Clipping:
-    """Clipped fractions read straight off the 256-bin histogram the canvas
-    already computes — the top and bottom bins ARE the clipped pixels, so this
-    costs nothing. Reports the worst channel (highest fraction) rather than
-    merging them. Each channel's fraction is computed against its own histogram
-    sum, not a borrowed denominator, because NaN values in one channel don't
-    affect others."""
+class ChannelClipping(NamedTuple):
+    """Clipped fractions (0-1) for EVERY channel, in `names` order. The side
+    panel shows all of them in fixed places, so a value never changes position
+    or meaning between pictures (Andreas, 2026-10-14: a line whose shape
+    changed with the picture was one the eye stopped reading)."""
+
+    names: tuple[str, ...]
+    hi: tuple[float, ...]
+    lo: tuple[float, ...]
+
+
+_NO_CHANNELS = ChannelClipping((), (), ())
+
+
+def channel_clipping_from_histogram(hist) -> ChannelClipping:
+    """Every channel's clipped fractions, read off the top and bottom bins of
+    the 256-bin histogram the canvas already computes — so this costs nothing.
+    Each channel is divided by its own sum, because NaN values in one channel
+    don't affect the others; an all-NaN channel reads 0."""
     if not hist:
-        return _NO_CLIPPING
-
-    # Compute per-channel fractions: (fraction, channel, count, sum)
-    hi_fractions = []
-    lo_fractions = []
-
+        return _NO_CHANNELS
+    names, hi, lo = [], [], []
     for k, v in hist.items():
-        channel_sum = int(v.sum())
-        if channel_sum <= 0:
-            # A channel with sum 0 (all NaN) contributes 0.0 fraction
-            hi_fractions.append((0.0, k.upper(), 0, 0))
-            lo_fractions.append((0.0, k.upper(), 0, 0))
-        else:
-            hi_count = int(v[-1])
-            lo_count = int(v[0])
-            hi_fractions.append((hi_count / channel_sum, k.upper(), hi_count, channel_sum))
-            lo_fractions.append((lo_count / channel_sum, k.upper(), lo_count, channel_sum))
+        total = int(v.sum())
+        names.append(k.upper())
+        hi.append(int(v[-1]) / total if total > 0 else 0.0)
+        lo.append(int(v[0]) / total if total > 0 else 0.0)
+    return ChannelClipping(tuple(names), tuple(hi), tuple(lo))
 
-    # Select worst channels by highest fraction (not raw count)
-    hi_frac, hi_channel, _, _ = max(hi_fractions, key=lambda x: x[0])
-    lo_frac, lo_channel, _, _ = max(lo_fractions, key=lambda x: x[0])
 
-    # When EVERY channel is clipped by the same fraction, naming one of them is
-    # a lie the caller then prints in full ("100% of red crushed to zero" when
-    # red, green and blue all died). "ALL" lets it say so instead. Only an exact
-    # tie across every channel counts: a near-tie is still worst-channel news.
-    if len(hi_fractions) > 1 and all(f == hi_frac for f, *_ in hi_fractions):
-        hi_channel = "ALL"
-    if len(lo_fractions) > 1 and all(f == lo_frac for f, *_ in lo_fractions):
-        lo_channel = "ALL"
+def _worst(names, fracs) -> tuple[float, str]:
+    """Worst channel by fraction, "ALL" on an exact tie across every channel,
+    "" when nothing is clipped.
 
-    # Zero-valued clipping types get empty channel names
-    if hi_frac == 0.0:
-        hi_channel = ""
-    if lo_frac == 0.0:
-        lo_channel = ""
+    When EVERY channel is clipped by the same fraction, naming one of them is a
+    lie the caller then prints in full ("100% of red crushed to zero" when red,
+    green and blue all died). Only an exact tie counts: a near-tie is still
+    worst-channel news."""
+    if not fracs:
+        return 0.0, ""
+    top = max(fracs)
+    if top == 0.0:
+        return 0.0, ""
+    if len(fracs) > 1 and all(f == top for f in fracs):
+        return top, "ALL"
+    return top, names[fracs.index(top)]
 
-    return Clipping(hi_frac, hi_channel, lo_frac, lo_channel)
+
+def _worst_of(c: ChannelClipping) -> Clipping:
+    hi_frac, hi_ch = _worst(c.names, list(c.hi))
+    lo_frac, lo_ch = _worst(c.names, list(c.lo))
+    return Clipping(hi_frac, hi_ch, lo_frac, lo_ch)
+
+
+def clipping_from_histogram(hist) -> Clipping:
+    """The worst channel of `channel_clipping_from_histogram` — highest
+    fraction, not raw count — at each end independently."""
+    return _worst_of(channel_clipping_from_histogram(hist))
 
 
 # A clipped pixel that survives a mean this wide is a dark REGION; one that does
@@ -126,36 +138,29 @@ def structural_clipping(rgb: np.ndarray,
     slicing the block grid is a VIEW, so only the sampled blocks are ever
     materialised, and this runs on the live-preview path.
     """
+    return _worst_of(structural_channel_clipping(rgb, block, target_blocks))
+
+
+def structural_channel_clipping(rgb: np.ndarray,
+                                block: int = _STRUCTURE_BLOCK,
+                                target_blocks: int = _STRUCTURE_BLOCKS) -> ChannelClipping:
+    """`structural_clipping` for every channel — the same blocks, the same
+    sampling, so its worst value IS the worst-channel figure."""
     if rgb is None or rgb.ndim != 3 or rgb.shape[2] < 3:
-        return _NO_CLIPPING
+        return _NO_CHANNELS
     h, w = rgb.shape[:2]
     nby, nbx = h // block, w // block
     if nby < 1 or nbx < 1:
-        return _NO_CLIPPING
+        return _NO_CHANNELS
     grid = rgb[:nby * block, :nbx * block].reshape(nby, block, nbx, block, -1)
     step = max(1, int((nby * nbx / max(1, target_blocks)) ** 0.5))
     sub = grid[::step, :, ::step]
     # `.all` over the two within-block axes: every pixel of the block is dead.
     dead = (sub == 0).all(axis=(1, 3))
     blown = (sub == 255).all(axis=(1, 3))
-    names = ("R", "G", "B")
-
-    def worst(flags) -> tuple[float, str]:
-        """Worst channel, or "ALL" on an exact tie — the same convention
-        `clipping_from_histogram` uses, so the two can never phrase the same
-        picture differently. A region dead in every channel really is black,
-        and naming one of them would be a lie the caller prints in full."""
-        fracs = [float(flags[..., c].mean()) for c in range(3)]
-        top = max(fracs)
-        if top == 0.0:
-            return 0.0, ""
-        if all(f == top for f in fracs):
-            return top, "ALL"
-        return top, names[fracs.index(top)]
-
-    hi_frac, hi_ch = worst(blown)
-    lo_frac, lo_ch = worst(dead)
-    return Clipping(hi_frac, hi_ch, lo_frac, lo_ch)
+    return ChannelClipping(("R", "G", "B"),
+                           tuple(float(blown[..., c].mean()) for c in range(3)),
+                           tuple(float(dead[..., c].mean()) for c in range(3)))
 
 
 class ClipBaseline(NamedTuple):
