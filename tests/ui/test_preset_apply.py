@@ -551,7 +551,7 @@ def test_save_on_one_picture_apply_on_another_round_trip(qtbot, tmp_path, monkey
                                          "Starless Levels", "Star Spikes"], "fixture"
     assert dict(a_entries)["Levels"] == "auto", "fixture: Auto must be what was pressed"
 
-    win._go_to_id("enhancements", user_initiated=False)
+    win._go_to_id("export", user_initiated=False)
     assert win._panel.save_preset_btn.isEnabled()
     _answer(monkeypatch, name="Round trip")
     win._panel.save_preset_btn.click()

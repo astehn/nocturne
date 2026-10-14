@@ -363,19 +363,21 @@ def test_recover_core_panel_has_live_preview_readout(qtbot):
 
 def test_export_panel_split_offered_without_a_star_tool(qtbot):
     """Starless + Stars falls back to the free split (2026-10-11); it is never
-    greyed, and the note says which split it will use."""
+    greyed, and the note says which split it will use — once Layers is chosen
+    (2026-10-14: notes show only when they say something)."""
     w = build_panel(_stage("export"), split_enabled=False)
     qtbot.addWidget(w)
-    assert w.fmt_box.count() == 4
-    assert w.fmt_box.model().item(3).isEnabled() is True
-    notes = " ".join(l.text() for l in w.findChildren(QLabel))
-    assert "built-in star split" in notes
+    assert w.format_box.count() == 4
+    assert w.format_box.buttons()[3].isEnabled() is True
+    w.format_box.buttons()[3].click()
+    assert w.split_note.isVisibleTo(w)
+    assert "built-in star split" in w.split_note.text()
 
 
 def test_export_panel_split_enabled_with_rcastro(qtbot):
     w = build_panel(_stage("export"), split_enabled=True)
     qtbot.addWidget(w)
-    assert w.fmt_box.model().item(3).isEnabled() is True
+    assert w.format_box.buttons()[3].isEnabled() is True
     notes = " ".join(l.text() for l in w.findChildren(QLabel))
     assert "built-in star split" not in notes
 
@@ -386,7 +388,7 @@ def test_export_panel_formats(qtbot):
     got = []
     w = build_panel(_stage("export"), on_export=lambda f, s: got.append((f, s)))
     qtbot.addWidget(w)
-    w.fmt_box.setCurrentText("PNG")
+    w.format_box.setCurrentText("PNG")
     w.export_btn.click()
     assert got == [("PNG", "sRGB")]
 

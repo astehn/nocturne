@@ -1724,7 +1724,7 @@ class MainWindow(QMainWindow):
         # A walk over a handful of (name, option) pairs; no need to cache it.
         empty = ok and not recipe_from_entries(self.project.entries(), scope="preset").steps
         tip = _PRESET_TIP_EMPTY if empty else _PRESET_TIP_ON if ok else _PRESET_TIP_OFF
-        # The menu item and the Enhancements button: one gate, one tooltip.
+        # The menu item and the Export button: one gate, one tooltip.
         for target in (self._save_preset_act, getattr(self._panel, "save_preset_btn", None)):
             if target is not None:
                 target.setEnabled(ok and not empty)
@@ -7872,7 +7872,10 @@ class MainWindow(QMainWindow):
         if stage.id == "export" and hasattr(new_panel, "burn_annotations"):
             sig = self._solve_sig() if loaded else None
             solved = loaded and self._solve is not None and self._solve[0] == sig
-            new_panel.burn_annotations.setEnabled(solved)
+            # Shown only with a solve (2026-10-14): greyed-out it was one more
+            # line on a panel Andreas found busy, and without a solve there
+            # is nothing to burn.
+            new_panel.burn_annotations.setVisible(solved)
         new_panel.setMaximumWidth(RIGHT_PANE_MAX_W)   # keeps the pane, and so the
                                                      # canvas, a constant width
         self._side.set_panel(new_panel)
