@@ -33,8 +33,8 @@ _CELL_PAD, _CELL_TEXT = 28, 80       # card padding round the icon; three text l
 _SORT_LABELS = {"created": "Newest first", "last_used": "Last used",
                 "name": "Name", "target": "Target"}
 _DATA_WORDS = {"dualband": "dual-band", "broadband": "broadband"}
-_EMPTY = ("No presets yet. Process a picture through to Enhancements, then press "
-          "Save as Preset… — it keeps every step after the crop, ready for similar pictures.")
+_EMPTY = ("Process a picture through to Export, then press Save as Preset… "
+          "(or use the Project menu).")
 _NO_MATCH = "No preset matches."
 _NOTHING_SELECTED = "Select a preset to see what it does."
 _BROADBAND_MARK = " · made on broadband data"

@@ -77,12 +77,12 @@ def _decoys(win):
 def _derived(win):
     """Controls the step re-derives from its state after a commit — a landed
     Apply legitimately changes these (Apply goes off, Reset step on, the
-    Background "Show what was removed" box becomes available, Enhancements'
-    Save as Preset… comes on once the landed tap gives it a step to save —
-    `_sync_preset_action`)."""
+    Background "Show what was removed" box becomes available, Export's
+    Save as Preset… follows `_sync_preset_action`, and a landed export wakes
+    Export's Share to the gallery… — C2, it waits for an export of this version)."""
     return {id(getattr(win._panel, n, None))
             for n in ("apply_btn", "primary_action", "reset_step_btn", "visual_btn",
-                      "show_model_check", "save_preset_btn")}
+                      "show_model_check", "save_preset_btn", "gallery_btn")}
 
 
 def _fake_layers(base):

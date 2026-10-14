@@ -149,6 +149,7 @@ _CLIP_AMBER_LO = 0.0005    # 0.05% of shadows crushed
 _PRESET_TIP_ON = "Save this edit (everything after the crop) as a preset for similar pictures."
 _PRESET_TIP_OFF = ("Save as Preset — process a picture through to Enhancements first: "
                    "a preset is made at the end of an edit.")
+_PRESET_TIP_LINEAR = "Stretch the picture first — a preset starts from a finished look."
 _PRESET_TIP_EMPTY = ("Save as Preset — nothing to save yet: this picture has no steps "
                      "a preset can carry. Apply a step after the crop first.")
 
@@ -531,6 +532,20 @@ class MainWindow(QMainWindow):
         self._project_path: str | None = None   # current .nocturne bundle path, if saved/opened
         self._dirty = False   # True once the project has un-saved edits
         self._solve = None  # (sig, SolveResult, objects) once a plate-solve lands
+        # The last gallery send: None, or {"key", "state": "sending"|"sent"|
+        # "failed", "message"}. The rule: it applies to the exact VERSION that
+        # was sent — `key` is _gallery_key(), the workspace generation plus the
+        # history state at the Export position. A panel rebuilt over the same
+        # version (a plate solve landing, any _rebuild_panel) starts from it,
+        # so Send stays off mid-send and once sent; an edited picture is a new
+        # version and may be sent again (review 2026-10-14). On the WINDOW,
+        # not the panel, because the panel is rebuilt mid-send.
+        self._gallery_send = None
+        # _gallery_key() of the last version that EXPORTED successfully. Share
+        # to the gallery waits for it (C2, Andreas 2026-10-14): the gallery
+        # shows what you exported, and a picture edited since is a new version
+        # that needs a new export. A failed or cancelled export never sets it.
+        self._exported_key = None
         # (shown name, path to reveal) of the last export from THIS image, for
         # the Export step's "Saved … · Show in Finder" line. Cleared with the
         # workspace, so an old file is never announced over new work.
@@ -1723,8 +1738,13 @@ class MainWindow(QMainWindow):
         # step of its own: the dialog could only say "Nothing to save yet".
         # A walk over a handful of (name, option) pairs; no need to cache it.
         empty = ok and not recipe_from_entries(self.project.entries(), scope="preset").steps
-        tip = _PRESET_TIP_EMPTY if empty else _PRESET_TIP_ON if ok else _PRESET_TIP_OFF
-        # The menu item and the Enhancements button: one gate, one tooltip.
+        # The REAL reason when off: at the right step an unstretched picture
+        # is told to stretch, not sent back to Enhancements (review 2026-10-14).
+        linear = (not ok and self.project is not None
+                  and self.current_stage_id() in ("enhancements", "export"))
+        tip = (_PRESET_TIP_EMPTY if empty else _PRESET_TIP_ON if ok
+               else _PRESET_TIP_LINEAR if linear else _PRESET_TIP_OFF)
+        # The menu item and the Export button: one gate, one tooltip.
         for target in (self._save_preset_act, getattr(self._panel, "save_preset_btn", None)):
             if target is not None:
                 target.setEnabled(ok and not empty)
@@ -4703,6 +4723,9 @@ class MainWindow(QMainWindow):
                 and not (isinstance(committed, dict)
                          and committed.get("linked") is False))
         self._sync_split_readiness(sid)
+        gallery_sync = getattr(self._panel, "gallery_sync", None)
+        if gallery_sync is not None:
+            gallery_sync(self._gallery_ready())   # swept below if busy
         wall_sync = getattr(self._panel, "wall_sync", None)
         if wall_sync is not None:
             wall_sync()          # re-derived, then swept below if busy
@@ -5485,6 +5508,9 @@ class MainWindow(QMainWindow):
         self._chosen_preset = None
         self._recover_prep = self._lc_prep = None
         self._last_export = None
+        # A gallery send and an export record belong to the picture they were made from.
+        self._gallery_send = None
+        self._exported_key = None
         self._solve = None
         self._solve_freshness = None
         self._solve_elapsed = 0.0
@@ -7466,6 +7492,21 @@ class MainWindow(QMainWindow):
         meta["source_label"] = self._source_label
         return submission_fields(meta, handle)
 
+    def _gallery_key(self):
+        """Which version of which picture a gallery send is about."""
+        if self.project is None:
+            return None
+        return (self._project_gen, self.project.state_token(self.project.position))
+
+    def _gallery_ready(self) -> bool:
+        """Has the version now showing been exported?"""
+        return self._exported_key is not None and self._exported_key == self._gallery_key()
+
+    def _gallery_state(self):
+        """The last send, if it was of the version now showing."""
+        st = self._gallery_send
+        return st if st is not None and st.get("key") == self._gallery_key() else None
+
     def _submit_to_wall(self, target: str) -> None:
         """Compose the finished picture and post it, off the interface thread.
 
@@ -7498,21 +7539,33 @@ class MainWindow(QMainWindow):
         # exactly this and says so: "otherwise PySide may garbage-collect the
         # QRunnable (and its signals) before QThreadPool runs it." Every other
         # background call in this window already goes through it.
+        gen = self._project_gen
+        key = self._gallery_key()
+        self._gallery_send = {"key": key, "state": "sending", "message": "Sending…"}
+
+        def _land(ok: bool, message: str) -> None:
+            # To whatever panel is CURRENT: the one that sent may have been
+            # rebuilt (and deleted) while the send was in flight. Only for the
+            # picture that sent it — a new image retires the state — and the
+            # panel hears it only while it shows the version that was sent.
+            if gen != self._project_gen:
+                return
+            self._gallery_send = {"key": key, "state": "sent" if ok else "failed",
+                                  "message": message}
+            panel = self._panel
+            if hasattr(panel, "wall_finished") and self._gallery_key() == key:
+                panel.wall_finished(ok, message)
+                self._sync_step_controls()   # re-gates it if another job runs
+
         def _done(result) -> None:
             ok, message = result
-            if hasattr(panel, "wall_finished"):
-                panel.wall_finished(bool(ok), str(message))
-                if panel is self._panel:
-                    self._sync_step_controls()   # re-gates it if another job runs
+            _land(bool(ok), str(message))
 
         def _failed(exc) -> None:
             # submit() is documented never to raise, so this is belt and braces
             # — but a panel left saying "Sending…" for ever is the one outcome
             # worse than a refusal.
-            if hasattr(panel, "wall_finished"):
-                panel.wall_finished(False, f"Could not send: {exc}")
-                if panel is self._panel:
-                    self._sync_step_controls()   # re-gates it if another job runs
+            _land(False, f"Could not send: {exc}")
 
         run_async(self._pool, lambda: _submit(data, meta, handle), _done, _failed)
 
@@ -7611,7 +7664,10 @@ class MainWindow(QMainWindow):
 
     def _export_done(self, name: str, path: str) -> None:
         self._last_export = (name, path)
+        # Only a successful export reaches here: Share may now offer this version.
+        self._exported_key = self._gallery_key()
         self._show_export_done()
+        self._sync_step_controls()       # Share wakes; a busy sweep re-gates it
 
     def _show_export_done(self) -> None:
         """Put "Saved <name> · Show in Finder" on the Export step, if it is up."""
@@ -7807,6 +7863,8 @@ class MainWindow(QMainWindow):
             wall_fields=self._wall_fields(stage),
             wall_handle=(getattr(self.settings, "handle", "") or "").strip(),
             on_wall_submit=self._submit_to_wall,
+            wall_state=self._gallery_state(),
+            gallery_ready=self._gallery_ready(),
             on_remove_green=self._remove_green,
             on_removegreen_change=self._on_removegreen_change,
             on_tint_change=self._on_tint_change,
@@ -7872,7 +7930,10 @@ class MainWindow(QMainWindow):
         if stage.id == "export" and hasattr(new_panel, "burn_annotations"):
             sig = self._solve_sig() if loaded else None
             solved = loaded and self._solve is not None and self._solve[0] == sig
-            new_panel.burn_annotations.setEnabled(solved)
+            # Shown only with a solve (2026-10-14): greyed-out it was one more
+            # line on a panel Andreas found busy, and without a solve there
+            # is nothing to burn.
+            new_panel.burn_annotations.setVisible(solved)
         new_panel.setMaximumWidth(RIGHT_PANE_MAX_W)   # keeps the pane, and so the
                                                      # canvas, a constant width
         self._side.set_panel(new_panel)

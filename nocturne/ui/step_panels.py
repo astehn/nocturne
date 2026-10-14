@@ -4,7 +4,7 @@ import sys
 
 from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QStyle,
+    QButtonGroup, QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QStyle,
     QLineEdit, QPushButton, QRadioButton, QSlider, QToolButton, QVBoxLayout,
     QWidget,
 )
@@ -113,8 +113,9 @@ def export_description(saved: str | None) -> str:
     The 2026-10-04 app audit (F-05): after a successful export the only trace
     was an Activity line, so a first-time user had to leave the app to find the
     file. In the pinned description box for the same reason as Stretch's colour
-    balance line: Export scrolls by ~400 px at 1280x800 (the gallery section),
-    and a "done" line below the fold is the problem it exists to solve.
+    balance line: Export still scrolls at 1280x800 (by 149-173 px since the
+    2026-10-14 redesign), and a "done" line below the fold is the problem it
+    exists to solve.
 
     `saved` is the already-elided, already-escaped name to show.
     """
@@ -225,6 +226,82 @@ def _wall_summary(fields: dict, handle: str) -> str:
     return "The gallery will show: " + " \u00b7 ".join(bits) if bits else ""
 
 
+# Export's format tiles, in EXPORT_FORMATS order: (label, sub-label, icon).
+_FORMAT_TILES = [
+    ("TIFF", "16-bit", "format-tiff"),
+    ("PNG", "8-bit", "format-png"),
+    ("FITS", "data", "format-fits"),
+    ("Layers", "starless + stars", "stack"),
+]
+_LAYERS_FORMAT = "Starless + Stars (two TIFFs)"
+# Short labels for the colour-space buttons; the VALUES stay core.colour.SPACES.
+_SPACE_LABELS = {"Display P3": "P3", "ProPhoto RGB": "ProPhoto"}
+# C2 (Andreas, 2026-10-14, after testing B1): the extras sit under one heading
+# that says what they are NOT, so nobody shares or saves a preset, thinks the
+# picture is saved, and quits. Share waits for an export of this version.
+_OPTIONAL_HEADING = "OPTIONAL — DOESN'T SAVE YOUR PICTURE"
+_GALLERY_HINT_WAIT = "Available after you export."
+_GALLERY_HINT = "Your exported picture in the public gallery."
+_GALLERY_TIP_WAIT = ("Export the picture first: the gallery shows the picture you "
+                     "exported, and this version has not been exported yet.")
+_GALLERY_TIP = "Publish your exported picture in the Nocturne gallery at nocturneastro.com"
+_GALLERY_URL = "https://nocturneastro.com/gallery.html"
+_PRESET_HINT = "Saves the steps for similar pictures — not this picture."
+
+
+def _rule() -> QFrame:
+    """The Colour step's divider, so "optional" reads the same way twice."""
+    rule = QFrame()
+    rule.setFrameShape(QFrame.Shape.HLine)
+    rule.setObjectName("panelRule")
+    return rule
+
+
+def _open_url(href: str) -> None:
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QDesktopServices
+    QDesktopServices.openUrl(QUrl(href))
+
+
+class _GalleryDialog(QDialog):
+    """The gallery block that sat at the foot of the Export panel, moved into a
+    small window of its own (spec 2026-10-14). A container only: the panel
+    fills it and owns every rule about consent, the handle and a spent send."""
+
+    def __init__(self, parent) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Share to the gallery")
+        self.setModal(True)
+        self.setMinimumWidth(420)
+        # No title label: the window's own title bar says it (a window-modal
+        # QDialog is a titled window on macOS too, not a sheet).
+        lay = QVBoxLayout(self)
+        self.body = QVBoxLayout()
+        # "How this works ↗"'s style: ACCENT, no underline; ↗ = opens elsewhere.
+        from .theme import ACCENT
+        self.gallery_link = QLabel(
+            f'<a href="{_GALLERY_URL}" style="color:{ACCENT}; text-decoration:none">'
+            "See the gallery ↗</a>")
+        self.gallery_link.setObjectName("helpHeader")
+        self.gallery_link.setOpenExternalLinks(False)
+        self.gallery_link.setToolTip(_GALLERY_URL)
+        self.gallery_link.linkActivated.connect(_open_url)
+        lay.addLayout(self.body)
+        lay.addSpacing(8)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        # Live through a busy sweep: closing the window must always work.
+        from .busy_gate import keep_live
+        self.cancel_btn = keep_live(QPushButton("Cancel"))
+        self.cancel_btn.clicked.connect(self.reject)
+        self.send_btn = QPushButton("Send to the gallery")
+        self.send_btn.setAutoDefault(False)
+        self.cancel_btn.setAutoDefault(False)
+        row.addWidget(self.cancel_btn)
+        row.addWidget(self.send_btn)
+        lay.addLayout(row)
+
+
 # Noise Reduction's first engine entry: the settings' default engine. With no
 # external tool installed it is the built-in denoise, and says so.
 DEFAULT_ENGINE = "Default"
@@ -285,7 +362,8 @@ def build_panel(
     on_flip_h=None,
     on_flip_v=None,
     on_export=None,
-    wall_fields=None, wall_handle="", on_wall_submit=None,
+    wall_fields=None, wall_handle="", on_wall_submit=None, wall_state=None,
+    gallery_ready: bool = False,
     on_remove_green=None,
     on_removegreen_change=None, on_tint_change=None, on_apply_tint=None,
     on_enhance=None,
@@ -642,18 +720,8 @@ def build_panel(
             ("soft_glow_btn", "Soft Glow", "Soft Glow"),
             ("sharpen_btn", "Sharpen Nebulosity", "Sharpen Nebulosity"),
         ]
-        # First, not after the taps: the taps already scroll at 1280x800 (464 px
-        # in a 208 px zone), so below them it would be out of sight; the action
-        # row is Apply/Reset only (owner, 2026-10-13: not on the toolbar). The
-        # icon tells it apart from the taps. MainWindow gates it with the menu item.
-        from .icons import load_icon
-        w.save_preset_btn = QPushButton(load_icon("save-preset"), "Save as Preset…")
-        w.save_preset_btn.setObjectName("savePreset")
-        w.save_preset_btn.setEnabled(False)
-        if on_save_preset is not None:
-            w.save_preset_btn.clicked.connect(lambda: on_save_preset())
-        controls.addWidget(w.save_preset_btn)
-        controls.addSpacing(6)
+        # No Save as Preset… here since 2026-10-14: on this step it read as an
+        # Enhancements-only preset. It is on Export, and in the Project menu.
         for attr, label, op in _specs:
             btn = QPushButton(label)
             if on_enhance is not None:
@@ -1191,14 +1259,24 @@ def build_panel(
 
     elif stage.kind == "export":
         from ..core.colour import EIGHT_BIT_SPACES, SPACES
-        box = QComboBox()
-        box.addItems(EXPORT_FORMATS)
+        from .format_tiles import TileRow
+        from .icons import load_icon
+        # Buttons, not dropdowns, as on every other step (Andreas, 2026-10-14,
+        # mock-up "B1"). The tiles and segments read and write today's strings,
+        # so on_export, recipes and Batch see exactly what they always did.
+        # Layers a third wider: "starless + stars" measured 76 px at 10 px
+        # (Cocoa; 79 offscreen) in an 81 px tile at 1280x800 — an even split
+        # cut it. 3:3:3:4 gives it ~99 px and the others ~75.
+        box = TileRow([(v, label, sub, icon) for v, (label, sub, icon) in zip(
+            EXPORT_FORMATS, _FORMAT_TILES)], weights=[3, 3, 3, 4])
 
         # Colour space. Every export is TAGGED with whichever is chosen, so a
         # reader never has to guess — an untagged file is why a correct M 16
         # export rendered dark in Photoshop.
-        space_box = QComboBox()
-        space_box.addItems(list(SPACES))
+        space_box = SegmentRow([_SPACE_LABELS.get(s, s) for s in SPACES], values=list(SPACES))
+        space_note = _desc_label(
+            "Tagged, so other programs show it as you see it here. "
+            "Wider spaces for 16-bit TIFF only.")
 
         def _restrict_space(fmt: str) -> None:
             """Wide gamut only for 16-bit TIFF.
@@ -1210,37 +1288,48 @@ def build_panel(
             Adobe RGB and then PNG must not quietly get a banded file.
             """
             wide_ok = fmt in SIXTEEN_BIT_FORMATS
-            for i in range(space_box.count()):
-                allowed = wide_ok or space_box.itemText(i) in EIGHT_BIT_SPACES
-                space_box.model().item(i).setEnabled(allowed)
+            for i, b in enumerate(space_box.buttons()):
+                b.setEnabled(wide_ok or space_box.itemText(i) in EIGHT_BIT_SPACES)
             if not wide_ok and space_box.currentText() not in EIGHT_BIT_SPACES:
                 space_box.setCurrentText(EIGHT_BIT_SPACES[0])
 
-        box.currentTextChanged.connect(_restrict_space)
-        _restrict_space(box.currentText())
+        # Shown only when the picture is plate-solved: MainWindow decides.
+        w.burn_annotations = QCheckBox("Burn annotations (PNG)")
+        w.burn_annotations.setVisible(False)
+
+        # Shown only when it says something: Layers chosen, no StarNet2/StarX.
+        w.split_note = None
+        if not split_enabled:
+            w.split_note = _desc_label(
+                "Starless + stars uses the built-in star split. StarNet2 (free) or "
+                "StarXTerminator gives cleaner layers — set one up in Settings.")
+            w.split_note.setVisible(False)
+
+        def _format_changed(fmt: str) -> None:
+            _restrict_space(fmt)
+            if w.split_note is not None:
+                w.split_note.setVisible(fmt == _LAYERS_FORMAT)
+
+        box.currentTextChanged.connect(_format_changed)
+        _format_changed(box.currentText())
 
         export_btn = QPushButton("Export…")
         export_btn.setObjectName("primary")
         if on_export is not None:
             export_btn.clicked.connect(
                 lambda: on_export(box.currentText(), space_box.currentText()))
-        controls.addWidget(QLabel("Format"))
+        controls.addWidget(section_label("Format"))
         controls.addWidget(box)
-        controls.addWidget(QLabel("Colour space"))
+        controls.addSpacing(4)
+        controls.addWidget(section_label("Colour space"))
         controls.addWidget(space_box)
+        controls.addWidget(space_note)
+        controls.addWidget(w.burn_annotations)
+        if w.split_note is not None:
+            controls.addWidget(w.split_note)
         w.format_box = box
         w.space_box = space_box
-        w.burn_annotations = QCheckBox("Burn annotations (PNG)")
-        w.burn_annotations.setEnabled(False)   # main_window enables when a solve exists
-        controls.addWidget(w.burn_annotations)
-        notes.addWidget(_desc_label(
-            "Every export is tagged, so other programs show it as you see it "
-            "here. Wider spaces are for 16-bit TIFF only — in 8-bit they band."))
-        if not split_enabled:
-            notes.addWidget(_desc_label(
-                "Starless + stars uses the built-in star split. StarNet2 (free) or "
-                "StarXTerminator gives cleaner layers — set one up in Settings."))
-        w.fmt_box = box
+        w.space_note = space_note
         # The step's main action: pinned by MainWindow like every Apply.
         w.export_btn = w.primary_action = export_btn
 
@@ -1253,6 +1342,13 @@ def build_panel(
         # way out, and this is also the moment someone has just finished
         # something they are pleased with.
         #
+        # Behind its own button since 2026-10-14: the block made the panel
+        # "busy compared to other screens". The dialog is the panel's child,
+        # so the busy gate sweeps it with the rest — and it dies with the
+        # panel, which is rebuilt often (a plate solve landing, among a dozen
+        # callers). So a send's state is NOT kept here: MainWindow holds it
+        # per picture and hands it back as `wall_state` to every rebuild.
+        #
         # The panel RECEIVES the facts and a callback. It never touches the
         # image: composing here would be the second compose path all over again,
         # one step to the left.
@@ -1260,46 +1356,50 @@ def build_panel(
         w.wall_btn = None
         w.wall_note = None
         w.wall_target = None
+        w.gallery_btn = None
+        w.gallery_hint = None
+        w.gallery_dialog = None
+        controls.addWidget(_rule(), 0)
+        w.optional_heading = section_label(_OPTIONAL_HEADING)
+        controls.addWidget(w.optional_heading)
         if wall_fields is not None:
-            # The Colour step's divider, so "optional" reads the same way
-            # twice in the app rather than twice differently. Last in the
-            # notes area: an optional section after everything about the
-            # export itself, as on Colour.
-            notes.addSpacing(14)
-            wall_rule = QFrame()
-            wall_rule.setFrameShape(QFrame.Shape.HLine)
-            wall_rule.setObjectName("panelRule")
-            notes.addWidget(wall_rule)
-            notes.addSpacing(10)
-            heading = QLabel("Share to the gallery")
-            heading.setObjectName("panelSectionLabel")
-            notes.addWidget(heading)
-            notes.addWidget(_desc_label(
-                "Optional. Publish this picture in the public gallery at "
+            w.gallery_btn = QPushButton(load_icon("upload"), "Share to the gallery…")
+            w.gallery_hint = _desc_label(_GALLERY_HINT_WAIT)
+            controls.addWidget(w.gallery_btn)
+            controls.addWidget(w.gallery_hint)
+
+            dlg = _GalleryDialog(w)
+            w.gallery_dialog = dlg
+            body_lay = dlg.body
+            body_lay.addWidget(_desc_label(
+                "Publish this picture in the public gallery at "
                 "nocturneastro.com. It is looked at before it appears, and can "
                 "be taken down later by asking."))
+            body_lay.addWidget(dlg.gallery_link)
 
             # WHAT IT WILL SAY ABOUT YOU, from the same dict that gets posted,
             # so the panel cannot claim one thing and send another.
             summary = _wall_summary(wall_fields, wall_handle)
             if summary:
-                notes.addWidget(_desc_label(summary))
+                body_lay.addWidget(_desc_label(summary))
 
             # ONE field, and only when the file supplied no object. A TIFF has
             # no FITS headers and finishing one is a first-class use; without
             # this such a picture reaches the wall as a byline and nothing else.
             if not (wall_fields.get("target") or "").strip():
-                notes.addWidget(QLabel("Object"))
+                body_lay.addWidget(QLabel("Object"))
                 w.wall_target = QLineEdit()
                 w.wall_target.setPlaceholderText("M 31 — this file does not name one")
-                notes.addWidget(w.wall_target)
+                body_lay.addWidget(w.wall_target)
 
             w.wall_consent = QCheckBox("Publish this in the Nocturne gallery")
-            w.wall_btn = QPushButton("Send to the gallery")
+            w.wall_btn = dlg.send_btn
             w.wall_btn.setEnabled(False)
             w.wall_note = QLabel("")
             w.wall_note.setWordWrap(True)
             w.wall_note.setObjectName("stepDesc")
+            body_lay.addWidget(w.wall_consent)
+            body_lay.addWidget(w.wall_note)
 
             def _wall_state() -> None:
                 # Derived from state, never set ad hoc: MainWindow re-runs this
@@ -1331,6 +1431,8 @@ def build_panel(
                 w._wall_sending = True
                 _wall_state()
                 w.wall_note.setText("Sending…")
+                w.gallery_hint.setText("Sending…")   # seen with the window closed
+                w._wall_msg_shown = True
                 target = w.wall_target.text().strip() if w.wall_target else ""
                 if on_wall_submit is not None:
                     on_wall_submit(target)
@@ -1338,6 +1440,10 @@ def build_panel(
             def _wall_finished(ok: bool, message: str) -> None:
                 w._wall_sending = False
                 w.wall_note.setText(message)
+                # Also under the panel's button: the dialog may have been
+                # closed while the send was in flight.
+                w.gallery_hint.setText(message)
+                w._wall_msg_shown = True
                 if ok:
                     w._wall_sent = True
                 # On failure Send comes back (a network blip must not cost
@@ -1346,12 +1452,43 @@ def build_panel(
 
             w.wall_consent.toggled.connect(_wall_toggled)
             w.wall_btn.clicked.connect(_wall_click)
+            w.gallery_btn.clicked.connect(dlg.open)
+            def _gallery_sync(ready: bool) -> None:
+                """Share waits for an export of THIS version (MainWindow
+                knows). Enablement only: a busy sweep re-closes it, as for
+                every control _sync_step_controls touches. A send's own
+                message, once there is one, outranks the standing line."""
+                w.gallery_btn.setEnabled(bool(ready))
+                w.gallery_btn.setToolTip(_GALLERY_TIP if ready else _GALLERY_TIP_WAIT)
+                if not getattr(w, "_wall_msg_shown", False):
+                    w.gallery_hint.setText(_GALLERY_HINT if ready else _GALLERY_HINT_WAIT)
+
             w.wall_finished = _wall_finished
             w.wall_sync = _wall_state
-            notes.addWidget(w.wall_consent)
-            notes.addWidget(w.wall_btn)
-            notes.addWidget(w.wall_note)
+            w.gallery_sync = _gallery_sync
+            # A rebuilt panel starts from the picture's send, not from scratch.
+            state = (wall_state or {}).get("state")
+            if state in ("sending", "sent", "failed"):
+                w._wall_sending = state == "sending"
+                w._wall_sent = state == "sent"
+                msg = (wall_state or {}).get("message", "")
+                w.wall_note.setText(msg)
+                w.gallery_hint.setText(msg)
+                w._wall_msg_shown = True
+            _gallery_sync(gallery_ready)
             _wall_state()
+
+        # Save as Preset… — here, not on Enhancements, where it read as an
+        # Enhancements-only preset (Andreas, 2026-10-14). The Project-menu item
+        # reaches it from both steps; MainWindow gates the two together.
+        w.save_preset_btn = QPushButton(load_icon("save-preset"), "Save as Preset…")
+        w.save_preset_btn.setObjectName("savePreset")
+        w.save_preset_btn.setEnabled(False)
+        if on_save_preset is not None:
+            w.save_preset_btn.clicked.connect(lambda: on_save_preset())
+        controls.addWidget(w.save_preset_btn)
+        w.save_preset_hint = _desc_label(_PRESET_HINT)
+        controls.addWidget(w.save_preset_hint)
 
     else:  # placeholder / unknown
         controls.addWidget(QLabel("Coming soon."))

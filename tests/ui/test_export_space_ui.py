@@ -44,8 +44,7 @@ def test_choosing_png_restricts_the_space_to_srgb(qtbot):
     p.space_box.setCurrentText("Adobe RGB")
     p.format_box.setCurrentText("PNG")
     assert p.space_box.currentText() == "sRGB"
-    enabled = [p.space_box.model().item(i).isEnabled()
-               for i in range(p.space_box.count())]
+    enabled = [b.isEnabled() for b in p.space_box.buttons()]
     assert enabled == [s in EIGHT_BIT_SPACES for s in SPACES]
 
 
@@ -53,8 +52,7 @@ def test_tiff_allows_every_space_again(qtbot):
     p = _panel(qtbot)
     p.format_box.setCurrentText("PNG")
     p.format_box.setCurrentText("TIFF (16-bit)")
-    assert all(p.space_box.model().item(i).isEnabled()
-               for i in range(p.space_box.count()))
+    assert all(b.isEnabled() for b in p.space_box.buttons())
 
 
 def test_the_export_callback_carries_the_space(qtbot):
@@ -106,8 +104,7 @@ def test_starless_and_stars_allows_every_space(qtbot):
     p.space_box.setCurrentText("ProPhoto RGB")
     p.format_box.setCurrentText("Starless + Stars (two TIFFs)")
     assert p.space_box.currentText() == "ProPhoto RGB", "selection was pulled back to sRGB"
-    assert all(p.space_box.model().item(i).isEnabled()
-               for i in range(p.space_box.count()))
+    assert all(b.isEnabled() for b in p.space_box.buttons())
 
 
 def test_the_sixteen_bit_set_names_real_formats(qtbot):

@@ -25,7 +25,9 @@ def test_enabled_only_from_enhancements_on(qtbot, tmp_path, sid, ok):
     assert win._save_preset_act.isEnabled() is ok
     assert ("Enhancements first" in win._save_preset_act.toolTip()) is (not ok)
     btn = getattr(win._panel, "save_preset_btn", None)
-    assert (btn is not None) is (sid == "enhancements"), "the button lives on Enhancements only"
+    # On Export only since 2026-10-14: on Enhancements it read as an
+    # Enhancements-only preset. The menu item serves both steps.
+    assert (btn is not None) is (sid == "export"), "the button lives on Export only"
     if btn is not None:
         assert btn.isEnabled() is ok and btn.toolTip() == win._save_preset_act.toolTip()
 
@@ -40,14 +42,18 @@ def test_disabled_on_a_linear_picture_even_at_enhancements(qtbot, tmp_path):
     assert win.current_stage_id() == "enhancements"
     assert win.project.is_linear_at(win.project.position)
     assert not win._save_preset_act.isEnabled()
-    assert "Enhancements first" in win._save_preset_act.toolTip()
+    # The real reason: it is at the step, it is not stretched (review 2026-10-14).
+    assert "Stretch the picture first" in win._save_preset_act.toolTip()
+    _to(win, "export")                                # no auto-stretch on the way
+    assert win.project.is_linear_at(win.project.position)
     assert not win._panel.save_preset_btn.isEnabled()
+    assert win._panel.save_preset_btn.toolTip() == win._save_preset_act.toolTip()
 
 
 def test_disabled_with_no_picture_and_while_busy(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     assert not win._save_preset_act.isEnabled()
-    win.open_fits(_make_fits(tmp_path)); _crop(win); _stretch(win); _to(win, "enhancements")
+    win.open_fits(_make_fits(tmp_path)); _crop(win); _stretch(win); _to(win, "export")
     assert win._save_preset_act.isEnabled()          # the precondition the busy check needs
     assert win._panel.save_preset_btn.isEnabled()
     win._set_busy(True, "x")
@@ -239,8 +245,8 @@ def test_nothing_capturable_keeps_the_action_off_and_says_why(qtbot, tmp_path):
     from tests.ui.test_open_tiff import _write_stretched_tiff
     win = _window(qtbot, tmp_path)
     win.open_any(_write_stretched_tiff(tmp_path))
-    _to(win, "enhancements")
-    assert win.current_stage_id() == "enhancements"
+    _to(win, "export")
+    assert win.current_stage_id() == "export"
     assert not win.project.is_linear_at(win.project.position)   # the other half of the gate holds
     assert not win._save_preset_act.isEnabled()
     assert not win._panel.save_preset_btn.isEnabled()
@@ -298,21 +304,19 @@ def test_it_is_in_the_project_menu(qtbot, tmp_path):
     assert project.actions()[texts.index("Save as Preset…")] is win._save_preset_act
 
 
-def test_the_enhancements_button_saves(qtbot, tmp_path, monkeypatch):
+def test_the_export_button_saves(qtbot, tmp_path, monkeypatch):
     win = _window(qtbot, tmp_path)
-    win.open_fits(_make_fits(tmp_path)); _crop(win); _stretch(win); _to(win, "enhancements")
+    win.open_fits(_make_fits(tmp_path)); _crop(win); _stretch(win); _to(win, "export")
     _answer(monkeypatch)
     win._panel.save_preset_btn.click()
     assert [p.name for p in win._presets.list()] == ["M 8"]
 
 
 @pytest.mark.parametrize("size", [(1280, 800), (1440, 900 - 30 - 28)])
-def test_the_button_is_in_view_without_scrolling(qtbot, tmp_path, size):
-    """The Enhancements taps already scroll on a MacBook (464 px in a 208 px
-    zone), so the button must sit where scroll position 0 shows it. Real
-    window, real stylesheet; within 200 px, as the Crop fit test allows for
-    Cocoa's fonts."""
-    from PySide6.QtCore import QRect
+def test_the_export_button_is_whole_and_reachable(qtbot, tmp_path, size):
+    """On Export it may sit below the fold at 1280x800 (spec 2026-10-14: the
+    gallery and preset buttons may scroll); it must still be whole, inside the
+    column, and reachable by scrolling. Real window, real stylesheet."""
     from PySide6.QtWidgets import QApplication
     from nocturne.ui.theme import build_stylesheet
     app = QApplication.instance()
@@ -323,15 +327,13 @@ def test_the_button_is_in_view_without_scrolling(qtbot, tmp_path, size):
         win.open_fits(_make_fits(tmp_path))
         win.resize(*size); win.show(); qtbot.waitExposed(win)
         _crop(win); _stretch(win)
-        _to(win, "enhancements"); qtbot.wait(80)
-        scroll = win._side.scroll
-        assert scroll.verticalScrollBar().value() == 0
-        view = scroll.viewport()
+        _to(win, "export"); qtbot.wait(80)
         btn = win._panel.save_preset_btn
-        assert btn.isVisible()
-        r = QRect(btn.mapTo(view, btn.rect().topLeft()), btn.size())
-        assert view.rect().contains(r), f"{r.getRect()} outside the {view.height()} px view"
-        assert r.bottom() <= 200, f"ends at {r.bottom()} px"
+        assert btn.isVisible() and btn.isEnabled()
+        win._side.scroll.ensureWidgetVisible(btn); qtbot.wait(20)
+        view = win._side.scroll.viewport()
+        top = btn.mapTo(view, btn.rect().topLeft())
+        assert 0 <= top.y() and top.y() + btn.height() <= view.height(), "not reachable"
         assert btn.width() >= btn.minimumSizeHint().width(), "label clipped"
         assert btn.mapTo(win._side, btn.rect().topRight()).x() <= win._side.width()
     finally:
