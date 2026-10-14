@@ -2709,3 +2709,16 @@ def test_levels_help_an_already_stretched_picture_can_stop_earlier_than_the_warn
                               structural_channel_clipping(display_rgb8(at_cand)),
                               structural_channel_clipping(display_rgb8(img)))
     assert not any(v.over for v in lo), "the warning would have gone amber at the candidate"
+
+
+def test_plate_solve_help_points_at_the_overlay_tips_and_they_say_the_same():
+    # The help promises a tip on the labels and explains 15′; both must match the
+    # code's own words, or the help drifts from what the pointer shows.
+    from nocturne.core.annotate import scale_bar_tip
+    from nocturne.core.annotation_layout import _dec_tip, _ra_tip
+    body = _body("plate-solve")
+    assert "Rest the pointer on it" in body
+    assert "half the width of the full Moon" in body and "half the width of the full Moon" in scale_bar_tip(900)
+    assert "15 arcminutes" in scale_bar_tip(900)
+    assert "right ascension" in body and "right ascension" in _ra_tip("18h20m")
+    assert "declination" in body and "declination" in _dec_tip("-14°")

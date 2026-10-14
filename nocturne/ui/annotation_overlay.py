@@ -77,7 +77,7 @@ def make_measure(ui_scale: float = 1.0):
     return measure
 
 
-def _text(s, fill, size=_DEFAULT_PT, bold=False, outline="#0a0f18"):
+def _text(s, fill, size=_DEFAULT_PT, bold=False, outline="#0a0f18", tip=""):
     """Constant-size text with a TRUE halo: two stacked items, a wide dark one
     behind and the coloured fill in front.
 
@@ -103,8 +103,12 @@ def _text(s, fill, size=_DEFAULT_PT, bold=False, outline="#0a0f18"):
             t.setPen(QPen(Qt.PenStyle.NoPen))
             t.setBrush(QColor(fill))                # the fill is the colour you read
         t.setFlag(_IGNORE, True)
+        if tip:
+            t.setToolTip(tip)    # on the glyphs too: the scene asks the item under the pointer
         group.addToGroup(t)
     group.setFlag(_IGNORE, True)
+    if tip:
+        group.setToolTip(tip)
     return group
 
 
@@ -185,7 +189,7 @@ def _grid_line_items(p: GridLine) -> list:
     line_item.setPen(pen)
     items.append(line_item)
     if p.label:
-        label = _text(p.label, p.colour, size=_SIZE_PT["grid"])
+        label = _text(p.label, p.colour, size=_SIZE_PT["grid"], tip=p.tip)
         label.setPos(x0 + 3.0, y0 - 12.0)
         items.append(label)
     return items
@@ -208,7 +212,7 @@ def build_annotation_group(primitives, shape) -> QGraphicsItemGroup:
                 g.addToGroup(_compass_dot(p))
         elif isinstance(p, Label):
             label = _text(p.text, p.colour, size=_SIZE_PT.get(p.size, _DEFAULT_PT),
-                         bold=p.size in _BOLD_SIZES)
+                         bold=p.size in _BOLD_SIZES, tip=p.tip)
             label.setPos(p.x, p.y)
             g.addToGroup(label)
         elif isinstance(p, Leader):
