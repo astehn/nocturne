@@ -35,6 +35,7 @@ class Label(NamedTuple):
     colour: str
     size: str = "secondary"
     priority: int = 0
+    tip: str = ""        # plain words for the canvas tooltip; the burned export ignores it
 
 
 class Leader(NamedTuple):
@@ -248,6 +249,18 @@ class GridLine(NamedTuple):
     points: list
     colour: str
     label: str = ""
+    tip: str = ""        # what the label's coordinate is, in words (canvas tooltip only)
+
+
+def _ra_tip(label: str) -> str:
+    return (f"{label} — right ascension: the sky's east–west coordinate. It is counted "
+            "in hours because the sky turns once a day: 24 hours make the full circle, "
+            "so 1 hour is 15 degrees.")
+
+
+def _dec_tip(label: str) -> str:
+    return (f"{label} — declination: the sky's north–south coordinate, like latitude "
+            "on Earth. 0° is the celestial equator, +90° the north celestial pole.")
 
 
 _GRID_STEPS_DEG = [0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0]
@@ -307,14 +320,14 @@ def grid_lines(wcs, shape, colour: str) -> list:
         pts = [(float(a), float(b)) for a, b in zip(xs, ys)
                if -1 <= a <= w and -1 <= b <= h]
         if len(pts) >= 2:
-            out.append(GridLine(pts, colour, _fmt_dec(float(dec))))
+            out.append(GridLine(pts, colour, _fmt_dec(float(dec)), _dec_tip(_fmt_dec(float(dec)))))
     for ra in np.arange(np.floor(ra_lo / step) * step, ra_hi + step, step):
         dec_s = np.linspace(dec_lo, dec_hi, 20)
         xs, ys = project(np.full_like(dec_s, ra), dec_s)
         pts = [(float(a), float(b)) for a, b in zip(xs, ys)
                if -1 <= a <= w and -1 <= b <= h]
         if len(pts) >= 2:
-            out.append(GridLine(pts, colour, _fmt_ra(float(ra))))
+            out.append(GridLine(pts, colour, _fmt_ra(float(ra)), _ra_tip(_fmt_ra(float(ra)))))
     return out
 
 
@@ -356,12 +369,15 @@ def _compass_primitives(wcs, shape, ui_scale: float = 1.0) -> list:
     return [
         Marker(ax, ay, "compass", _COMPASS_COLOUR, "grid"),
         Leader(ax, ay, tx, ty, _COMPASS_COLOUR, screen_fixed=True),   # cosmetic HUD arrow
-        Label("N", lx, ly, _COMPASS_COLOUR, "compass"),
+        Label("N", lx, ly, _COMPASS_COLOUR, "compass",
+              tip="North on the sky. In a normal (not mirrored) view with north up, east "
+                  "is to the left — the reverse of a map, because you look up at the sky "
+                  "rather than down at the ground."),
     ]
 
 
 def _scale_bar_primitives(pixscale_arcsec: float, shape, ui_scale: float = 1.0) -> list:
-    from .annotate import scale_bar
+    from .annotate import scale_bar, scale_bar_arcsec, scale_bar_tip
     h, w = shape
     length_px, text = scale_bar(pixscale_arcsec, w)   # a TRUE measured length -- never scaled
     if length_px <= 0:
@@ -369,7 +385,8 @@ def _scale_bar_primitives(pixscale_arcsec: float, shape, ui_scale: float = 1.0) 
     bx, by = 90.0 * ui_scale, h - 90.0 * ui_scale
     return [
         Leader(bx, by, bx + length_px, by, _SCALE_COLOUR),
-        Label(text, bx, by - 24.0 * ui_scale, _SCALE_COLOUR, "secondary"),
+        Label(text, bx, by - 24.0 * ui_scale, _SCALE_COLOUR, "secondary",
+              tip=scale_bar_tip(scale_bar_arcsec(pixscale_arcsec, w))),
     ]
 
 

@@ -96,6 +96,47 @@ def is_mirrored(wcs, shape) -> bool:
     return ((east - north) % 360.0) >= 180.0
 
 
+_MOON_ARCSEC = 1800        # the full Moon is about 30′ across (29.3′–34.1′ over its orbit)
+_FRACTION_WORDS = {2: "half", 3: "a third of", 4: "a quarter of"}
+
+
+def _plural(n: int, unit: str) -> str:
+    return f"{n} {unit}" if n == 1 else f"{n} {unit}s"
+
+
+def scale_bar_tip(arcsec: int) -> str:
+    """The scale bar's length in words, with the full Moon as the ruler. He asked
+    whether 15′ on his M 16 solve meant 15 degrees (2026-10-14) — the symbols
+    say nothing to someone new, and the Moon is the one size everybody has seen."""
+    if arcsec >= 3600 and arcsec % 3600 == 0:
+        amount = _plural(arcsec // 3600, "degree")
+    elif arcsec >= 60:
+        amount = _plural(arcsec // 60, "arcminute")
+    else:
+        amount = _plural(arcsec, "arcsecond")
+    ratio = arcsec / _MOON_ARCSEC
+    if ratio >= 1.5:
+        moon = f"about {round(ratio)} full Moons side by side"
+    elif ratio >= 0.75:
+        moon = "about the width of the full Moon"
+    else:
+        n = round(1 / ratio)
+        if n > 60:      # "1/1800 of the Moon" reads as noise, not a picture
+            moon = "a tiny fraction of the full Moon's width"
+        else:
+            frac = _FRACTION_WORDS.get(n, f"1/{n} of")
+            moon = f"{frac} the width of the full Moon"
+    return (f"This bar spans {amount} of sky — {moon}. "
+            "60 arcminutes make 1 degree, 60 arcseconds make 1 arcminute; "
+            "the full Moon is about 30 arcminutes across.")
+
+
+def scale_bar_arcsec(pixscale_arcsec: float, width_px: int) -> int:
+    """The bar's angular length: about a fifth of the frame, rounded to a readable value."""
+    target = width_px * 0.20 * pixscale_arcsec              # arcsec
+    return min(_NICE_ARCSEC, key=lambda a: abs(a - target))
+
+
 def scale_bar(pixscale_arcsec: float, width_px: int) -> tuple[int, str]:
     """A bar covering roughly a fifth of the frame, rounded to a readable
     angular length. Chosen from the actual frame width so it works on both a
@@ -103,8 +144,7 @@ def scale_bar(pixscale_arcsec: float, width_px: int) -> tuple[int, str]:
     all rather than dividing by zero on an unsolved/invalid scale."""
     if pixscale_arcsec <= 0 or width_px <= 0:
         return 0, ""
-    target = width_px * 0.20 * pixscale_arcsec              # arcsec
-    nice = min(_NICE_ARCSEC, key=lambda a: abs(a - target))
+    nice = scale_bar_arcsec(pixscale_arcsec, width_px)
     length_px = int(round(nice / pixscale_arcsec))
     if nice >= 3600:
         label = f"{nice // 3600}°"

@@ -743,9 +743,11 @@ def build_panel(
             setattr(w, attr, btn)
 
     elif stage.kind == "auto":
-        controls.addWidget(QLabel("Method"))
-        method_box = QComboBox()
-        method_box.addItems(["Sky balance", "Photometric (SPCC)"])
+        # Buttons, not a dropdown (his ask, 2026-10-14): the same idiom as Export's
+        # format and colour space. SegmentRow reads and writes the same strings
+        # the dropdown did, so everything downstream is unchanged.
+        controls.addWidget(section_label("Method"))
+        method_box = SegmentRow(["Sky balance", "Photometric (SPCC)"])
         controls.addWidget(method_box)
         w.method_box = method_box
         # What the dropdown read on arrival — same idea as option_baseline for
