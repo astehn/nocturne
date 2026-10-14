@@ -3935,6 +3935,21 @@ def test_a_raw_linear_import_gets_no_baseline(qtbot, tmp_path):
     assert "on import" not in _cells(win)[("lo", "R")].toolTip()
 
 
+def test_a_previous_images_baseline_does_not_silence_the_next(qtbot, tmp_path):
+    """The structural baseline belongs to ONE image. Carried over to a raw
+    master opened next, an earlier import's 30% would excuse the user's own
+    crushing on the workflow the limits were calibrated for."""
+    win = _window(qtbot, tmp_path)
+    win.open_image(_crushed_image(0.30), "processed.tif")
+    win.open_fits(_make_fits(tmp_path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    data = np.full((24, 24, 3), 0.5, np.float32)
+    data[:5] = 0.0             # ~21% as a region: LESS than the last image had
+    win._show_preview(data)
+    assert _amber(win) >= {("lo", c) for c in "RGB"}
+
+
 def test_an_old_bundles_worst_channel_baseline_still_reads(qtbot, tmp_path):
     """Bundles saved before the per-channel read-out carry (hi, lo) as two
     worst-channel numbers. They must keep working: applied to every channel,

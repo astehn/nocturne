@@ -4130,6 +4130,7 @@ class MainWindow(QMainWindow):
         # it now would bake this session's own clipping into the baseline and
         # permanently silence the warning.
         self._clip_baseline = loaded.clip_baseline
+        self._structural_baseline = None    # not in the bundle; never the last image's
         self._saved_app_version = loaded.saved_app_version
         self._project_path = path
         self._dirty = False
@@ -8191,7 +8192,10 @@ class MainWindow(QMainWindow):
         thresholds already assume exactly that.
         """
         if base is None or base.is_linear:
+            # Both, always together: a structural baseline left over from the
+            # previous image excused the user's own crushing on the next one.
             self._clip_baseline = None
+            self._structural_baseline = None
             return
         c = channel_clipping_from_histogram(histogram(base))
         self._clip_baseline = (c.hi, c.lo)      # per channel, (hi, lo) as before
@@ -8260,6 +8264,7 @@ class MainWindow(QMainWindow):
         self.activity.clear()      # the old image's history goes with it; the
                                    # next open then keeps the welcome log
         self._clip_baseline = None
+        self._structural_baseline = None
         self._canvas_img = None
         self._compare_img = None
         self._project_path = None
