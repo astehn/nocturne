@@ -367,6 +367,8 @@ import pytest as _pytest
     ("ξ 1Cet", "ξ¹ Cet"),
     ("μ 1Cnc", "μ¹ Cnc"),
     ("π 6Ori", "π⁶ Ori"),
+    ("π 1UMa", "π¹ UMa"),     # two-capital constellations are glued the same way
+    ("ν 1CrB", "ν¹ CrB"),
     ("σ Ori", "σ Ori"),        # already right: untouched
     ("57 Cyg", "57 Cyg"),      # Flamsteed number + space: untouched
     ("6 Tau", "6 Tau"),
@@ -381,8 +383,9 @@ def test_bundled_named_stars_carry_no_glued_bayer_index():
     import re
     from nocturne.core.catalog import load_named_stars
     names = [r[0] for r in load_named_stars()]
-    assert "π² Ori" in names, "the formatting must happen at load"
-    glued = [n for n in names if re.search(r"\d[A-Z][a-z]{2}$", n)]
+    assert "π² Ori" in names and "π¹ UMa" in names, "the formatting must happen at load"
+    # Independent of the formatter's own pattern: no digit may touch a capital.
+    glued = [n for n in names if re.search(r" \d+[A-Z]", n)]
     assert not glued, glued[:5]
 
 
@@ -401,3 +404,42 @@ def test_the_heart_reaches_the_annotated_catalogue_row():
     from nocturne.core.catalog import load_catalog
     row = next(r for r in load_catalog() if r[0] == "IC1805")
     assert row[1] == "Heart Nebula"
+
+
+# --- what the frame is OF: the object at its centre (fix round 1) ---------------
+
+def _field(ra, dec, w=3840, h=2160, scale_deg=3.75 / 3600):
+    return _wcs(center_ra=ra, center_dec=dec, w=w, h=h, scale_deg=scale_deg)
+
+
+@_pytest.mark.parametrize("ra, dec, want", [
+    (38.2, 61.45, "IC 1805 · Heart Nebula"),     # was "Sh 2-199 · Soul Nebula": the Soul's
+                                                 # clamped anchor counted as centred
+    (36.6, 62.0, "IC 1795 · Fish Head Nebula"),  # the Heart's centre is in this frame too
+    (14.87, 60.91, "IC 63 · Ghost of Cassiopeia"),
+    (106.15, -10.47, "IC 2177 · Seagull Nebula"),
+])
+def test_identify_target_names_the_object_at_the_frame_centre(ra, dec, want):
+    from nocturne.core.catalog import identify_target, objects_in_field
+    shape = (2160, 3840)
+    assert identify_target(objects_in_field(_field(ra, dec), shape), shape) == want
+
+
+def test_objects_carry_their_true_radius_in_pixels():
+    from nocturne.core.catalog import objects_in_field
+    wcs = _field(38.2, 61.45)
+    heart = next(o for o in objects_in_field(wcs, (2160, 3840)) if o.name == "IC 1805")
+    assert abs(heart.r_px - 30.0 * 60.0 / 3.75) < 5.0     # 60' across at 3.75"/px
+
+
+def test_an_object_whose_centre_is_off_frame_never_counts_as_centred():
+    """Isolates the true-centre rule from the covers rule: the big off-frame
+    ring covers the frame centre, the small in-frame one does not; still the
+    one actually centred in the frame wins. With "centred" read from the
+    clamped label anchor, both would count and the big ring would win."""
+    from nocturne.core.catalog import CatalogObject, identify_target
+    big = CatalogObject("Sh 2-199", "Soul Nebula", 0, 0, 120.0, 8.0, 540.0, False, -200.0, 540.0,
+                        r_px=1500.0)
+    small = CatalogObject("IC 1805", "Heart Nebula", 0, 0, 60.0, 1500.0, 500.0, True, 1500.0, 500.0,
+                          r_px=400.0)
+    assert identify_target([big, small], (1080, 1920)) == "IC 1805 · Heart Nebula"

@@ -392,6 +392,7 @@ def test_labels_do_not_overlap_on_screen_when_the_image_is_zoomed_out():
 from nocturne.core.annotation_layout import (  # noqa: E402
     GRID_LINE_COLOUR, MAJOR_COLOUR, MINOR_COLOUR, STAR_COLOUR, STAR_RETICLE,
     _fmt_dec, _fmt_ra, merge_aliases, ra_parts, tier_of, _place_grid_labels)
+from nocturne.core.catalog import CatalogObject  # noqa: E402,F811
 
 
 @pytest.mark.parametrize("name, messier, common, tier", [
@@ -500,12 +501,15 @@ def test_a_label_sits_against_its_circle():
     assert 60.0 <= d <= 60.0 + 12.0, d
 
 
-def test_a_label_goes_inside_a_circle_wider_than_an_eighth_of_the_frame():
-    o = _obj(10.0, cx=400.0, cy=300.0, name="IC 1805", common="Heart Nebula")  # r = 150 px
+@pytest.mark.parametrize("major_arcmin, inside", [(4.9, True), (4.7, False)])
+def test_a_label_goes_inside_a_circle_wider_than_12_percent_of_the_short_side(major_arcmin, inside):
+    # 600 px short side: 12% = 72 px. At 2"/px, 4.9' -> r 73.5 px (inside), 4.7' -> 70.5 (outside).
+    o = _obj(major_arcmin, cx=400.0, cy=300.0, name="IC 1805", common="Heart Nebula")
     prims = build_layout_for([o], [], None, (600, 800), 2.0, _layers(objects=True), "all",
                              measure=_measure)
     (l,) = [p for p in prims if isinstance(p, Label)]
-    assert l.x + l.w / 2 == pytest.approx(400.0) and l.y + l.h / 2 == pytest.approx(300.0)
+    centred = (l.x + l.w / 2, l.y + l.h / 2) == (pytest.approx(400.0), pytest.approx(300.0))
+    assert centred is inside
 
 
 def test_a_small_circle_keeps_its_label_outside():
@@ -527,14 +531,17 @@ def test_labels_stay_inside_the_frame():
         assert l.x >= 0 and l.y >= 0 and l.x + l.w <= 800 and l.y + l.h <= 600
 
 
-def test_majors_are_placed_before_minors():
-    """When only one spot is free, the major gets it — input order is irrelevant."""
-    minor = _obj(1.0, cx=100.0, cy=100.0, name="LDN 935")
-    major = _obj(1.0, cx=101.0, cy=100.0, name="NGC 7092", messier="39")
+def test_a_major_gets_the_first_spot_before_a_larger_minor():
+    """Same priority (both anonymous); the LDN is bigger, the NGC is major. The
+    first placed takes the preferred spot (right of the ring), whatever the
+    input order."""
+    minor = _obj(2.4, cx=300.0, cy=300.0, name="LDN 935")   # r 36 px; rings >= 30 px are
+    major = _obj(2.0, cx=300.0, cy=300.0, name="NGC 1")     # not obstacles, so both can label
+    assert priority_of(minor) == priority_of(major)
     prims = build_layout_for([minor, major], [], None, (600, 800), 2.0,
                              _layers(objects=True), "all", measure=_measure)
-    labels = [p for p in prims if isinstance(p, Label)]
-    assert labels[0].text == "M 39"
+    labels = {p.text: p for p in prims if isinstance(p, Label)}
+    assert labels["NGC 1"].x > 300.0 and labels["LDN 935"].x + labels["LDN 935"].w <= 300.0 + 1e-6
 
 
 # --- alias merge ---------------------------------------------------------------
@@ -746,3 +753,130 @@ def test_an_ngc_or_ic_name_leads_a_merged_label_over_a_bigger_survey_entry():
     ic = _obj(40.0, cx=400.0, cy=300.0, name="IC 1848", common="Soul Nebula")
     (rep, grp), = merge_aliases([sh, ic], 2.0)
     assert rep is ic and grp == [ic, sh]
+
+
+# --- fix round 1: guards for the reviewer's surviving mutations -------------------
+
+def test_the_mockup_reticle_for_every_star():
+    assert STAR_RETICLE["star"] == STAR_RETICLE["star_bright"] == (9.0, 11.0)
+
+
+def test_alias_merge_reaches_as_far_as_the_larger_ring():
+    """The Soul: IC 1848 (40', r 20') and Sh 2-199 (120', r 60') sit 25' apart —
+    outside IC 1848's ring, inside Sh 2-199's."""
+    ic = _obj(40.0, cx=1000.0, cy=1000.0, name="IC 1848", common="Soul Nebula")
+    sh = _obj(120.0, cx=1000.0 + 750.0, cy=1000.0, name="Sh 2-199", common="Soul Nebula")  # 25' at 2"/px
+    groups = merge_aliases([sh, ic], 2.0)
+    assert len(groups) == 1 and groups[0][0] is ic
+
+
+def _overlaps_any(prims, box):
+    return [p.text for p in prims if isinstance(p, Label) and p.tier in ("major", "minor")
+            and _boxes_overlap(_box(p), box)]
+
+
+def test_object_labels_keep_out_of_the_compass_corner():
+    o = _obj(1.0, cx=640.0, cy=60.0, name="NGC 1234567")   # its right-hand spot is the corner
+    prims = build_layout_for([o], [], _grid_wcs(), (600, 800), 2.0,
+                             _layers(objects=True, compass=True), "all", measure=_measure)
+    assert [p for p in prims if isinstance(p, Label) and p.text == "NGC 1234567"], "placed elsewhere"
+    assert not _overlaps_any(prims, (730.0 - 60, 70.0 - 60, 730.0 + 60, 70.0 + 60))
+
+
+def test_object_labels_keep_out_of_the_scale_bar_corner():
+    o = _obj(1.0, cx=90.0, cy=545.0, name="NGC 1234567")
+    prims = build_layout_for([o], [], None, (600, 800), 2.0,
+                             _layers(objects=True, scale=True), "all", measure=_measure)
+    bar = next(p for p in prims if isinstance(p, Leader) and p.y1 == p.y2)
+    lab = next(p for p in prims if isinstance(p, Label) and p.tier == "furniture")
+    assert [p for p in prims if isinstance(p, Label) and p.text == "NGC 1234567"]
+    assert not _overlaps_any(prims, (bar.x1 - 10, lab.y - 4, bar.x2 + 10, bar.y1 + 10))
+
+
+def test_a_small_ring_is_an_obstacle_to_other_labels():
+    a = _obj(1.0, cx=300.0, cy=300.0, name="NGC 1")
+    b = _obj(1.0, cx=345.0, cy=300.0, name="LDN 9")        # its ring sits where NGC 1's label would
+    prims = build_layout_for([a, b], [], None, (600, 800), 2.0, _layers(objects=True), "all",
+                             measure=_measure)
+    e = 7.5 + 3.0
+    assert not _overlaps_any(prims, (345.0 - e, 300.0 - e, 345.0 + e, 300.0 + e))
+
+
+def test_an_off_frame_centre_labels_by_its_clamped_anchor():
+    o = CatalogObject("NGC 7000", "", 0.0, 0.0, 30.0, 8.0, 300.0, False, -300.0, 300.0)  # r 450 px
+    prims = build_layout_for([o], [], None, (600, 800), 2.0, _layers(objects=True), "all",
+                             measure=_measure)
+    (l,) = [p for p in prims if isinstance(p, Label)]
+    nx, ny = min(max(8.0, l.x), l.x + l.w), min(max(300.0, l.y), l.y + l.h)
+    assert math.hypot(nx - 8.0, ny - 300.0) < 20.0, "beside its anchor, not a ring's radius away"
+
+
+def test_a_large_ring_falls_back_to_its_inner_rim():
+    from nocturne.core.annotation_layout import _object_labels
+    o = _obj(4.0, cx=1000.0, cy=1000.0, name="NGC 1")        # r 60 px > 40, < 12% of 2000
+    occupied = [(0, 0, 940, 2000), (1060, 0, 2000, 2000), (0, 0, 2000, 940), (0, 1060, 2000, 2000)]
+    labels = _object_labels([(o, [o])], (2000, 2000), 2.0, _measure, 1.0, occupied)
+    assert labels, "the inner rim is free"
+    l = labels[0]
+    assert 940 <= l.x and l.x + l.w <= 1060 and 940 <= l.y and l.y + l.h <= 1060
+
+
+def test_a_label_too_big_for_the_frame_is_dropped():
+    o = _obj(1.0, cx=150.0, cy=150.0, name="A" * 60)       # 420 px on a 300 px frame
+    prims = build_layout_for([o], [], None, (300, 300), 2.0, _layers(objects=True), "all",
+                             measure=_measure)
+    assert not [p for p in prims if isinstance(p, Label)]
+
+
+def test_an_ra_label_prefers_the_bottom_edge():
+    line = GridLine([(400.0, 5.0), (400.0, 595.0)], "#fff", "2h40m", "tip", ra_parts(40.0))
+    (l,) = _place_grid_labels([line], (600, 800), _measure, 1.0, [])
+    assert l.y > 300.0
+    line_up = line._replace(points=line.points[::-1])
+    (l2,) = _place_grid_labels([line_up], (600, 800), _measure, 1.0, [])
+    assert l2.y > 300.0, "whichever way the polyline runs"
+
+
+def test_a_hair_south_of_the_equator_is_plus_zero():
+    assert _fmt_dec(-0.001) == "+0°"
+
+
+def test_the_default_measure_reserves_at_the_rendered_scale():
+    """PS-07: no measure passed -> the fallback must reserve at ui_scale."""
+    from nocturne.core.annotation_layout import _default_measure
+    o = _obj(1.0, cx=300.0, cy=300.0, name="NGC 1")
+    prims = build_layout_for([o], [], None, (2000, 2000), 2.0, _layers(objects=True), "all",
+                             ui_scale=1.8)
+    (l,) = [p for p in prims if isinstance(p, Label)]
+    assert (l.w, l.h) == _default_measure("NGC 1", "major", 1.8)
+    assert _default_measure("NGC 1", "major", 1.8)[0] == pytest.approx(1.8 * _default_measure("NGC 1", "major")[0])
+
+
+def test_grid_labels_stay_on_their_own_line_under_any_rotation_or_scale():
+    """After the frame clamp a label more than half its height off its line is
+    moved to the other end, or dropped (ruling, fix round 1)."""
+    import random
+    rng = random.Random(5)
+    shape, kept = (2160, 3840), 0
+    for _ in range(40):
+        rot, sc, dec = rng.uniform(0, 360), rng.uniform(1.5, 8) / 3600, rng.uniform(-80, 80)
+        wcs = _rotated_wcs(rot, sc, dec=dec, w=3840, h=2160)
+        prims = build_layout_for([], [], wcs, shape, sc * 3600, _layers(grid=True, compass=True,
+                                 scale=True), "all", ui_scale=3.2)
+        lines = grid_lines(wcs, shape, "#fff")
+        for l in (p for p in prims if isinstance(p, Label) and p.tier == "grid"):
+            kept += 1
+            own = [g for g in lines if g.label == l.text]
+            d = min(_dist_to_polyline(l.x + l.w / 2, l.y + l.h / 2, g.points) for g in own)
+            assert d <= l.h / 2 + 1e-6, (l.text, round(d), rot, sc * 3600)
+            assert l.x >= 0 and l.y >= 0 and l.x + l.w <= 3840 and l.y + l.h <= 2160
+    assert kept > 200, "the sweep must keep most labels"
+
+
+def test_a_grid_label_the_clamp_pushes_off_its_line_takes_the_other_end():
+    # A Dec line hugging the top edge at its left end: there the clamp pushes the
+    # label ~12 px below the line (more than half its 14 px height); the right
+    # end, 40 px down, is clean.
+    line = GridLine([(0.0, 1.0), (790.0, 40.0)], "#fff", "+44°", "tip")
+    (l,) = _place_grid_labels([line], (600, 800), _measure, 1.0, [])
+    assert l.x > 400, "the left end would sit off its line after the clamp"

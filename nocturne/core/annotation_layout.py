@@ -37,9 +37,9 @@ _SCALE_COLOUR = _alpha(MINOR_COLOUR, 210)
 # Gapped crosshair of a named star, in REFERENCE px (gap from the star to where
 # an arm starts, arm length). Renderers draw it at reference px x their own
 # scale (1 on screen, scale_for(shape) in the export); the layout reserves it
-# at x ui_scale, so a name starts past the arm. Mockup: 9/11 for every star;
-# a fainter star keeps today's slightly smaller mark.
-STAR_RETICLE = {"star": (7.0, 9.0), "star_bright": (9.0, 11.0)}
+# at x ui_scale, so a name starts past the arm. Mockup: 9/11 for every star
+# (both keys kept so Marker.size stays a valid key for old callers).
+STAR_RETICLE = {"star": (9.0, 11.0), "star_bright": (9.0, 11.0)}
 
 # Text size classes, in points at the 1200 px reference (the mockup's PT).
 # The layout only ever sees them through `measure`; the renderers own the
@@ -486,11 +486,23 @@ def _nearest_edge(x, y, shape) -> str:
 _EDGE_PREF = {True: ["bottom", "top", "left", "right"], False: ["left", "right", "top", "bottom"]}
 
 
+def _dist_to_polyline(px, py, pts) -> float:
+    best = math.inf
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        dx, dy = x1 - x0, y1 - y0
+        ll = dx * dx + dy * dy
+        t = 0.0 if ll == 0 else max(0.0, min(1.0, ((px - x0) * dx + (py - y0) * dy) / ll))
+        best = min(best, math.hypot(px - x0 - t * dx, py - y0 - t * dy))
+    return best
+
+
 def _place_grid_labels(lines, shape, measure, u, occupied):
     """Each line's label ON the line just inside the frame, centred on the
     point a short way in from the end that meets the preferred edge; if that
     spot is taken the other end is tried, then the label is dropped. Clamped
-    so it is never clipped by the frame edge."""
+    so it is never clipped by the frame edge — and an end where the clamp
+    drags the label more than half its height off its line counts as taken
+    (4% of labels sat up to 100 px off their line in a random sweep)."""
     inset, pad, margin = _MARGIN * u / 2, _PAD * u, _MARGIN * u
     labels = []
     for gl in lines:
@@ -504,7 +516,11 @@ def _place_grid_labels(lines, shape, measure, u, occupied):
         cands = []
         for end in ends:
             px, py = _point_along(gl.points, end, margin + 0.6 * max(tw, th))
-            cands.append((px - tw / 2, py - th / 2))
+            if not _fits(tw, th, shape, inset):
+                break
+            lx, ly = _clamp_into(px - tw / 2, py - th / 2, tw, th, shape, inset)
+            if _dist_to_polyline(lx + tw / 2, ly + th / 2, gl.points) <= th / 2:
+                cands.append((lx, ly))
         spot = _place_block(cands, tw, th, shape, inset, occupied, pad)
         if spot is not None:
             labels.append(Label(gl.label, spot[0], spot[1], GRID_TEXT_COLOUR, "grid",
