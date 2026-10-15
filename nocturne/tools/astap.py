@@ -327,14 +327,21 @@ class ASTAP:
 # carries 2.2% and solves; after RC-Astro NR it carries 0.15-0.2% and fails at
 # the correct header scale. Topping it back up solved IC 1805 from 0.4% and
 # M 16 from 1.4%, and both still solved at 3%. 2% is the undenoised level,
-# with margin over both thresholds.
+# with margin over both thresholds. The same 2% is the "already noisy" gate:
+# a frame at or above the undenoised level has nothing to restore, and the
+# undenoised IC 1805 states at 2.2% all solved first time.
 _NOISE_FLOOR = 0.02
+
+# Lifts the noisy copy clear of _write_solve_fits' clip at zero: on a sky
+# crushed to black, half of zero-mean noise is negative, and a 0.0060 floor
+# arrived at ASTAP as 0.0025-0.0029. Five sigma leaves nothing to clip.
+_PEDESTAL_SIGMAS = 5.0
 
 
 def _pixel_noise(lum: np.ndarray) -> float:
     """Pixel-to-pixel noise: MAD of neighbour differences, blind to nebulosity
     and gradients that a plain MAD would count as noise."""
-    d = (lum[:, 1:] - lum[:, :-1])[::2, ::2]
+    d = lum[::2, 1::2] - lum[::2, :-1:2]   # slice first: no full-size temporary
     return float(1.4826 * np.median(np.abs(d - np.median(d))) / np.sqrt(2.0))
 
 
@@ -347,17 +354,26 @@ def with_noise_floor(img: AstroImage) -> AstroImage | None:
     ranking stars by brightness: on his IC 1805, 77% of the picks were among
     the field's brightest Gaia stars before Noise Reduction and 57% after, too
     few to match. Uniform noise makes SNR follow brightness again. Seeded, so
-    a retry is reproducible; the caller's image is never touched."""
+    a retry is reproducible; the caller's image is never touched.
+
+    The span is the 99.9th percentile, so a field whose stars cover under
+    ~0.1% of the frame reads as all sky and gets no retry (measured on a
+    synthetic 9 MP field: 150 stars sit right at that edge). Left so on
+    purpose: a field that sparse holds no more than the few hundred stars
+    ASTAP picks anyway, so SNR ranking cannot change which ones it uses."""
+    if img.data.shape[0] < 2 or img.data.shape[1] < 2 or not np.isfinite(img.data).all():
+        return None
     d = np.clip(img.data, 0.0, None)
     lum = d.mean(axis=2) if d.ndim == 3 else d
     sample = lum[::3, ::3]
     span = float(np.percentile(sample, 99.9) - np.median(sample))
     target = _NOISE_FLOOR * span
     have = _pixel_noise(lum)
-    if not (np.isfinite(span) and np.isfinite(have)) or span <= 0 or have >= target:
+    if span <= 0 or have >= target:
         return None
     add = float(np.sqrt(target * target - have * have))
     noise = np.random.default_rng(0).normal(0.0, add, lum.shape).astype(np.float32)
+    noise += np.float32(_PEDESTAL_SIGMAS * add)
     return AstroImage(lum.astype(np.float32) + noise, is_linear=img.is_linear,
                       metadata=img.metadata)
 

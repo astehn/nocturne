@@ -437,3 +437,61 @@ def test_an_assumed_scale_tries_the_noise_floor_before_going_blind():
     assert len(rec.calls) == 3
     assert rec.calls[0] is not None and rec.calls[1] == rec.calls[0]
     assert rec.calls[2] is None
+
+
+def test_a_retry_that_also_fails_reports_the_first_attempt():
+    """The caller gets the frame as the user made it, not the noisy copy:
+    the first attempt's ASTAP message is the honest diagnostic."""
+    from nocturne.tools.astap import solve_with_scale_fallback
+
+    class _Messages(_Recorder):
+        def solve(self, img, **kw):
+            super().solve(img, **kw)
+            return SolveResult(False, None, 0.0, 0.0, 0.0,
+                               message=f"attempt {len(self.calls) - 1}")
+
+    rec = _Messages()
+    res, source = solve_with_scale_fallback(rec, _star_field(0.0005), _HEADER_META, 400)
+    assert len(rec.calls) == 2, "the noise retry ran"
+    assert not res.solved and source == "header"
+    assert res.message == "attempt 0"
+
+
+def test_a_crushed_black_sky_still_reaches_astap_with_the_whole_floor(tmp_path):
+    """_write_solve_fits clips at zero. On a sky crushed to black, half of
+    zero-mean noise is negative and would be clipped away — measured on a
+    dark sky: a 0.0060 target arrived as 0.0025-0.0029, ~1% of the range,
+    below M 16's 1.4% rescue level."""
+    from astropy.io import fits
+    from nocturne.tools.astap import _NOISE_FLOOR, _write_solve_fits, with_noise_floor
+    img = _star_field(noise_sigma=0.0)
+    img = AstroImage(np.clip(img.data - 0.10, 0.0, None), is_linear=False)  # sky at 0
+    floored = with_noise_floor(img)
+    assert floored is not None
+    path = str(tmp_path / "s.fits")
+    _write_solve_fits(floored, path, None)
+    handed = fits.getdata(path).astype(np.float32)
+    target = _NOISE_FLOOR * _span(img.data)
+    assert _pixel_noise(handed) >= 0.9 * target, \
+        f"ASTAP got {_pixel_noise(handed):.5f} of a {target:.5f} floor"
+
+
+@pytest.mark.parametrize("data", [
+    np.full((1, 1), 0.5, np.float32),
+    np.full((5, 1), 0.5, np.float32),
+    np.full((1, 5), 0.5, np.float32),
+    np.where(np.eye(50, dtype=bool), np.nan, 0.2).astype(np.float32),
+], ids=["1x1", "5x1", "1x5", "nan"])
+def test_degenerate_frames_get_no_retry_and_no_warnings(data):
+    import warnings
+    from nocturne.tools.astap import with_noise_floor
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert with_noise_floor(AstroImage(data, is_linear=False)) is None
+
+
+def test_the_retry_copy_is_reproducible():
+    from nocturne.tools.astap import with_noise_floor
+    img = _star_field(noise_sigma=0.0005)
+    a, b = with_noise_floor(img), with_noise_floor(img)
+    assert a.data.tobytes() == b.data.tobytes()
