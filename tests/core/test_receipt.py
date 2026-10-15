@@ -44,7 +44,9 @@ def test_the_fallback_is_named_specifically_where_that_is_knowable():
     star steps share steps/star_split.resolve_star_split, so they share a name."""
     assert "sky balance" in engine_for("color", Settings()).engine
     assert "built-in sharpen" in engine_for("deconvolution", Settings()).engine
-    for sid in ("star_reduction", "saturation", "green_fringe", "narrowband"):
+    # De-green Stars and Narrowband were listed here too; neither splits
+    # without a splitter (see the 2026-10-14 tests below).
+    for sid in ("star_reduction", "saturation", "color_balance", "starless_levels"):
         assert "free star split" in engine_for(sid, Settings()).engine, sid
 
 
@@ -169,3 +171,64 @@ def test_preflight_names_graxpert_when_it_is_the_default(tmp_path):
     r = Recipe(steps=[{"stage": "noise_sharpen", "option": "medium"}])
     plan = preflight(r, s)[0]
     assert plan.outcome == "run" and plan.engine == "GraXpert"
+
+
+# --- the star steps name the splitter that actually runs (2026-10-14) -------
+# His log after a preset with StarNet2 installed and RC-Astro not configured:
+# every step line said "(StarNet2)", and the summary below them said the same
+# steps "used Nocturne (free star split)". The receipt predated StarNet2 and
+# never asked steps/star_split.preferred_splitter, which is what the steps ask.
+
+_SPLIT = ("star_reduction", "saturation", "green_fringe", "narrowband",
+          "color_balance", "starless_levels")
+
+
+def test_split_steps_name_starx_when_rc_astro_is_configured(tmp_path):
+    s = _configured(tmp_path, rcastro_path=1, starnet_path=1)
+    for sid in _SPLIT:
+        note = engine_for(sid, s)
+        assert (note.engine, note.reason) == ("StarXTerminator", ""), sid
+
+
+def test_split_steps_name_starnet2_when_it_is_what_runs(tmp_path):
+    s = _configured(tmp_path, starnet_path=1)
+    for sid in _SPLIT:
+        note = engine_for(sid, s)
+        assert note.engine == "StarNet2", sid
+        assert note.reason == "RC-Astro is not configured in Settings", sid
+        assert note.is_fallback
+
+
+def test_split_steps_name_the_built_in_path_only_when_nothing_is_installed():
+    """Each fallback checked against the step's apply(): Narrowband without a
+    splitter renders the whole image and De-green Stars works in a star mask —
+    neither splits, so neither is called a split."""
+    expected = {
+        "star_reduction": "Nocturne (free star split)",
+        "saturation": "Nocturne (free star split)",
+        "color_balance": "Nocturne (free star split)",
+        "starless_levels": "Nocturne (free star split)",
+        "green_fringe": "Nocturne (star mask)",
+        "narrowband": "Nocturne (whole image, no split)",
+    }
+    for sid, engine in expected.items():
+        note = engine_for(sid, Settings())
+        assert note.engine == engine, sid
+        assert note.reason == "RC-Astro is not configured in Settings", sid
+
+
+def test_the_receipt_asks_the_resolver_the_steps_ask(tmp_path, monkeypatch):
+    """One rule. If preferred_splitter's order ever changes, the receipt must
+    follow it rather than keep its own copy of the order."""
+    import nocturne.steps.star_split as ss
+
+    class StarNet:                      # splitter_name reads the type's name
+        pass
+    s = _configured(tmp_path, rcastro_path=1)
+    monkeypatch.setattr(ss, "preferred_splitter", lambda settings: StarNet())
+    assert engine_for("star_reduction", s).engine == "StarNet2"
+
+
+def test_starless_levels_is_in_the_report():
+    notes = notes_for(["Starless Levels"], Settings())
+    assert [n.step for n in notes] == ["Starless Levels"]

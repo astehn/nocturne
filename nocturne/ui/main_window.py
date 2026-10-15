@@ -572,13 +572,11 @@ def _remove_quietly(path: str) -> None:
 
 
 # The steps that split stars from the sky, and so are cleaner with a real star
-# tool: receipt's free-split fallbacks, Starless Levels (which has no fallback
-# entry, the split IS the step) and the two layered Enhancements taps.
+# tool: the receipt's splitter-taking stages and the two layered Enhancements taps.
 def _split_sets():
     from ..core import receipt
     from ..steps.enhance_step import _LAYERED
-    stages = {s for s, e in receipt._FALLBACKS.items() if e == receipt._FREE_SPLIT}
-    return frozenset(stages | {"starless_levels"}), frozenset(_LAYERED)
+    return receipt.SPLIT_STAGES, frozenset(_LAYERED)
 
 
 _SPLIT_STAGES, _SPLIT_TAPS = _split_sets()

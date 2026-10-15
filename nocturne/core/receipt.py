@@ -48,6 +48,7 @@ _PREFERS: dict[str, tuple[str, str, str]] = {
     "green_fringe":   ("De-green Stars", "StarXTerminator", "rcastro"),
     "narrowband":     ("Narrowband", "StarXTerminator", "rcastro"),
     "color_balance":  ("Colour Balance", "StarXTerminator", "rcastro"),
+    "starless_levels": ("Starless Levels", "StarXTerminator", "rcastro"),
 }
 
 # What the fallback actually IS, verified against each step's apply() rather
@@ -56,8 +57,15 @@ _PREFERS: dict[str, tuple[str, str, str]] = {
 # unconditionally. Naming a fallback that does not exist is worse than naming
 # none, because the whole point of the receipt is that it can be trusted.
 #
-# The five star steps share `steps/star_split.resolve_star_split`: StarX when
-# RC-Astro is configured, the free SEP split otherwise. So they share a caveat.
+# The star steps take their splitter from `steps/star_split.preferred_splitter`:
+# StarX when RC-Astro is configured, StarNet2 when it is installed, and only
+# then each step's own no-tool path. This said "free star split" whenever
+# RC-Astro was missing — written before StarNet2 existed, so a summary told
+# StarNet2 users the free split had run under log lines saying StarNet2
+# (2026-10-14). `engine_for` asks the resolver; `_FALLBACKS` is only the last
+# rung, and for two steps that rung is not a split at all.
+SPLIT_STAGES = frozenset({"star_reduction", "saturation", "green_fringe",
+                          "narrowband", "color_balance", "starless_levels"})
 _FREE_SPLIT = "Nocturne (free star split)"
 _FALLBACKS: dict[str, str] = {
     "color": "Nocturne (sky balance)",
@@ -65,9 +73,12 @@ _FALLBACKS: dict[str, str] = {
     "noise_sharpen": "Nocturne (built-in denoise)",
     "star_reduction": _FREE_SPLIT,
     "saturation": _FREE_SPLIT,
-    "green_fringe": _FREE_SPLIT,
-    "narrowband": _FREE_SPLIT,
     "color_balance": _FREE_SPLIT,
+    "starless_levels": _FREE_SPLIT,
+    # GreenFringeStep without a splitter de-greens inside a star mask, and
+    # NarrowbandStep renders the whole image: neither separates anything.
+    "green_fringe": "Nocturne (star mask)",
+    "narrowband": "Nocturne (whole image, no split)",
 }
 
 # Steps with NO fallback: without the tool they cannot run at all, and the app
@@ -129,6 +140,17 @@ def _noise_note(settings, engine) -> EngineNote:
                       f"{products[want][0]} is not configured in Settings")
 
 
+def _split_note(stage_id: str, settings) -> EngineNote:
+    """The splitter the step will be handed, from the function that hands it."""
+    from ..steps import star_split
+    name, preferred, needs = _PREFERS[stage_id]
+    tag = star_split.splitter_name(star_split.preferred_splitter(settings))
+    if tag == "StarX":
+        return EngineNote(name, preferred, "")
+    engine = "StarNet2" if tag == "StarNet2" else _FALLBACKS[stage_id]
+    return EngineNote(name, engine, _NOT_CONFIGURED[needs])
+
+
 def engine_for(stage_id: str, settings, engine: str | None = None) -> EngineNote | None:
     """What `make_step` will use for this stage, or None if it has no choice.
 
@@ -141,6 +163,8 @@ def engine_for(stage_id: str, settings, engine: str | None = None) -> EngineNote
         return None
     if stage_id == "noise_sharpen":
         return _noise_note(settings, engine)
+    if stage_id in SPLIT_STAGES:
+        return _split_note(stage_id, settings)
     name, engine, needs = prefers
     if _NEEDS[needs](settings):
         return EngineNote(name, engine, "")
