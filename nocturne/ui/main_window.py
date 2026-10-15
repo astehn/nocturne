@@ -421,6 +421,23 @@ def _share_rgb8(data):
     return rgb8
 
 
+def _restored_object(saved: dict, wcs):
+    """A CatalogObject from a saved bundle, read the way today's catalogue reads.
+
+    Only known fields are taken, so a bundle from a newer build (one more field)
+    still restores. The common name is looked up afresh: a bundle solved before
+    IC 1805 was named saved "" and would show the old label for ever. r_px is
+    not saved (see _solve_state_dict) and is recomputed as objects_in_field does."""
+    from dataclasses import fields
+    from ..core.catalog import CatalogObject, _pixscale_arcsec, common_name_for
+    known = {f.name for f in fields(CatalogObject)}
+    o = CatalogObject(**{k: v for k, v in saved.items() if k in known and k != "r_px"})
+    o.common = common_name_for(o.name) or o.common
+    pixscale = _pixscale_arcsec(wcs) if wcs is not None else 0.0
+    o.r_px = (o.major_arcmin * 60.0 / 2.0) / pixscale if pixscale > 0 else 0.0
+    return o
+
+
 def _slot_property(name):
     return property(lambda self: self._prep_slots[name].held,
                     lambda self, value: setattr(self._prep_slots[name], "held", value))
@@ -4221,9 +4238,12 @@ class MainWindow(QMainWindow):
             return None
         _sig, res, objs = self._solve
         from dataclasses import asdict
+        # r_px is derived (recomputed on restore), and Nocturne <= 0.53 builds
+        # CatalogObject(**o): an unknown key there is a TypeError that silently
+        # drops the whole solve. So the saved shape stays the old one.
         return {
             "wcs": dict(res.wcs.to_header()) if res.wcs is not None else None,
-            "objects": [asdict(o) for o in objs],
+            "objects": [{k: v for k, v in asdict(o).items() if k != "r_px"} for o in objs],
         }
 
     def _restore_solve_state(self, d: dict | None) -> None:
@@ -4244,7 +4264,7 @@ class MainWindow(QMainWindow):
             res = ASTAP._build(header)   # rebuilds WCS + solved fields from the header
             if res is None:
                 return
-            objs = [CatalogObject(**o) for o in (d.get("objects") or [])]
+            objs = [_restored_object(o, res.wcs) for o in (d.get("objects") or [])]
             self._solve = (self._solve_sig(), res, objs)
             self._solve_freshness = "cached"   # a restored solution, not a fresh solve
         except Exception:
