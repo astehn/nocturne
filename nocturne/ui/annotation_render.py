@@ -1,178 +1,236 @@
 """QPainter adapter: burns a primitive list from `core.annotation_layout`
-straight onto an exported `QImage`, in place. This exists to close PS-07 —
-the live overlay drew named stars and the burned PNG export silently did
-not, because the export path used to build its own primitives independently.
-Now both adapters walk the SAME primitive list from `build_layout_for`; this
-file only knows how to turn a Circle/Marker/Label/Leader/GridLine into pixels
-on a raster image, mirroring `ui.annotation_overlay`'s Qt-canvas adapter
-primitive-for-primitive.
+straight onto an exported `QImage`, in place — and the ONE place the overlay's
+look is defined. The live canvas (`ui.annotation_overlay`) builds its items
+from the helpers here (`label_path`, `paint_text_path`, the stroke widths), so
+the preview and the export cannot drift apart in style (the 2026-10-15 restyle:
+soft halo, two-line major labels, raised h/m, gapped star reticle).
 
-Size mapping is DELIBERATELY different from the live adapter, though. The
-live adapter (`annotation_overlay._SIZE_PT`) maps size classes to constant
-ON-SCREEN point sizes — correct there because `ItemIgnoresTransformations`
-already pins those items to a fixed device-pixel size regardless of the
-image's resolution or the current zoom. An export has no "screen" to pin
-against: reusing those same constant point sizes verbatim would leave a
-6000px export with 15pt text lost in a corner. Instead every size class here
-is scaled relative to the EXPORTED IMAGE's own dimensions — specifically its
-SMALLER dimension against a nominal 1200px baseline (chosen to match the
-live adapter's point sizes at a typical on-screen working resolution) — so
-text and glyphs come out proportionally sized at any export resolution, with
-a floor (`_MIN_PT`) so they never shrink to nothing on a tiny export.
+Everything is defined at the 1200 px reference (`LABEL_PT`, the widths below)
+and multiplied by a scale: `scale_for(shape)` in the export, 1 on the canvas,
+whose items stay a constant screen size. Text is built as a path at the
+reference size and then scaled, so its size is exactly linear in the scale —
+which is what lets `annotation_overlay.make_measure(ui_scale)` reserve exactly
+the box either consumer later paints.
 
-There is no "screen" in an export, so `screen_fixed` on a `Leader` (the
-compass arrow's cosmetic-HUD flag) is not consulted here — every primitive
-is drawn in plain image-space.
-
-IMPORTANT: the size mapping is not just a rendering-time detail — it also
-has to reach `core.annotation_layout.build_layout_for`'s `ui_scale`
-parameter, which the caller (`main_window._annotation_primitives`) sets to
-`scale_for(shape)` for the export path. `place_labels` reserves
-non-overlap rectangles from `build_layout_for`'s `measure` callback at
-BUILD time; if this module rendered text bigger than what was reserved for
-it, labels that the (unscaled) live preview shows cleanly separated could
-overlap in the export even though both consumed the identical primitive
-list. Passing the same scale through both stages means the export gets its
-own layout PASS, not just its own paint pass — its label positions
-legitimately differ from the live overlay's (bigger text needs more room),
-and that is correct: content parity, not pixel-identical placement, is the
-guarantee `build_layout_for` makes."""
+The export's scale must also reach `build_layout_for(ui_scale=...)` (the caller,
+`main_window._annotation_primitives`, does that): the layout reserves space at
+that scale, so painting bigger than it reserved would make labels collide."""
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPainterPath, QPen
+from PySide6.QtGui import (QColor, QFont, QFontMetricsF, QImage, QPainter, QPainterPath, QPen,
+                           QTransform)
 
-from ..core.annotation_layout import Circle, GridLine, Label, Leader, Marker
+from ..core.annotation_layout import LABEL_PT, STAR_RETICLE, Circle, GridLine, Label, Leader, Marker
 
-# Mirrors annotation_overlay._SIZE_PT exactly -- the two must start from the
-# same numbers so the export "reads like" the live overlay once scaled.
-_SIZE_PT = {"primary": 22.0, "secondary": 18.0, "star": 15.0, "star_bright": 17.0,
-            "grid": 13.0, "compass": 20.0}
-_DEFAULT_PT = _SIZE_PT["secondary"]
-_BOLD_SIZES = {"compass"}
-_OUTLINE_COLOUR = "#0a0f18"
+_REF_DIM = 1200.0   # the reference frame LABEL_PT and the widths below are tuned at
+_MIN_PT = 4.0       # floor so text never vanishes on a tiny export
 
-_REF_DIM = 1200.0   # baseline the live adapter's constant point sizes read
-                     # naturally at; see module docstring
-_MIN_PT = 4.0        # floor so text/glyphs never vanish on a tiny export
+# Requested, not bundled: the approved mockup was drawn in it. Where it is absent
+# Qt substitutes the system sans for BOTH measure and paint, so layout holds.
+FONT_FAMILY = "Helvetica Neue"
+_MEDIUM_SIZES = {"major", "major_common"}
+
+# The soft halo: widening faint dark strokes under the fill, widest first
+# (reference px, alpha), so text reads on bright nebula without a hard outline.
+HALO_RGB = (6, 9, 16)
+HALO_STROKES = ((7.0, 40), (4.6, 70), (2.6, 120))
+HALO_PAD = HALO_STROKES[0][0] / 2
+
+# Raised runs (the h and m of 2ʰ40ᵐ): set this much smaller and lifted by this
+# fraction of the line's ascent, as the mockup drew them.
+RAISED_SIZE = 0.66
+RAISED_LIFT = 0.42
+
+# Stroke widths, reference px.
+RING_WIDTH = 1.1
+RING_HALO_WIDTH = 2.6
+RING_HALO_ALPHA = 60
+RETICLE_WIDTH = 1.4
+LEADER_WIDTH = 1.4
+GRID_WIDTH = 0.8
 
 
 def scale_for(shape) -> float:
     """The export `ui_scale`: the image's own smaller dimension against the
-    `_REF_DIM` baseline. Public so `main_window` can pass the SAME number
-    into `build_layout_for`'s `ui_scale` that this module uses to paint —
-    see the module docstring for why those two must agree."""
+    `_REF_DIM` baseline. `main_window` passes the SAME number to
+    `build_layout_for`, so what is reserved is what is painted."""
     h, w = shape
     return max(min(h, w), 1.0) / _REF_DIM
 
 
-def _pt(size: str, scale: float) -> float:
-    return max(_SIZE_PT.get(size, _DEFAULT_PT) * scale, _MIN_PT)
+def _ref_pt(size: str) -> float:
+    return LABEL_PT.get(size, LABEL_PT["minor"])
 
 
-def _paint_circle(painter: QPainter, p: Circle, scale: float) -> None:
-    # r is a TRUE image-pixel radius (angular extent / pixel scale) -- already
-    # in the right units, so only the stroke width comes from the size scale.
-    pen = QPen(QColor(p.colour))
-    pen.setWidthF(max(1.6 * scale, 1.0))
-    if p.dashed:
-        pen.setStyle(Qt.PenStyle.DashLine)
-    painter.setPen(pen)
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.drawEllipse(QPointF(p.x, p.y), p.r, p.r)
+def _eff(size: str, scale: float) -> float:
+    """The factor a size class is actually drawn at: `scale`, floored."""
+    return max(scale, _MIN_PT / _ref_pt(size))
 
 
-def _star_tick_spans(size: str, scale: float) -> list:
-    """Four short ticks flanking the star, never a cross through it — mirrors
-    annotation_overlay._star_ticks."""
-    pt = _SIZE_PT.get(size, _SIZE_PT["star"]) * scale
-    gap, arm = pt * 0.35, pt * 0.55
-    return [((gap, 0.0), (gap + arm, 0.0)), ((-gap, 0.0), (-gap - arm, 0.0)),
-            ((0.0, -gap), (0.0, -gap - arm)), ((0.0, gap), (0.0, gap + arm))]
+def _font(size: str, factor: float = 1.0) -> QFont:
+    f = QFont(FONT_FAMILY)
+    f.setPointSizeF(_ref_pt(size) * factor)
+    if size in _MEDIUM_SIZES:
+        f.setWeight(QFont.Weight.Medium)
+    return f
 
 
-def _paint_marker(painter: QPainter, p: Marker, scale: float) -> None:
-    pen = QPen(QColor(p.colour))
-    if p.kind == "star":
-        pen.setWidthF(max(1.5 * scale, 1.0))
-        painter.setPen(pen)
-        for (x1, y1), (x2, y2) in _star_tick_spans(p.size, scale):
-            painter.drawLine(QPointF(p.x + x1, p.y + y1), QPointF(p.x + x2, p.y + y2))
-    else:                                            # "compass" (and future non-star kinds)
-        r = max(3.0 * scale, 1.5)
-        pen.setWidthF(1.0)
-        painter.setPen(pen)
-        painter.setBrush(QColor(p.colour))
-        painter.drawEllipse(QPointF(p.x, p.y), r, r)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-
-
-def _paint_text(painter: QPainter, text: str, x: float, y: float, colour: str,
-                size: str, scale: float) -> None:
-    """(x, y) is the top-left anchor, matching Label's contract with
-    place_labels/annotation_overlay (QGraphicsSimpleTextItem.setPos)."""
-    font = QFont()
-    font.setPointSizeF(_pt(size, scale))
-    font.setBold(size in _BOLD_SIZES)
-    fm = QFontMetricsF(font)
+def _line_at_ref(text: str, size: str, parts=()) -> tuple[QPainterPath, float, float]:
+    """One line at the reference size, top-left at the origin: (path, w, h).
+    The width is the PLAIN text's advance — what the measure saw — and a line
+    of raised runs, being a little narrower, is centred inside it."""
+    f = _font(size)
+    fm = QFontMetricsF(f)
+    w, h, base = fm.horizontalAdvance(text), fm.height(), fm.ascent()
     path = QPainterPath()
-    path.addText(QPointF(x, y + fm.ascent()), font, text)
-    # Two passes, not one stroked-and-filled pass. A centred stroke eats half its
-    # width INTO the glyph, so a dark outline turns small text black. Stroking a
-    # wide dark halo first and filling the colour over it keeps the letterform
-    # intact while still separating it from bright nebulosity.
-    halo = QPen(QColor(_OUTLINE_COLOUR))
-    halo.setWidthF(max(3.0 * scale, 2.0))
-    halo.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-    painter.setPen(halo)
+    if not parts:
+        path.addText(QPointF(0.0, base), f, text)
+        return path, w, h
+    small = _font(size, RAISED_SIZE)
+    sfm = QFontMetricsF(small)
+    runs_w = sum(sfm.horizontalAdvance(r) + 1.0 if raised else fm.horizontalAdvance(r)
+                 for r, raised in parts)
+    x = max(w - runs_w, 0.0) / 2
+    for run, raised in parts:
+        if raised:
+            path.addText(QPointF(x + 0.5, base - fm.ascent() * RAISED_LIFT), small, run)
+            x += sfm.horizontalAdvance(run) + 1.0
+        else:
+            path.addText(QPointF(x, base), f, run)
+            x += fm.horizontalAdvance(run)
+    return path, w, h
+
+
+def text_extent(text: str, size: str, scale: float = 1.0) -> tuple[float, float]:
+    """(w, h) of one line at `scale` — the measure both consumers lay out with."""
+    _p, w, h = _line_at_ref(text, size)
+    e = _eff(size, scale)
+    return w * e, h * e
+
+
+def _scaled_line(text, size, scale, parts=()):
+    path, w, h = _line_at_ref(text, size, parts)
+    e = _eff(size, scale)
+    return QTransform.fromScale(e, e).map(path), w * e, h * e
+
+
+def label_path(p: Label, scale: float = 1.0) -> QPainterPath:
+    """The label's glyphs as one path, its block's top-left at the origin.
+    Two lines (`sub`) are each centred in the wider one's width."""
+    top, w1, h1 = _scaled_line(p.text, p.size, scale, p.parts)
+    if not p.sub:
+        return top
+    sub, w2, _h2 = _scaled_line(p.sub, p.sub_size or p.size, scale)
+    width = max(w1, w2)
+    out = QPainterPath()
+    out.addPath(top.translated((width - w1) / 2, 0.0))
+    out.addPath(sub.translated((width - w2) / 2, h1))
+    return out
+
+
+def halo_pens(scale: float) -> list:
+    pens = []
+    for width, alpha in HALO_STROKES:
+        pen = QPen(QColor(*HALO_RGB, alpha))
+        pen.setWidthF(width * scale)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        pens.append(pen)
+    return pens
+
+
+def paint_text_path(painter: QPainter, path: QPainterPath, colour: str, scale: float) -> None:
+    """Halo strokes, widest first, then the fill. The fill is never stroked: a
+    centred stroke would eat into the letterform."""
     painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.drawPath(path)
+    for pen in halo_pens(scale):
+        painter.setPen(pen)
+        painter.drawPath(path)
     painter.setPen(Qt.PenStyle.NoPen)
     painter.setBrush(QColor(colour))
     painter.drawPath(path)
     painter.setBrush(Qt.BrushStyle.NoBrush)
 
 
+def ring_pens(p: Circle, scale: float) -> list:
+    """A faint dark ring under the thin coloured one, so it reads on nebula."""
+    halo = QPen(QColor(*HALO_RGB, RING_HALO_ALPHA))
+    halo.setWidthF(RING_HALO_WIDTH * scale)
+    ring = QPen(QColor(p.colour))
+    ring.setWidthF(RING_WIDTH * scale)
+    if p.dashed:                                    # 'we don't know how big this is'
+        halo.setStyle(Qt.PenStyle.DashLine)
+        ring.setStyle(Qt.PenStyle.DashLine)
+    return [halo, ring]
+
+
+def reticle_spans(p: Marker, scale: float = 1.0) -> list:
+    """Four arms from `gap` to `gap + arm` out from the star — a hole over the
+    star itself, so the star stays visible."""
+    gap, arm = STAR_RETICLE.get(p.size, STAR_RETICLE["star"])
+    gap, end = gap * scale, (gap + arm) * scale
+    return [((gap, 0.0), (end, 0.0)), ((-gap, 0.0), (-end, 0.0)),
+            ((0.0, -gap), (0.0, -end)), ((0.0, gap), (0.0, end))]
+
+
+def line_pen(colour: str, width: float) -> QPen:
+    pen = QPen(QColor(colour))
+    pen.setWidthF(width)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    return pen
+
+
+def grid_width(scale: float) -> float:
+    return max(GRID_WIDTH * scale, 1.0)
+
+
+def _paint_circle(painter: QPainter, p: Circle, scale: float) -> None:
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    for pen in ring_pens(p, scale):
+        painter.setPen(pen)
+        painter.drawEllipse(QPointF(p.x, p.y), p.r, p.r)
+
+
+def _paint_marker(painter: QPainter, p: Marker, scale: float) -> None:
+    painter.setPen(line_pen(p.colour, RETICLE_WIDTH * scale))
+    for (x1, y1), (x2, y2) in reticle_spans(p, scale):
+        painter.drawLine(QPointF(p.x + x1, p.y + y1), QPointF(p.x + x2, p.y + y2))
+
+
 def _paint_label(painter: QPainter, p: Label, scale: float) -> None:
-    _paint_text(painter, p.text, p.x, p.y, p.colour, p.size, scale)
+    paint_text_path(painter, label_path(p, scale).translated(p.x, p.y), p.colour, scale)
 
 
 def _paint_leader(painter: QPainter, p: Leader, scale: float) -> None:
-    # Endpoints are real image positions regardless of screen_fixed (there is
-    # no "screen" in an export); only the stroke width comes from the scale.
-    pen = QPen(QColor(p.colour))
-    pen.setWidthF(max(1.2 * scale, 1.0))
-    painter.setPen(pen)
+    painter.setPen(line_pen(p.colour, LEADER_WIDTH * scale))
     painter.drawLine(QPointF(p.x1, p.y1), QPointF(p.x2, p.y2))
 
 
 def _paint_grid_line(painter: QPainter, p: GridLine, scale: float) -> None:
     if len(p.points) < 2:
         return
-    pen = QPen(QColor(p.colour))
-    pen.setWidthF(max(1.0 * scale, 1.0))
-    painter.setPen(pen)
+    painter.setPen(line_pen(p.colour, grid_width(scale)))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
     path = QPainterPath()
-    x0, y0 = p.points[0]
-    path.moveTo(x0, y0)
+    path.moveTo(*p.points[0])
     for x, y in p.points[1:]:
         path.lineTo(x, y)
     painter.drawPath(path)
-    if p.label:
-        _paint_text(painter, p.label, x0 + 3.0 * scale, y0 - 12.0 * scale, p.colour, "grid", scale)
+    if p.label:     # build_layout_for sends the text as its own Label; old callers did not
+        x0, y0 = p.points[0]
+        _paint_label(painter, Label(p.label, x0 + 3.0 * scale, y0 - 12.0 * scale, p.colour,
+                                    "grid", parts=p.parts), scale)
 
 
 def paint_annotations(image: QImage, primitives, shape) -> None:
-    """Paints `primitives` (from `core.annotation_layout.build_layout_for`)
-    onto `image` in place. `shape` is `(h, w)` and drives the export size
-    mapping (see module docstring) -- it is independent of `image`'s own
-    size, matching build_layout_for's convention of measuring against the
-    frame the primitives were laid out for."""
+    """Paints `primitives` (from `build_layout_for`) onto `image` in place.
+    `shape` is `(h, w)` of the frame they were laid out for and sets the scale."""
     if not primitives:
         return
     scale = scale_for(shape)
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
     try:
         for p in primitives:
             if isinstance(p, Circle):

@@ -77,3 +77,187 @@ def test_export_and_live_consume_the_same_primitive_list(qtbot):
     paint_annotations(im, prims, (300, 400))
     assert len(group.childItems()) >= 3 and im != _blank(), \
         "one primitive list must drive both renderers"
+
+
+# --- the 2026-10-15 restyle: one look, defined here, drawn by both adapters ---
+
+from nocturne.core.annotation_layout import LABEL_PT, STAR_RETICLE  # noqa: E402
+from nocturne.ui import annotation_render as R  # noqa: E402
+
+
+class _RecordingPainter:
+    """Stands in for QPainter to see the order of strokes and fills."""
+    def __init__(self):
+        self.calls, self.pen, self.brush = [], None, None
+
+    def setPen(self, pen):
+        self.pen = pen
+
+    def setBrush(self, brush):
+        self.brush = brush
+
+    def drawPath(self, path):
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QColor, QPen
+        pen = self.pen if isinstance(self.pen, QPen) else None
+        fill = self.brush if isinstance(self.brush, QColor) else None
+        self.calls.append((pen.widthF() if pen else None, pen.color().alpha() if pen else None,
+                           fill.name() if fill else None,
+                           self.pen == Qt.PenStyle.NoPen))
+
+
+def test_text_gets_a_soft_halo_of_widening_faint_strokes_then_a_clean_fill(qtbot):
+    from PySide6.QtGui import QPainterPath
+    rec = _RecordingPainter()
+    R.paint_text_path(rec, QPainterPath(), "#f4877c", 2.0)
+    strokes, fill = rec.calls[:-1], rec.calls[-1]
+    assert len(strokes) == len(R.HALO_STROKES) >= 3
+    widths = [w for w, _a, _f, _n in strokes]
+    assert widths == sorted(widths, reverse=True), "widest first, so the inner strokes sit on top"
+    assert widths == [w * 2.0 for w, _a in R.HALO_STROKES], "halo scales with the text"
+    assert all(a < 255 for _w, a, _f, _n in strokes), "faint, not a hard outline"
+    assert all(f is None for _w, _a, f, _n in strokes), "halo strokes never fill"
+    assert fill[2] == "#f4877c" and fill[3], "the fill is the colour, never stroked"
+
+
+def test_the_measure_reads_label_pt_and_is_linear_in_the_scale(qtbot):
+    from nocturne.ui.annotation_overlay import make_measure
+    m1, m3 = make_measure(1.0), make_measure(3.0)
+    for size in LABEL_PT:
+        w1, h1 = m1("IC 1805", size)
+        w3, h3 = m3("IC 1805", size)
+        assert (w3, h3) == pytest.approx((3 * w1, 3 * h1)), size
+    assert m1("IC 1805", "major")[1] / m1("IC 1805", "minor")[1] == pytest.approx(
+        LABEL_PT["major"] / LABEL_PT["minor"], rel=0.05)
+
+
+def test_the_measure_is_exactly_the_painted_box(qtbot):
+    """What the layout reserves is what is drawn: a label's ink sits inside the
+    measured block (bar a sliver of side bearing), at any scale."""
+    from nocturne.ui.annotation_overlay import make_measure
+    for scale in (0.5, 1.0, 3.2):
+        m = make_measure(scale)
+        w, h = m("NGC 7000", "major")
+        ink = R.label_path(Label("NGC 7000", 0, 0, "#fff", "major"), scale).boundingRect()
+        assert ink.left() >= -0.05 * w and ink.right() <= w * 1.05, scale
+        assert ink.top() >= 0 and ink.bottom() <= h, scale
+
+
+def _ink_regions(path, split_y):
+    from PySide6.QtCore import QRectF
+    above, below = QRectF(), QRectF()
+    for poly in path.toFillPolygons():
+        r = poly.boundingRect()
+        if r.center().y() < split_y:
+            above = above.united(r)
+        else:
+            below = below.united(r)
+    return above, below
+
+
+@pytest.mark.parametrize("top, sub", [("IC 1805", "Heart Nebula"),          # sub wider
+                                        ("M 16 · IC 4703", "Eagle")])         # top wider
+def test_a_two_line_label_centres_each_line_in_the_block(qtbot, top, sub):
+    from nocturne.ui.annotation_overlay import make_measure
+    m = make_measure(1.0)
+    w1, h1 = m(top, "major")
+    w2, _h2 = m(sub, "major_common")
+    width = max(w1, w2)
+    p = Label(top, 0, 0, "#f4877c", "major", sub=sub, sub_size="major_common")
+    top_ink, sub_ink = _ink_regions(R.label_path(p, 1.0), h1)
+    assert abs(w1 - w2) > 20, "the lines must differ in width, or centring shows nothing"
+    assert top_ink.center().x() == pytest.approx(width / 2, abs=1.5)
+    assert sub_ink.center().x() == pytest.approx(width / 2, abs=1.5)
+    assert sub_ink.top() >= h1 - 1, "the common name sits under the designation"
+    assert sub_ink.height() < top_ink.height(), "and is set smaller"
+
+
+def test_raised_runs_sit_above_the_baseline_and_smaller(qtbot):
+    from PySide6.QtGui import QFontMetricsF
+    fm = QFontMetricsF(R._font("grid"))
+    base, adv2 = fm.ascent(), fm.horizontalAdvance("2")
+    parts = (("2", False), ("h", True))
+    raised = Label("2h", 0, 0, "#fff", "grid", parts=parts)
+    plain = Label("2h", 0, 0, "#fff", "grid")
+    shift = (fm.horizontalAdvance("2h") - (adv2 + QFontMetricsF(R._font("grid", R.RAISED_SIZE))
+                                           .horizontalAdvance("h") + 1.0)) / 2
+    _l, h_raised = _ink_regions_x(R.label_path(raised, 1.0), shift + adv2)
+    _l, h_plain = _ink_regions_x(R.label_path(plain, 1.0), adv2)
+    assert h_raised.bottom() < base - 0.3 * fm.ascent(), "lifted clear of the baseline"
+    assert h_raised.height() < 0.8 * h_plain.height(), "set small"
+
+
+def _ink_regions_x(path, split_x):
+    from PySide6.QtCore import QRectF
+    left, right = QRectF(), QRectF()
+    for poly in path.toFillPolygons():
+        r = poly.boundingRect()
+        if r.center().x() < split_x:
+            left = left.united(r)
+        else:
+            right = right.united(r)
+    return left, right
+
+
+def test_a_raised_line_is_centred_in_the_box_its_plain_text_reserved(qtbot):
+    """The measure sees '2h40m'; the raised runs are narrower, so they are
+    centred in that box — a grid label stays centred ON its line."""
+    from nocturne.core.annotation_layout import ra_parts
+    from nocturne.ui.annotation_overlay import make_measure
+    parts = ra_parts(40.0)
+    text = "".join(r for r, _ in parts)
+    w, _h = make_measure(1.0)(text, "grid")
+    ink = R.label_path(Label(text, 0, 0, "#fff", "grid", parts=parts), 1.0).boundingRect()
+    assert ink.center().x() == pytest.approx(w / 2, abs=1.5)
+    assert ink.width() < w - 2, "narrower than plain, or the test proves nothing"
+
+
+def test_the_export_reticle_has_the_gap_at_the_export_scale():
+    import math
+    gap, arm = STAR_RETICLE["star"]
+    for (x1, y1), (x2, y2) in R.reticle_spans(Marker(0, 0, "star", "#fff"), 2.5):
+        assert min(math.hypot(x1, y1), math.hypot(x2, y2)) == pytest.approx(gap * 2.5)
+        assert max(math.hypot(x1, y1), math.hypot(x2, y2)) == pytest.approx((gap + arm) * 2.5)
+
+
+def test_canvas_and_export_draw_the_same_pixels_at_the_reference_scale(qtbot):
+    """At a 1200 px frame the export scale is 1, which is the canvas's own
+    scale at zoom 1: the two adapters must then produce the same picture."""
+    from PySide6.QtCore import QRectF
+    from PySide6.QtGui import QPainter
+    from PySide6.QtWidgets import QGraphicsScene
+    from nocturne.ui.annotation_overlay import build_annotation_group
+    shape = (1200, 1200)
+    assert R.scale_for(shape) == 1.0
+    prims = [Circle(300, 300, 80, "#c8f4877c", False, "major"),
+             Marker(700, 300, "star", "#ebffd447"),
+             Leader(100, 1100, 400, 1100, "#d2eef1f6"),
+             GridLine([(0.0, 600.0), (1200.0, 650.0)], "#46ebf0f8"),
+             Label("IC 1805", 250, 400, "#f4877c", "major", sub="Heart Nebula",
+                   sub_size="major_common"),
+             Label("2h40m", 600, 800, "#e6e6ebf2", "grid",
+                   parts=(("2", False), ("h", True), ("40", False), ("m", True)))]
+    export = QImage(1200, 1200, QImage.Format.Format_ARGB32_Premultiplied)
+    export.fill(0xff101010)
+    paint_annotations(export, prims, shape)
+
+    canvas = QImage(1200, 1200, QImage.Format.Format_ARGB32_Premultiplied)
+    canvas.fill(0xff101010)
+    scene = QGraphicsScene(0, 0, 1200, 1200)
+    scene.setBackgroundBrush(QColor(0x10, 0x10, 0x10))
+    scene.addItem(build_annotation_group(prims, shape))
+    p = QPainter(canvas)
+    scene.render(p, QRectF(0, 0, 1200, 1200), QRectF(0, 0, 1200, 1200))
+    p.end()
+
+    import numpy as np
+    def arr(im):
+        b = im.constBits()
+        return np.frombuffer(b, np.uint8).reshape(1200, 1200, 4).astype(int)
+    a, b = arr(export), arr(canvas)
+    assert (a != 0x10).any(), "something must have been drawn"
+    diff = np.abs(a - b)
+    assert diff.max() <= 8 and (diff > 2).mean() < 0.001, (diff.max(), (diff > 2).mean())
+
+
+from PySide6.QtGui import QColor  # noqa: E402

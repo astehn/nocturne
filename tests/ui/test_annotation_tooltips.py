@@ -25,8 +25,7 @@ def test_labels_with_a_tip_carry_it_and_labels_without_do_not(qtbot):
                                (200, 200))
     tips = sorted({_plain(c.toolTip()) for c in g.childItems() if c.toolTip()})
     assert tips == ["right ascension", "spans 15 arcminutes"]
-    plain = [c for c in g.childItems() if c.toolTip() == "" and hasattr(c, "childItems")
-             and any(getattr(k, "text", lambda: "")() == "M 16" for k in c.childItems())]
+    plain = [c for c in g.childItems() if c.toolTip() == "" and getattr(c, "text", "") == "M 16"]
     assert plain, "an object label without a tip stays tip-less"
 
 
@@ -87,8 +86,7 @@ def test_tips_are_rich_text_so_qt_wraps_them(qtbot):
                                 GridLine([(0, 100), (200, 100)], "#888", "18h20m",
                                          "right ascension")], (200, 200))
     items = [c for c in g.childItems() if c.toolTip()]
-    items += [k for c in g.childItems() for k in c.childItems() if k.toolTip()]
-    assert len(items) >= 9, "three labels: each group and its two glyph items"
+    assert len(items) == 3, "three labels, one item each"
     for it in items:
         assert QtGui.Qt.mightBeRichText(it.toolTip()), it.toolTip()
     assert {_plain(it.toolTip()) for it in items} == {LONG, "North < on the sky",

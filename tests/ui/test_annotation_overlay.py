@@ -75,22 +75,41 @@ def test_circle_item_rect_matches_its_true_radius_in_scene_units(qtbot):
     assert rect.height() == pytest.approx(75.0)
 
 
-def test_compass_label_renders_bold(qtbot):
-    # A label is now a GROUP of two stacked text items (dark halo behind, colour
-    # in front), so reach through to whichever child carries the font.
-    g = build_annotation_group([Label("N", 10, 10, "#6aa8f2", "compass")], (600, 800))
-    fonts = [c.font() for c in g.childItems()[0].childItems() if hasattr(c, "font")]
-    assert fonts and all(f.bold() for f in fonts)
+def test_a_label_is_one_item_painted_by_the_export_painter(qtbot):
+    """The canvas label is not a Qt text item with its own idea of the look: it
+    holds the export's label path and paints it with the export's halo."""
+    from nocturne.ui import annotation_render as R
+    from nocturne.ui.annotation_overlay import LabelItem
+    p = Label("IC 1805", 10, 10, "#f4877c", "major", sub="Heart Nebula", sub_size="major_common")
+    g = build_annotation_group([p], (600, 800))
+    (item,) = g.childItems()
+    assert isinstance(item, LabelItem)
+    assert item.path == R.label_path(p, 1.0)
+    assert (item.pos().x(), item.pos().y()) == (10, 10)
 
 
-def test_a_label_is_drawn_as_a_halo_behind_a_fill(qtbot):
-    # Two stacked items, not one pen+brush item: a centred stroke eats into the
-    # glyph and turns small text black against bright nebulosity.
-    g = build_annotation_group([Label("NGC 7000", 10, 10, "#5cff5c")], (600, 800))
-    parts = g.childItems()[0].childItems()
-    assert len(parts) == 2, "expected a halo item and a fill item"
-    brushes = {p.brush().color().name() for p in parts}
-    assert "#5cff5c" in brushes and len(brushes) == 2
+def test_rings_draw_a_faint_dark_ring_under_a_thin_tier_coloured_one(qtbot):
+    from nocturne.ui import annotation_render as R
+    g = build_annotation_group([Circle(10, 10, 20, "#c8f4877c", False, "major")], (600, 800))
+    halo, ring = g.childItems()
+    assert halo.pen().widthF() == R.RING_HALO_WIDTH and halo.pen().color().alpha() == R.RING_HALO_ALPHA
+    assert ring.pen().widthF() == R.RING_WIDTH
+    assert ring.pen().color().alpha() == 0xc8, "the tier colour's own alpha survives"
+    assert halo.pen().isCosmetic() and ring.pen().isCosmetic()
+
+
+def test_the_canvas_reticle_has_the_star_reticle_gap(qtbot):
+    import math
+    from nocturne.core.annotation_layout import STAR_RETICLE
+    gap, arm = STAR_RETICLE["star"]
+    g = build_annotation_group([Marker(50, 50, "star", "#ebffd447")], (600, 800))
+    arms = g.childItems()
+    assert len(arms) == 4
+    for a in arms:
+        ln = a.line()
+        near = min(math.hypot(ln.x1(), ln.y1()), math.hypot(ln.x2(), ln.y2()))
+        far = max(math.hypot(ln.x1(), ln.y1()), math.hypot(ln.x2(), ln.y2()))
+        assert near == pytest.approx(gap) and far == pytest.approx(gap + arm)
 
 
 def test_an_empty_primitive_list_yields_an_empty_group(qtbot):
