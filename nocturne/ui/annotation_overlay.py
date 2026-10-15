@@ -24,7 +24,7 @@ import html
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainterPath, QPen
-from PySide6.QtWidgets import (QGraphicsEllipseItem, QGraphicsItem, QGraphicsItemGroup,
+from PySide6.QtWidgets import (QToolTip, QGraphicsEllipseItem, QGraphicsItem, QGraphicsItemGroup,
                                QGraphicsLineItem, QGraphicsPathItem, QGraphicsSimpleTextItem)
 
 from ..core.annotation_layout import Circle, GridLine, Label, Leader, Marker
@@ -79,12 +79,25 @@ def make_measure(ui_scale: float = 1.0):
     return measure
 
 
+# Characters per line of a wrapped tip. Qt's own wrap heuristic gave 144–174
+# px on macOS — about 30 characters, six or seven lines for the scale bar's
+# tip (measured with a cocoa render, 2026-10-15); this is a reading measure.
+_TIP_CHARS = 60
+
+
 def _rich_tip(tip: str) -> str:
-    """Qt word-wraps a rich-text tooltip into a short paragraph and never wraps
-    a plain one: the scale bar's 176-character tip showed as one line across
-    the screen (2026-10-14). The core's texts stay plain; only the item gets
-    the markup, escaped so the words read exactly as written."""
-    return f"<qt>{html.escape(tip, quote=False)}</qt>" if tip else ""
+    """Qt word-wraps a rich-text tooltip and never a plain one: the scale bar's
+    176-character tip showed as one line across the screen (2026-10-14). A
+    fixed-width table sets the measure, since Qt honours a table's width and
+    not a div's. The core's texts stay plain; only the item gets the markup,
+    escaped so the words read exactly as written."""
+    if not tip:
+        return ""
+    text = html.escape(tip, quote=False)
+    if len(tip) <= _TIP_CHARS:
+        return f"<qt>{text}</qt>"            # one line already: no padded box
+    width = round(QFontMetricsF(QToolTip.font()).averageCharWidth() * _TIP_CHARS)
+    return f'<table width="{width}"><tr><td>{text}</td></tr></table>'
 
 
 def _text(s, fill, size=_DEFAULT_PT, bold=False, outline="#0a0f18", tip=""):

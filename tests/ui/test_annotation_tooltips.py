@@ -15,7 +15,7 @@ def _plain(tip: str) -> str:
     wraps it (see test_tips_are_rich_text_so_qt_wraps_them)."""
     doc = QTextDocument()
     doc.setHtml(tip)
-    return doc.toPlainText()
+    return doc.toPlainText().strip()      # a table cell reads with blank lines round it
 
 
 def test_labels_with_a_tip_carry_it_and_labels_without_do_not(qtbot):
@@ -96,7 +96,6 @@ def test_tips_are_rich_text_so_qt_wraps_them(qtbot):
 
 
 def test_the_shown_scale_bar_tip_is_a_short_paragraph(qtbot):
-    from PySide6.QtGui import QFontMetrics
     scene = QGraphicsScene()
     scene.addItem(build_annotation_group([Label("15′", 20, 20, "#fff", tip=LONG)], (200, 200)))
     view = QGraphicsView(scene)
@@ -112,20 +111,35 @@ def test_the_shown_scale_bar_tip_is_a_short_paragraph(qtbot):
     qtbot.waitUntil(lambda: QToolTip.isVisible() and _plain(QToolTip.text()) == LONG,
                     timeout=1000)
     shown = _tip_label()
-    rich_w, rich_h = shown.width(), shown.height()
-    # The same words as a PLAIN tip, the way they were set before: the
-    # offscreen screen is narrow enough that Qt squeezes even that one, so the
-    # claim is relative — the rich tip is the narrower, taller paragraph.
-    QToolTip.hideText()
-    qtbot.waitUntil(lambda: not QToolTip.isVisible(), timeout=1000)
-    QToolTip.showText(view.viewport().mapToGlobal(vp), LONG, view.viewport())
-    qtbot.waitUntil(lambda: QToolTip.isVisible() and QToolTip.text() == LONG, timeout=1000)
-    plain = _tip_label()
-    assert rich_w < 0.8 * plain.width(), (rich_w, plain.width())
-    assert rich_h > plain.height()
+    from PySide6.QtGui import QFontMetricsF
+    from nocturne.ui.annotation_overlay import _TIP_CHARS
+    want = round(QFontMetricsF(QToolTip.font()).averageCharWidth() * _TIP_CHARS)
+    line = QFontMetricsF(shown.font()).lineSpacing()
+    # The shown box is the table's measure plus the tip's own margins, and the
+    # 176 characters sit in a few lines at ~60 a line (cocoa: 386x46, 3 lines).
+    assert want <= shown.width() <= want + 40, (shown.width(), want)
+    assert 2 * line < shown.height() < 6 * line, (shown.height(), line)
     QToolTip.hideText()
 
 
 def _tip_label():
     return next(w for w in QApplication.topLevelWidgets()
                 if w.objectName() == "qtooltip_label" and w.isVisible())
+
+
+def test_a_long_tip_is_set_at_a_reading_measure(qtbot):
+    """Qt's own wrap gave ~30 characters a line on macOS (144–174 px, six or
+    seven lines for the scale bar). A long tip sits in a table about 60 average
+    characters wide — on cocoa 386 px, three lines (2026-10-15). A short tip
+    gets no box to pad it."""
+    import re
+    from PySide6.QtGui import QFontMetricsF
+    from nocturne.ui.annotation_overlay import _TIP_CHARS
+    g = build_annotation_group([Label("15′", 10, 10, "#fff", tip=LONG),
+                                Label("x", 10, 60, "#fff", tip="right ascension")], (200, 200))
+    tips = {_plain(c.toolTip()): c.toolTip() for c in g.childItems() if c.toolTip()}
+    want = round(QFontMetricsF(QToolTip.font()).averageCharWidth() * _TIP_CHARS)
+    m = re.match(r'<table width="(\d+)">', tips[LONG])
+    assert m and int(m.group(1)) == want, tips[LONG]
+    assert 55 <= _TIP_CHARS <= 65
+    assert "<table" not in tips["right ascension"]
