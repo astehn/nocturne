@@ -220,6 +220,10 @@ class AutoRun(NamedTuple):
     # the caller's log line can say where Auto stopped as the panel's does;
     # None for every other step.
     resolved: tuple = ()
+    # Aligned with `results`: each step's stage id. The display name alone
+    # cannot be mapped back for the tools outside the stepper (Narrowband,
+    # Starless Levels, the taps), and their log lines lost their values.
+    stages: tuple = ()
 
 
 _REASON_MAX = 120
@@ -272,6 +276,7 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
     failures: list[tuple[str, str]] = []
     engines: list[str | None] = []
     resolved: list = []
+    stages: list[str] = []
     notes: list[str] = []
     details: list[str] = []
     for i, (stage_id, option) in enumerate(plan):
@@ -317,6 +322,8 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
         results.append((name, serialize_option(stage_id, recorded), img))
         engines.append(getattr(step, "last_engine", None))
         resolved.append(getattr(step, "last_resolved", None))
+        stages.append(stage_id)
         if getattr(step, "last_message", ""):
             notes.append(step.last_message)
-    return AutoRun(results, failures, engines, tuple(notes), tuple(details), tuple(resolved))
+    return AutoRun(results, failures, engines, tuple(notes), tuple(details), tuple(resolved),
+                   tuple(stages))

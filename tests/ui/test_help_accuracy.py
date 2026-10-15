@@ -2377,7 +2377,7 @@ def test_presets_help_describes_how_a_run_ends():
     # Each step its own history entry: the run is folded in one result at a time.
     assert "self._record_auto_run(run, " in run
     rec = mw.split("def _record_auto_run")[1].split("\n    def ")[0]
-    loop = rec.split("for (name, option, img), engine, res in zip(run.results, run.engines, resolved):")[1]
+    loop = rec.split("for (name, option, img), engine, res, stage in zip(")[1].split("):", 1)[1]
     assert loop.lstrip().startswith("self.project.record_precomputed(name, option, img)")
     assert "its own step, so you can change or undo any of them" in b
     # Apply and continue on Crop presses the crop-only path, which never runs a preset.
@@ -2722,3 +2722,19 @@ def test_plate_solve_help_points_at_the_overlay_tips_and_they_say_the_same():
     assert "15 arcminutes" in scale_bar_tip(900)
     assert "right ascension" in body and "right ascension" in _ra_tip("18h20m")
     assert "declination" in body and "declination" in _dec_tip("-14°")
+
+
+def test_presets_help_puts_the_saved_label_where_it_is_shown():
+    """The help said the Save as Preset dialog labels its picture "M 8 · saved
+    13 Oct". The dialog shows the picture, Name and Steps; the label is drawn by
+    the Presets window (and the Crop chip) through saved_label (2026-10-14)."""
+    b = _plain(_body("presets"))
+    dialog = _src("nocturne/ui/save_preset_dialog.py")
+    browser = _src("nocturne/ui/preset_browser.py")
+    assert "saved_label" not in dialog and "saved_label(p)" in browser
+    sentences = [s for s in re.split(r"(?<=[.;:])\s+", b) if "· saved" in s]
+    assert sentences, "the help no longer shows the label at all"
+    for s in sentences:
+        assert "Presets window" in s, s
+        assert "dialog" not in s.split("Presets window")[1], s
+    assert "in the dialog is how" in b

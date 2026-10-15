@@ -1565,7 +1565,7 @@ def test_star_reduction_ungated_without_rcastro(qtbot, tmp_path, monkeypatch):
     assert "Needs RC-Astro" not in win._panel.sr_status.text()  # but not the old gate text
 
 
-def test_remove_stars_uses_free_split_without_rcastro(qtbot, tmp_path, monkeypatch):
+def test_split_tagged_uses_free_split_without_rcastro(qtbot, tmp_path, monkeypatch):
     import nocturne.ui.main_window as mw
     import numpy as np
     monkeypatch.setattr(mw, "rcastro_valid", lambda s: False)
@@ -1575,7 +1575,7 @@ def test_remove_stars_uses_free_split_without_rcastro(qtbot, tmp_path, monkeypat
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     img = win.project.current()
-    win._remove_stars(img)
+    assert win._split_tagged(img)[2] == "free"
     assert used["free"] is True                                 # free split, no RC-Astro call
 
 
@@ -1658,11 +1658,10 @@ def _fake_rc_layers(win, monkeypatch):
         return starless, stars, "StarX"
 
     # Patch what the code READS. It used to read `rcastro_valid` and
-    # `_remove_stars`; since 2026-09-19 it asks `preferred_splitter` and
+    # `_remove_stars` (gone since 2026-10-15); since 2026-09-19 it asks `preferred_splitter` and
     # `_split_tagged`, so patching the old pair left these tests silently
     # exercising the star-MASK path while still passing — they only asserted
     # that a preview rendered, which the mask path also does.
-    monkeypatch.setattr(win, "_remove_stars", _split)
     monkeypatch.setattr(win, "_split_tagged", _tagged)
     monkeypatch.setattr("nocturne.ui.main_window.preferred_splitter",
                         lambda s: object())
@@ -1903,7 +1902,7 @@ def _fake_sat_split(win, monkeypatch):
     starless = AstroImage(np.full((16, 16, 3), 0.3, np.float32), is_linear=False)
     stars = np.zeros((16, 16, 3), np.float32); stars[8, 8] = (0.2, 0.9, 0.3)
     stars = AstroImage(stars, is_linear=False)
-    monkeypatch.setattr(win, "_remove_stars", lambda img: (starless, stars))
+    monkeypatch.setattr(win, "_split_tagged", lambda img: (starless, stars, "StarX"))
     monkeypatch.setattr("nocturne.ui.main_window.rcastro_valid", lambda s: True)
 
 
@@ -1916,7 +1915,7 @@ def test_saturation_nebula_split_keeps_free_note_without_rcastro(qtbot, tmp_path
     stars = AstroImage(np.zeros((16, 16, 3), np.float32), is_linear=False)
     monkeypatch.setattr("nocturne.ui.main_window.rcastro_valid", lambda s: False)
     win = _window(qtbot, tmp_path)
-    monkeypatch.setattr(win, "_remove_stars", lambda img: (starless, stars))
+    monkeypatch.setattr(win, "_split_tagged", lambda img: (starless, stars, "free"))
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("saturation")
     win._on_sat_change(0.5, 0.6)                       # sync free split -> _on_sat_split
@@ -3458,8 +3457,8 @@ def test_star_colour_tap_applies_via_busy_path(qtbot, tmp_path, monkeypatch):
     # stub the (slow) star/starless split so the tap doesn't hit real StarX/sep
     def _fake_split(img):
         zeros = np.zeros_like(np.asarray(img.data, np.float32))
-        return img, AstroImage(zeros, is_linear=img.is_linear)
-    monkeypatch.setattr(win, "_remove_stars", _fake_split)
+        return img, AstroImage(zeros, is_linear=img.is_linear), "free"
+    monkeypatch.setattr(win, "_split_tagged", _fake_split)
     before = win.project.position
     win._enhance("Star Colour")
     assert win.project.position == before + 1        # one undoable step added

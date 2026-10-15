@@ -20,9 +20,11 @@ real angular extent once you zoom. The split:
     it's a cosmetic HUD indicator, not a measured line."""
 from __future__ import annotations
 
+import html
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainterPath, QPen
-from PySide6.QtWidgets import (QGraphicsEllipseItem, QGraphicsItem, QGraphicsItemGroup,
+from PySide6.QtWidgets import (QToolTip, QGraphicsEllipseItem, QGraphicsItem, QGraphicsItemGroup,
                                QGraphicsLineItem, QGraphicsPathItem, QGraphicsSimpleTextItem)
 
 from ..core.annotation_layout import Circle, GridLine, Label, Leader, Marker
@@ -77,6 +79,27 @@ def make_measure(ui_scale: float = 1.0):
     return measure
 
 
+# Characters per line of a wrapped tip. Qt's own wrap heuristic gave 144–174
+# px on macOS — about 30 characters, six or seven lines for the scale bar's
+# tip (measured with a cocoa render, 2026-10-15); this is a reading measure.
+_TIP_CHARS = 60
+
+
+def _rich_tip(tip: str) -> str:
+    """Qt word-wraps a rich-text tooltip and never a plain one: the scale bar's
+    176-character tip showed as one line across the screen (2026-10-14). A
+    fixed-width table sets the measure, since Qt honours a table's width and
+    not a div's. The core's texts stay plain; only the item gets the markup,
+    escaped so the words read exactly as written."""
+    if not tip:
+        return ""
+    text = html.escape(tip, quote=False)
+    if len(tip) <= _TIP_CHARS:
+        return f"<qt>{text}</qt>"            # one line already: no padded box
+    width = round(QFontMetricsF(QToolTip.font()).averageCharWidth() * _TIP_CHARS)
+    return f'<table width="{width}"><tr><td>{text}</td></tr></table>'
+
+
 def _text(s, fill, size=_DEFAULT_PT, bold=False, outline="#0a0f18", tip=""):
     """Constant-size text with a TRUE halo: two stacked items, a wide dark one
     behind and the coloured fill in front.
@@ -85,6 +108,7 @@ def _text(s, fill, size=_DEFAULT_PT, bold=False, outline="#0a0f18", tip=""):
     the stroke eats into the letterform — which is why a thin outline was the
     only workable option before, and why labels vanished against bright
     nebulosity. Stacking keeps the letter intact at any halo width."""
+    tip = _rich_tip(tip)
     group = QGraphicsItemGroup()
     f = QFont()
     f.setPointSizeF(size)

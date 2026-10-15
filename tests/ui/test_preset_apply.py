@@ -377,7 +377,10 @@ def test_a_project_saved_after_a_preset_reopens_with_the_same_picture(qtbot, tmp
 
 
 def test_auto_enhance_log_and_warning_are_unchanged(qtbot, tmp_path, monkeypatch):
-    """Golden lines captured before the recording was shared with presets."""
+    """Golden lines captured before the recording was shared with presets.
+    De-green Stars reads "on", not "1.00", since 2026-10-14: the run now uses
+    the manual Apply's formatter, and the manual line has always said on/off;
+    with no star tool it works in a star mask and both lines say so."""
     from nocturne.core import sessionlog
     from nocturne.steps.local_contrast import LocalContrastStep
     from tests.ui.test_main_window import _crop
@@ -391,7 +394,7 @@ def test_auto_enhance_log_and_warning_are_unchanged(qtbot, tmp_path, monkeypatch
     win._auto_enhance("natural")
     tail = " \u2014 Auto Enhance (Natural)"
     expected = ["Color", "Stretch (0.30 linked)", "Levels (auto)",
-                "Saturation (0.50 / neb 0.20 (built-in))", "De-green Stars (1.00 (built-in))",
+                "Saturation (0.50 / neb 0.20 (built-in))", "De-green Stars (on (star mask))",
                 "Noise Reduction (strong (built-in))", "Star Reduction (0.30 (built-in))"]
     assert log == [e + tail for e in expected]
     assert lines[:-1] == ["step  " + e + tail for e in expected]

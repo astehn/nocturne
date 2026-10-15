@@ -572,13 +572,11 @@ def _remove_quietly(path: str) -> None:
 
 
 # The steps that split stars from the sky, and so are cleaner with a real star
-# tool: receipt's free-split fallbacks, Starless Levels (which has no fallback
-# entry, the split IS the step) and the two layered Enhancements taps.
+# tool: the receipt's splitter-taking stages and the two layered Enhancements taps.
 def _split_sets():
     from ..core import receipt
     from ..steps.enhance_step import _LAYERED
-    stages = {s for s, e in receipt._FALLBACKS.items() if e == receipt._FREE_SPLIT}
-    return frozenset(stages | {"starless_levels"}), frozenset(_LAYERED)
+    return receipt.SPLIT_STAGES, frozenset(_LAYERED)
 
 
 _SPLIT_STAGES, _SPLIT_TAPS = _split_sets()
@@ -2030,7 +2028,8 @@ class MainWindow(QMainWindow):
         # drives this directly), while a real apply records all six sliders.
         self.project.run_step(_PrecomputedStep("Star Spikes", result), params or "")
         self._mark_dirty()
-        self.log_panel.append_entry(format_log_entry("Star Spikes", "", None))
+        self.log_panel.append_entry(format_log_entry(
+            "Star Spikes", self._step_log_label("star_spikes", params, None), None))
         self._clear_warning()
         self._refresh()
 
@@ -2093,13 +2092,11 @@ class MainWindow(QMainWindow):
             return
         self.project.run_step(_PrecomputedStep("Starless Levels", result), values)
         self._mark_dirty()
-        black, white = values
-        # No engine known, no engine named — the `_split_engine_for` rule.
+        # No engine known, no engine named — the `_split_tag_for` rule.
         path = getattr(self, "_starless_levels_path", "")
         self.log_panel.append_entry(format_log_entry(
             "Starless Levels",
-            f"black {black:.2f} / white {white:.2f}"
-            + (f" ({render_engine(path)})" if path else ""), None))
+            self._step_log_label("starless_levels", values, path or None), None))
         self._clear_warning()
         self._refresh()
 
@@ -2127,11 +2124,11 @@ class MainWindow(QMainWindow):
     def _apply_narrowband(self, result, params) -> None:
         if self.project is None or self._busy:
             return
-        engine = self._split_engine_for(self.project.current())
+        tag = self._split_tag_for(self.project.current())
         self.project.run_step(_PrecomputedStep("Narrowband", result), params)
         self._mark_dirty()
-        self.log_panel.append_entry(
-            format_log_entry("Narrowband", params.palette + engine, None))
+        self.log_panel.append_entry(format_log_entry(
+            "Narrowband", self._step_log_label("narrowband", params, tag or None), None))
         self._clear_warning()
         self._refresh()
 
@@ -2179,8 +2176,9 @@ class MainWindow(QMainWindow):
         hit = self._cached_layers(img)
         return (hit[0], hit[1]) if hit else (None, None)
 
-    def _split_engine_for(self, img) -> str:
-        """" (StarNet2)" for the history line, or "" when nothing split.
+    def _split_tag_for(self, img) -> str:
+        """"StarNet2" (or "StarX", "free") for the history line, or "" when
+        nothing split.
 
         The two dialog-driven tools do not run a Step, so they have no
         `last_engine` to read. They publish their tag into the shared split
@@ -2192,8 +2190,7 @@ class MainWindow(QMainWindow):
         not do. Same rule as Saturation at neb 0.00.
         """
         hit = self._cached_layers(img)
-        tag = hit[2] if hit and len(hit) > 2 else ""
-        return f" ({render_engine(tag)})" if tag else ""
+        return hit[2] if hit and len(hit) > 2 else ""
 
     def _remember_split(self, img, starless, stars, tag: str = "", *, sig=None) -> None:
         """Publish a split so every other surface can use it. UI thread only:
@@ -2229,11 +2226,11 @@ class MainWindow(QMainWindow):
         of work done after the step it conceptually sits beside."""
         if self.project is None or self._busy:
             return
-        engine = self._split_engine_for(self.project.current())
+        tag = self._split_tag_for(self.project.current())
         self.project.run_step(_PrecomputedStep("Colour Balance", result), opts)
         self._mark_dirty()
-        self.log_panel.append_entry(
-            format_log_entry("Colour Balance", cb_describe(opts) + engine, None))
+        self.log_panel.append_entry(format_log_entry(
+            "Colour Balance", self._step_log_label("color_balance", opts, tag or None), None))
         self._clear_warning()
         self._refresh()
 
@@ -2357,10 +2354,11 @@ class MainWindow(QMainWindow):
         (Natural)", "Preset (M 8)")."""
         stage_of = {v: k for k, v in STEP_NAME.items()}
         resolved = run.resolved or (None,) * len(run.results)
+        stages = run.stages or tuple(stage_of.get(n, "") for n, _o, _i in run.results)
         levels_at = None
-        for (name, option, img), engine, res in zip(run.results, run.engines, resolved):
+        for (name, option, img), engine, res, stage in zip(run.results, run.engines,
+                                                           resolved, stages):
             self.project.record_precomputed(name, option, img)
-            stage = stage_of.get(name, "")
             label = str(self._step_log_label(stage, option, engine) or "")
             # The manual Apply's words for the same Levels: where Auto stopped,
             # a chosen black, any colour offsets (one helper, see _log_step).
@@ -3032,10 +3030,6 @@ class MainWindow(QMainWindow):
             return (*splitter.remove_stars(img, runner=self._rc_runner), kind)
         return (*split_stars(img), "free")
 
-    def _remove_stars(self, img):
-        starless, stars, _path = self._split_tagged(img)
-        return starless, stars
-
     def _sat_log_option(self, amount: float, nebula: float) -> str:
         """Saturation's log line, naming the split path only when there WAS one.
 
@@ -3043,10 +3037,8 @@ class MainWindow(QMainWindow):
         `neb 0.00` no separation has run, so naming an engine there would be
         reporting work the step did not do.
         """
-        text = f"{amount:.2f} / neb {nebula:.2f}"
-        if nebula > 0.0 and self._sat_layers:
-            text += f" ({render_engine(self._sat_layers[3])})"
-        return text
+        tag = self._sat_layers[3] if nebula > 0.0 and self._sat_layers else None
+        return self._step_log_label("saturation", (amount, nebula), tag)
 
     @staticmethod
     def _split_note(path: str) -> str:
@@ -5441,8 +5433,22 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _step_log_label(stage_id: str, option, engine_tag) -> str:
-        """The bracketed part of a step's log line; shared with Auto Enhance so
-        its lines use the manual step's words for the same option and engine."""
+        """The bracketed part of a step's log line, for EVERY stage.
+
+        The one formatter: a manual Apply, Auto Enhance and a preset all call
+        it with the same option and engine, so their lines cannot drift. They
+        did — the tool steps formatted their own lines inline, and a preset's
+        Narrowband said "(StarNet2)" where the hand-applied one said
+        "(HOO (StarNet2))" (2026-10-14). Takes the live option or the recorded
+        (serialized) one: a run records what was serialized."""
+        if stage_id == "narrowband" and engine_tag == "free":
+            # Without a splitter Narrowband renders the whole image: nothing
+            # was separated, so no engine is named (the manual line never did).
+            engine_tag = None
+        elif stage_id == "green_fringe" and engine_tag in ("free", "mask"):
+            # Without a splitter De-green Stars always works inside a star
+            # mask. The step tags that "free" and the panel "mask"; one name.
+            engine_tag = "star mask"
         if stage_id == "levels" and parse_levels_option(option).auto:
             # The one Levels option that IS user-facing: it says the black point
             # will be re-derived per image, which a bare "Levels" cannot.
@@ -5451,6 +5457,23 @@ class MainWindow(QMainWindow):
             label = ""  # option is a settings object/tuple, not user-facing text
         elif stage_id == "saturation" and isinstance(option, (tuple, list)):
             label = f"{float(option[0]):.2f} / neb {float(option[1]):.2f}"
+        elif stage_id == "tint" and isinstance(option, (tuple, list)):
+            label = f"tint {float(option[0]):+.2f} · temp {float(option[1]):+.2f}"
+        elif stage_id == "green_fringe":
+            # A switch, so on/off rather than "1.00", which read like a
+            # strength that could have been something else.
+            label = "on" if float(option or 0.0) > 0.0 else "off"
+        elif stage_id == "narrowband":
+            from ..steps.narrowband_step import parse_narrowband_option
+            label = parse_narrowband_option(option).palette
+        elif stage_id == "starless_levels" and isinstance(option, (tuple, list)):
+            label = f"black {float(option[0]):.2f} / white {float(option[1]):.2f}"
+        elif stage_id == "color_balance" and isinstance(option, dict):
+            label = cb_describe(option)
+        elif stage_id in ("star_spikes", "enhance"):
+            # Star Spikes' six sliders never made the line; a tap is named by
+            # its line's NAME ("Vibrance"), and records no option at all.
+            label = ""
         elif stage_id == "noise_sharpen" and isinstance(option, dict):
             # The LEVEL only. This used to print the option's engine too, which
             # is a PREFERENCE: with GraXpert installed and RC-Astro absent it
@@ -5964,7 +5987,8 @@ class MainWindow(QMainWindow):
         result = ENHANCE_OPS[op](self.project.current())
         self.project.run_step(_PrecomputedStep(op, result), "")
         self._mark_dirty()
-        self.log_panel.append_entry(format_log_entry(op, "", None))
+        self.log_panel.append_entry(format_log_entry(
+            op, self._step_log_label("enhance", "", None), None))
         self._clear_warning()
         self._refresh()
 
@@ -5985,15 +6009,19 @@ class MainWindow(QMainWindow):
         base = self.project.current()
 
         def work():
-            starless, stars = self._remove_stars(base)
+            # The tag rides back with the result: the line names the tool that
+            # split, as a preset's run of the same tap does.
+            starless, stars, tag = self._split_tagged(base)
             if op == "Sharpen Nebulosity":
-                return sharpen_nebulosity_layers(starless, stars)
-            return star_colour_layers(starless, stars)
+                return sharpen_nebulosity_layers(starless, stars), tag
+            return star_colour_layers(starless, stars), tag
 
-        def on_result(result) -> None:
+        def on_result(out) -> None:
+            result, tag = out
             self.project.run_step(_PrecomputedStep(op, result), "")
             self._mark_dirty()
-            self.log_panel.append_entry(format_log_entry(op, "", None))
+            self.log_panel.append_entry(format_log_entry(
+                op, self._step_log_label("enhance", "", tag), None))
             self._clear_warning()
             self._refresh()
 
@@ -6041,8 +6069,9 @@ class MainWindow(QMainWindow):
         result = self._step_for("remove_green").apply(base, strength)
         self.project.run_step(_PrecomputedStep("De-green Sky", result), strength)
         self._mark_dirty()
-        self.log_panel.append_entry(
-            format_log_entry("De-green Sky", f"{strength:.2f}", rms_delta(base, result)))
+        self.log_panel.append_entry(format_log_entry(
+            "De-green Sky", self._step_log_label("remove_green", strength, None),
+            rms_delta(base, result)))
         self._clear_warning()
         self._clear_pending("remove_green")
         self._refresh()
@@ -6058,10 +6087,9 @@ class MainWindow(QMainWindow):
         result = self._step_for("tint").apply(base, option)
         self.project.run_step(_PrecomputedStep("Colour Tint", result), option)
         self._mark_dirty()
-        self.log_panel.append_entry(
-            format_log_entry("Colour Tint",
-                             f"tint {tint:+.2f} · temp {temperature:+.2f}",
-                             rms_delta(base, result)))
+        self.log_panel.append_entry(format_log_entry(
+            "Colour Tint", self._step_log_label("tint", option, None),
+            rms_delta(base, result)))
         self._clear_warning()
         self._clear_pending("tint")
         self._refresh()
@@ -7180,14 +7208,11 @@ class MainWindow(QMainWindow):
         result = self._fringe_result(strength)
         self.project.run_step(_PrecomputedStep("De-green Stars", result), float(strength))
         self._mark_dirty()
-        self.log_panel.append_entry(
-            format_log_entry("De-green Stars",
-                             # A switch, so the log says on/off rather than
-                             # "1.00", which read like a strength that could
-                             # have been something else.
-                             f"{'on' if float(strength) > 0.0 else 'off'} "
-                             f"({self._fringe_path_label()})",
-                             rms_delta(base, result)))
+        self.log_panel.append_entry(format_log_entry(
+            "De-green Stars",
+            self._step_log_label("green_fringe", float(strength),
+                                 self._fringe_path_label() or None),
+            rms_delta(base, result)))
         self._clear_warning()
         self._clear_pending("green_fringe")
         self._refresh()
@@ -7337,15 +7362,15 @@ class MainWindow(QMainWindow):
         if not self._truncate_for("star_reduction", "Apply"):
             return
         if zero:
-            result, engine = self.project.current().copy(), ""
+            result, tag = self.project.current().copy(), None
         else:
-            _, starless, stars, _path = self._sr_layers
+            _, starless, stars, tag = self._sr_layers
             result = reduce_stars(starless, stars, float(amount))
-            engine = f" ({render_engine(self._sr_layers[3])})"
         self.project.run_step(_PrecomputedStep("Star Reduction", result), float(amount))
         self._mark_dirty()
-        self.log_panel.append_entry(
-            format_log_entry("Star Reduction", f"{float(amount):.2f}{engine}", None))
+        self.log_panel.append_entry(format_log_entry(
+            "Star Reduction", self._step_log_label("star_reduction", float(amount), tag),
+            None))
         self._clear_warning()
         self._clear_pending("star_reduction")
         self._refresh()

@@ -170,8 +170,8 @@ def _start(qtbot, win, monkeypatch, tmp_path, sid, mode):
         win._sat_layers = win._sat_mask = None
         win._setup_saturation()
     elif sid == "enhancements":
-        monkeypatch.setattr(win, "_remove_stars",
-                            lambda base: _work(mode, _fake_layers(base)[:2]))
+        monkeypatch.setattr(win, "_split_tagged",
+                            lambda base: _work(mode, _fake_layers(base)))
         win._enhance("Star Colour")
     elif sid == "export":
         out = str(tmp_path / "out.tiff")
