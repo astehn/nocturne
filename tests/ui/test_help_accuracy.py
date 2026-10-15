@@ -2722,3 +2722,19 @@ def test_plate_solve_help_points_at_the_overlay_tips_and_they_say_the_same():
     assert "15 arcminutes" in scale_bar_tip(900)
     assert "right ascension" in body and "right ascension" in _ra_tip("18h20m")
     assert "declination" in body and "declination" in _dec_tip("-14°")
+
+
+def test_presets_help_puts_the_saved_label_where_it_is_shown():
+    """The help said the Save as Preset dialog labels its picture "M 8 · saved
+    13 Oct". The dialog shows the picture, Name and Steps; the label is drawn by
+    the Presets window (and the Crop chip) through saved_label (2026-10-14)."""
+    b = _plain(_body("presets"))
+    dialog = _src("nocturne/ui/save_preset_dialog.py")
+    browser = _src("nocturne/ui/preset_browser.py")
+    assert "saved_label" not in dialog and "saved_label(p)" in browser
+    sentences = [s for s in re.split(r"(?<=[.;:])\s+", b) if "· saved" in s]
+    assert sentences, "the help no longer shows the label at all"
+    for s in sentences:
+        assert "Presets window" in s, s
+        assert "dialog" not in s.split("Presets window")[1], s
+    assert "in the dialog is how" in b
