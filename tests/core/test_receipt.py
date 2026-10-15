@@ -191,12 +191,13 @@ def test_split_steps_name_starx_when_rc_astro_is_configured(tmp_path):
 
 
 def test_split_steps_name_starnet2_when_it_is_what_runs(tmp_path):
+    """StarNet2 is a choice, not a degradation (ruling 2026-10-15): named, but
+    never a fallback, and never a nag about the paid tool."""
     s = _configured(tmp_path, starnet_path=1)
     for sid in _SPLIT:
         note = engine_for(sid, s)
-        assert note.engine == "StarNet2", sid
-        assert note.reason == "RC-Astro is not configured in Settings", sid
-        assert note.is_fallback
+        assert (note.engine, note.reason) == ("StarNet2", ""), sid
+        assert not note.is_fallback, sid
 
 
 def test_split_steps_name_the_built_in_path_only_when_nothing_is_installed():
@@ -215,6 +216,7 @@ def test_split_steps_name_the_built_in_path_only_when_nothing_is_installed():
         note = engine_for(sid, Settings())
         assert note.engine == engine, sid
         assert note.reason == "RC-Astro is not configured in Settings", sid
+        assert note.is_fallback, sid
 
 
 def test_the_receipt_asks_the_resolver_the_steps_ask(tmp_path, monkeypatch):

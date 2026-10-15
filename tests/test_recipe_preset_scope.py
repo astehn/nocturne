@@ -72,7 +72,10 @@ def test_preflight_builds_the_new_stages_for_a_preset_and_refuses_them_in_a_reci
     from nocturne.settings import Settings
     r = Recipe(steps=[{"stage": "star_spikes", "option": SPIKES},
                       {"stage": "starless_levels", "option": [0.1, 0.8]}])
-    assert [p.outcome for p in preflight(r, Settings(), scope="preset")] == ["run", "run"]
+    # Starless Levels takes a star splitter; with none installed it runs on the
+    # built-in split, which the receipt names as a substitute (2026-10-15).
+    assert [(p.outcome, p.engine) for p in preflight(r, Settings(), scope="preset")] == [
+        ("run", ""), ("substitute", "Nocturne (free star split)")]
     refused = preflight(r, Settings())
     assert [(p.step, p.outcome, p.reason) for p in refused] == [
         ("Star Spikes", "fail", CANNOT_BUILD_REASON),

@@ -2185,7 +2185,7 @@ _t("upscale", "Upscale Crop",
        "<p><b>Levels</b> saved as <b>Auto black point</b> re-measures on each picture; every "
        "other step uses the values you saved. A step that fails is named and the others still "
        "run. A step whose program is not set up in Settings is left out and named, and a step "
-       "that falls back, to StarNet2 or to Nocturne's own version, says which.</p>"
+       "that falls back to Nocturne's own version says so.</p>"
        "<h4>Dual-band and broadband</h4>"
        "<p>A preset remembers whether it was made on <b>dual-band</b> (LP filter) or "
        "<b>broadband</b> data. A dual-band preset is greyed out on any picture that is not "

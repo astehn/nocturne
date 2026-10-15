@@ -62,8 +62,8 @@ _PREFERS: dict[str, tuple[str, str, str]] = {
 # then each step's own no-tool path. This said "free star split" whenever
 # RC-Astro was missing — written before StarNet2 existed, so a summary told
 # StarNet2 users the free split had run under log lines saying StarNet2
-# (2026-10-14). `engine_for` asks the resolver; `_FALLBACKS` is only the last
-# rung, and for two steps that rung is not a split at all.
+# (2026-10-14). `engine_for` asks the resolver; only the last rung,
+# `_FALLBACKS`, is a fallback — and for two steps it is not a split at all.
 SPLIT_STAGES = frozenset({"star_reduction", "saturation", "green_fringe",
                           "narrowband", "color_balance", "starless_levels"})
 _FREE_SPLIT = "Nocturne (free star split)"
@@ -147,8 +147,11 @@ def _split_note(stage_id: str, settings) -> EngineNote:
     tag = star_split.splitter_name(star_split.preferred_splitter(settings))
     if tag == "StarX":
         return EngineNote(name, preferred, "")
-    engine = "StarNet2" if tag == "StarNet2" else _FALLBACKS[stage_id]
-    return EngineNote(name, engine, _NOT_CONFIGURED[needs])
+    if tag == "StarNet2":
+        # A choice, not a degradation (2026-10-15): named, but never reported
+        # as a fallback — that would nag about a paid tool nobody needs.
+        return EngineNote(name, "StarNet2", "")
+    return EngineNote(name, _FALLBACKS[stage_id], _NOT_CONFIGURED[needs])
 
 
 def engine_for(stage_id: str, settings, engine: str | None = None) -> EngineNote | None:
