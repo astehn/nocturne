@@ -418,17 +418,22 @@ def _covers_disc(r, disc) -> bool:
     return math.hypot(nx - cx, ny - cy) < rad
 
 
-def _place_block(cands, tw, th, shape, inset, occupied, pad, blockers=(), own_disc=None):
+def _place_block(cands, tw, th, shape, inset, occupied, pad, blockers=(), own_disc=None,
+                 alias_discs=()):
     """First candidate that is free once clamped into the frame, or None — the
     dropped-label rule: never a leader, never an overlap. `own_disc`: the
     label's own small ring, which the clamp at a frame edge can push it onto
-    (B 349 and LDN 931 by NGC 7000's right edge)."""
+    (B 349 and LDN 931 by NGC 7000's right edge). `alias_discs`: the small
+    rings of the label's merged aliases, which the anchor-sits-in-it
+    exemption would otherwise let it cover (M 16 · IC 4703 on IC 4703's)."""
     if not _fits(tw, th, shape, inset):
         return None
     for lx, ly in cands:
         lx, ly = _clamp_into(lx, ly, tw, th, shape, inset)
         r = _rect(lx, ly, tw, th)
         if own_disc is not None and _covers_disc(r, own_disc):
+            continue
+        if any(_covers_disc(r, d) for d in alias_discs):
             continue
         if _free(r, occupied) and _free(r, blockers):
             occupied.append((lx - pad, ly - pad, lx + tw + pad, ly + th + pad))
@@ -465,10 +470,14 @@ def _object_labels(groups, shape, pixscale, measure, u, occupied, rings=()):
         # Outside the rim the label must stay off its own ring, which the frame
         # clamp can push it onto; the inner rim is inside it on purpose.
         own = (c.x, c.y, r) if r > 0 and not big else None
-        spot = _place_block(cands, tw, th, shape, inset, occupied, pad, blockers, own)
+        # The aliases' rings, unless big enough to take labels inside them.
+        aliases = [(a.cx, a.cy, ac.r) for a in grp if a is not o
+                   for ac in (circle_for(a, pixscale),)
+                   if ac.r <= _BIG_CIRCLE_FRAC * min(h, w) and 0 <= a.cx < w and 0 <= a.cy < h]
+        spot = _place_block(cands, tw, th, shape, inset, occupied, pad, blockers, own, aliases)
         if spot is None and r > _INNER_RIM_R * u:
             spot = _place_block(_inner_rim_candidates(ax, ay, r - gap, tw, th), tw, th, shape,
-                                inset, occupied, pad, blockers)
+                                inset, occupied, pad, blockers, alias_discs=aliases)
         if spot is None:
             continue
         labels.append(Label(text, spot[0], spot[1], _LABEL_COLOUR[tier], size, priority_of(o),

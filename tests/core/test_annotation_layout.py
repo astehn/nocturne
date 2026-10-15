@@ -965,3 +965,23 @@ def test_a_label_clamped_back_into_the_frame_never_lands_on_its_own_ring(cy):
     ny = min(max(cy, label.y), label.y + label.h)
     assert math.hypot(nx - 790.0, ny - cy) >= r, "the label covers its own ring"
     assert label.x + label.w <= 790.0 - r, "it goes to the free side, the left"
+
+
+@pytest.mark.parametrize("u", [1.0, 2.0, 3.0, 4.2])
+def test_a_merged_label_stays_off_its_aliases_small_ring(u):
+    """M 16 · IC 4703 sat on IC 4703's 5' ring: the ring whose box holds the
+    anchor is exempt as an obstacle (so a label inside another ring keeps
+    room), and that exemption also covered the label's own alias. Geometry
+    from the real M 16 frame (3911x2608 at 2.4"/px)."""
+    from nocturne.core.annotation_layout import _covers_disc, _default_measure
+    m16 = _obj(120.0, cx=1953.0, cy=1292.0, name="NGC 6611", common="Eagle Nebula", messier="16")
+    ic = _obj(5.05, cx=1905.0, cy=1235.0, name="IC 4703", common="Eagle Nebula")
+    prims = build_layout_for([m16, ic], [], None, (2608, 3911), 2.4, _layers(objects=True),
+                             "balanced", measure=lambda t, s: _default_measure(t, s, u),
+                             ui_scale=u)
+    labels = [p for p in prims if isinstance(p, Label)]
+    assert [l.text for l in labels] == ["M 16 · IC 4703"], "the merged label must survive"
+    l = labels[0]
+    ring = circle_for(ic, 2.4)
+    assert not _covers_disc((l.x, l.y, l.x + l.w, l.y + l.h), (ring.x, ring.y, ring.r)), \
+        f"label {l.x:.0f},{l.y:.0f} {l.w:.0f}x{l.h:.0f} on IC 4703's ring at u={u}"

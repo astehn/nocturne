@@ -273,4 +273,18 @@ def test_text_size_is_fixed_in_pixels_whatever_the_platform_dpi(qtbot):
         px = R.LABEL_PX[size]
         assert px == pytest.approx(LABEL_PT[size] * 96 / 72)
         _w, h = R.text_extent("H", size, 1.0)
-        assert 1.05 * px <= h <= 1.35 * px, (size, h, px)
+        # Wide enough for any sans a fallback brings (line height 1.1-1.4 em).
+        assert 1.05 * px <= h <= 1.5 * px, (size, h, px)
+        # And the glyphs themselves: a capital H stands 0.6-0.8 of the pixel size
+        # in every sans, whatever the line metrics say.
+        cap = R.label_path(Label("H", 0, 0, "#ffffff", size)).boundingRect().height()
+        assert 0.6 * px <= cap <= 0.8 * px, (size, cap, px)
+
+
+def test_font_falls_back_through_sans_faces_not_the_system_serif():
+    """Helvetica Neue is not bundled: Windows and Linux must land on a sans
+    (Segoe UI, Arial, DejaVu Sans), never whatever Qt's default happens to be."""
+    from PySide6.QtGui import QFont
+    f = R._font("minor")
+    assert f.families()[:4] == ["Helvetica Neue", "Segoe UI", "Arial", "DejaVu Sans"]
+    assert f.styleHint() == QFont.StyleHint.SansSerif

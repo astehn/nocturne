@@ -2853,7 +2853,7 @@ def test_plate_solve_help_stars_are_yellow_with_a_gapped_crosshair():
 
 def test_plate_solve_help_grid_labels_sit_on_their_line_inside_the_picture():
     from astropy.wcs import WCS
-    from nocturne.core.annotation_layout import GridLine, Label, build_layout_for
+    from nocturne.core.annotation_layout import GridLine, Label, build_layout_for, grid_lines
     b = _plain(_body("plate-solve"))
     assert "Grid labels sit on their own line, just inside the edge of the picture" in b
     assert "the h and m set small and raised" in b
@@ -2863,9 +2863,13 @@ def test_plate_solve_help_grid_labels_sit_on_their_line_inside_the_picture():
     k.wcs.cdelt, k.wcs.ctype = [-0.0012, 0.0012], ["RA---TAN", "DEC--TAN"]
     prims = build_layout_for([], [], k, (hgt, w), 4.3, {"grid": True}, "all",
                              measure=lambda t, s: (7.0 * len(t), 14.0))
-    lines = [p.points for p in prims if isinstance(p, GridLine)]
+    # Each label against ITS OWN line (the layout strips the text off the drawn
+    # GridLine; grid_lines() still pairs them), not the nearest of any line.
+    all_lines = grid_lines(k, (hgt, w), "#ffffff")
+    own = {gl.label: gl.points for gl in all_lines}
+    assert len(own) == len(all_lines), "two lines share a label; pairing by text is ambiguous"
     grid = [p for p in prims if isinstance(p, Label) and p.tier == "grid"]
-    assert grid and lines
+    assert grid and own and [p for p in prims if isinstance(p, GridLine)]
 
     def dist(px, py, pts):
         best = math.inf
@@ -2878,7 +2882,7 @@ def test_plate_solve_help_grid_labels_sit_on_their_line_inside_the_picture():
     for l in grid:
         assert 0 <= l.x and l.x + l.w <= w and 0 <= l.y and l.y + l.h <= hgt, l.text
         cx, cy = l.x + l.w / 2, l.y + l.h / 2
-        assert min(dist(cx, cy, pts) for pts in lines) <= l.h / 2 + 1, f"{l.text} is off its line"
+        assert dist(cx, cy, own[l.text]) <= l.h / 2 + 1, f"{l.text} is off its own line"
     ra = [l for l in grid if l.parts]
     assert ra and all(("h", True) in l.parts for l in ra), "RA's h is raised"
 

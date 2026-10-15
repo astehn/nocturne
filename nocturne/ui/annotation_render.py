@@ -34,8 +34,11 @@ _MIN_PX = 4.0 * 96.0 / 72.0   # floor so text never vanishes on a tiny export
 _BASE_PX = 100      # glyphs are built at this pixel size, then scaled to LABEL_PX
 
 # Requested, not bundled: the approved mockup was drawn in it. Where it is absent
-# Qt substitutes the system sans for BOTH measure and paint, so layout holds.
+# the list falls through named sans faces (Windows, then everywhere, then
+# Linux), and the hint keeps Qt from substituting a serif. Measure and paint
+# use the same font, so whichever face lands, the layout holds.
 FONT_FAMILY = "Helvetica Neue"
+FONT_FAMILIES = [FONT_FAMILY, "Segoe UI", "Arial", "DejaVu Sans"]
 _MEDIUM_SIZES = {"major", "major_common"}
 
 # The soft halo: widening faint dark strokes under the fill, widest first
@@ -77,7 +80,9 @@ def _eff(size: str, scale: float) -> float:
 
 def _font(size: str, factor: float = 1.0) -> QFont:
     """The face at `_BASE_PX` x factor pixels; callers scale to LABEL_PX."""
-    f = QFont(FONT_FAMILY)
+    f = QFont()
+    f.setFamilies(FONT_FAMILIES)
+    f.setStyleHint(QFont.StyleHint.SansSerif)
     f.setPixelSize(round(_BASE_PX * factor))
     if size in _MEDIUM_SIZES:
         f.setWeight(QFont.Weight.Medium)
