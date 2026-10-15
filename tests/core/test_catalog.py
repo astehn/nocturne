@@ -418,6 +418,8 @@ def _field(ra, dec, w=3840, h=2160, scale_deg=3.75 / 3600):
     (36.6, 62.0, "IC 1795 · Fish Head Nebula"),  # the Heart's centre is in this frame too
     (14.87, 60.91, "IC 63 · Ghost of Cassiopeia"),
     (106.15, -10.47, "IC 2177 · Seagull Nebula"),
+    (42.8, 60.4, "IC 1848 · Soul Nebula"),       # Sh 2-199 is the same object and larger;
+    (341.84, 58.13, "NGC 7380 · Wizard Nebula"), # the NGC/IC name leads, as on the overlay
 ])
 def test_identify_target_names_the_object_at_the_frame_centre(ra, dec, want):
     from nocturne.core.catalog import identify_target, objects_in_field

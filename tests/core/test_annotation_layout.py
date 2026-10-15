@@ -880,3 +880,60 @@ def test_a_grid_label_the_clamp_pushes_off_its_line_takes_the_other_end():
     line = GridLine([(0.0, 1.0), (790.0, 40.0)], "#fff", "+44°", "tip")
     (l,) = _place_grid_labels([line], (600, 800), _measure, 1.0, [])
     assert l.x > 400, "the left end would sit off its line after the clamp"
+
+
+# --- fix round 2: a ring's obstacle box never blocks a label anchored inside it ---
+
+def test_two_coincident_small_rings_both_keep_their_labels():
+    a = _obj(1.0, cx=300.0, cy=300.0, name="NGC 1")         # r 15 px
+    b = _obj(0.5, cx=300.0, cy=300.0, name="LDN 2")         # r 7.5 px, inside a's box
+    prims = build_layout_for([a, b], [], None, (600, 800), 2.0, _layers(objects=True), "all",
+                             measure=_measure)
+    labels = [p for p in prims if isinstance(p, Label)]
+    assert sorted(l.text for l in labels) == ["LDN 2", "NGC 1"]
+    assert not _boxes_overlap(_box(labels[0]), _box(labels[1]))
+
+
+def test_a_label_anchored_inside_another_ring_still_avoids_third_rings():
+    """The exemption is for the ring the anchor sits in, not every ring."""
+    host = _obj(1.6, cx=300.0, cy=300.0, name="NGC 1")       # r 24 px, obstacle box +-27
+    guest = _obj(0.2, cx=310.0, cy=300.0, name="LDN 2")      # anchor inside host's box
+    other = _obj(0.5, cx=355.0, cy=300.0, name="LDN 3")      # a ring where guest's label would go
+    prims = build_layout_for([host, guest, other], [], None, (600, 800), 2.0,
+                             _layers(objects=True), "all", measure=_measure)
+    assert {p.text for p in prims if isinstance(p, Label)} == {"NGC 1", "LDN 2", "LDN 3"}
+    e = 7.5 + 3.0
+    assert not _overlaps_any(prims, (355.0 - e, 300.0 - e, 355.0 + e, 300.0 + e)), \
+        "neither the host's label nor the guest's may sit on the third ring"
+
+
+def _real_field(ra, dec, w=3840, h=2160, s=3.75 / 3600):
+    k = WCS(naxis=2)
+    k.wcs.crpix = [w / 2, h / 2]
+    k.wcs.crval = [ra, dec]
+    k.wcs.cd = [[-s, 0], [0, s]]
+    k.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    return k
+
+
+@pytest.mark.parametrize("ui", [1.0, 2.0, 3.0])
+@pytest.mark.parametrize("ra, dec", [(36.6, 62.0), (106.15, -10.47)])   # Fish Head, Seagull
+def test_real_frames_keep_every_object_label(ra, dec, ui):
+    """At ui_scale 3 these dropped LDN 1359 (inside NGC 896's ring) and vdB 88 /
+    vdB 90 (inside Sh 2-293 / Sh 2-295): their own anchors sat in another
+    small ring's obstacle box, so every candidate was 'taken'."""
+    from nocturne.core.annotation_layout import designation
+    from nocturne.core.catalog import objects_in_field
+    shape = (2160, 3840)
+    wcs = _real_field(ra, dec)
+    objs = objects_in_field(wcs, shape)
+    prims = build_layout_for(objs, [], wcs, shape, 3.75, _layers(objects=True), "all", ui_scale=ui)
+    got = {p.text for p in prims if isinstance(p, Label)}
+    kept, _ = filter_by_density(objs, [], 3.75, "all")
+    want = {" · ".join(dict.fromkeys(designation(g) for g in grp))
+            for _, grp in merge_aliases(kept, 3.75)}
+    assert len(want) >= 15 and want - got == set()
+    labels = [p for p in prims if isinstance(p, Label)]
+    for i, a in enumerate(labels):
+        for b in labels[i + 1:]:
+            assert not _boxes_overlap(_box(a), _box(b)), (a.text, b.text)

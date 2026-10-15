@@ -397,20 +397,34 @@ def _inner_rim_candidates(ax, ay, rr, tw, th):
             (ax + rr - tw, ay - th / 2), (ax - rr, ay - th / 2)]
 
 
-def _place_block(cands, tw, th, shape, inset, occupied, pad):
+def _contains(box, x, y) -> bool:
+    return box[0] <= x <= box[2] and box[1] <= y <= box[3]
+
+
+def _rings_blocking(rings, x, y) -> list:
+    """Small-ring obstacle boxes that block a label anchored at (x, y): every
+    one except those the anchor itself sits in. An object inside another's
+    ring (LDN 1359 in NGC 896's, vdB 88 in Sh 2-293's) would otherwise find
+    every candidate "taken" and lose its label; two coincident rings would
+    drop both."""
+    return [b for b in rings if not _contains(b, x, y)]
+
+
+def _place_block(cands, tw, th, shape, inset, occupied, pad, blockers=()):
     """First candidate that is free once clamped into the frame, or None — the
     dropped-label rule: never a leader, never an overlap."""
     if not _fits(tw, th, shape, inset):
         return None
     for lx, ly in cands:
         lx, ly = _clamp_into(lx, ly, tw, th, shape, inset)
-        if _free(_rect(lx, ly, tw, th), occupied):
+        r = _rect(lx, ly, tw, th)
+        if _free(r, occupied) and _free(r, blockers):
             occupied.append((lx - pad, ly - pad, lx + tw + pad, ly + th + pad))
             return lx, ly
     return None
 
 
-def _object_labels(groups, shape, pixscale, measure, u, occupied):
+def _object_labels(groups, shape, pixscale, measure, u, occupied, rings=()):
     h, w = shape
     inset, gap, pad = _MARGIN * u / 2, _GAP * u, _PAD * u
     max_r = _MAX_CIRCLE_FRAMES * math.hypot(h, w)
@@ -437,7 +451,8 @@ def _object_labels(groups, shape, pixscale, measure, u, occupied):
         cands += _rim_candidates(ax, ay, r + gap, tw, th)
         if r > _INNER_RIM_R * u:
             cands += _inner_rim_candidates(ax, ay, r - gap, tw, th)
-        spot = _place_block(cands, tw, th, shape, inset, occupied, pad)
+        spot = _place_block(cands, tw, th, shape, inset, occupied, pad,
+                            _rings_blocking(rings, ax, ay))
         if spot is None:
             continue
         labels.append(Label(text, spot[0], spot[1], _LABEL_COLOUR[tier], size, priority_of(o),
@@ -450,13 +465,14 @@ def _star_reach(star, u) -> float:
     return (gap + arm) * u
 
 
-def _star_labels(stars, shape, measure, u, occupied):
+def _star_labels(stars, shape, measure, u, occupied, rings=()):
     inset, pad = _MARGIN * u / 2, _PAD * u
     labels = []
     for st in sorted(stars, key=lambda s: s.mag):
         tw, th = measure(st.name, "star")
         cands = _rim_candidates(st.x, st.y, _star_reach(st, u) + _PAD * u, tw, th)
-        spot = _place_block(cands, tw, th, shape, inset, occupied, pad)
+        spot = _place_block(cands, tw, th, shape, inset, occupied, pad,
+                            _rings_blocking(rings, st.x, st.y))
         if spot is not None:
             labels.append(Label(st.name, spot[0], spot[1], STAR_COLOUR, "star", priority_of(st),
                                 tier="star", w=tw, h=th))
@@ -496,7 +512,7 @@ def _dist_to_polyline(px, py, pts) -> float:
     return best
 
 
-def _place_grid_labels(lines, shape, measure, u, occupied):
+def _place_grid_labels(lines, shape, measure, u, occupied, rings=()):
     """Each line's label ON the line just inside the frame, centred on the
     point a short way in from the end that meets the preferred edge; if that
     spot is taken the other end is tried, then the label is dropped. Clamped
@@ -521,7 +537,7 @@ def _place_grid_labels(lines, shape, measure, u, occupied):
             lx, ly = _clamp_into(px - tw / 2, py - th / 2, tw, th, shape, inset)
             if _dist_to_polyline(lx + tw / 2, ly + th / 2, gl.points) <= th / 2:
                 cands.append((lx, ly))
-        spot = _place_block(cands, tw, th, shape, inset, occupied, pad)
+        spot = _place_block(cands, tw, th, shape, inset, occupied, pad, rings)
         if spot is not None:
             labels.append(Label(gl.label, spot[0], spot[1], GRID_TEXT_COLOUR, "grid",
                                 tip=gl.tip, tier="grid", parts=gl.parts, w=tw, h=th))
@@ -617,6 +633,7 @@ def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density,
 
     prims: list = []
     occupied: list = []
+    rings: list = []          # small in-frame rings, kept apart: see _rings_blocking
 
     furniture = []
     if layers.get("compass", False) and wcs is not None:
@@ -638,12 +655,12 @@ def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density,
                 prims.append(c)
             if c.r < _OBSTACLE_R * u and 0 <= o.cx < w and 0 <= o.cy < h:
                 e = c.r + 3.0 * u
-                occupied.append((c.x - e, c.y - e, c.x + e, c.y + e))
+                rings.append((c.x - e, c.y - e, c.x + e, c.y + e))
 
     grid_labels = []
     if layers.get("grid", False):
         lines = grid_lines(wcs, shape, GRID_LINE_COLOUR)
-        grid_labels = _place_grid_labels(lines, shape, measure, u, occupied)
+        grid_labels = _place_grid_labels(lines, shape, measure, u, occupied, rings)
         prims.extend(gl._replace(label="", tip="", parts=()) for gl in lines)
 
     for s in kept_stars:
@@ -652,7 +669,7 @@ def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density,
         occupied.append((s.x - e, s.y - e, s.x + e, s.y + e))
 
     prims.extend(grid_labels)
-    prims.extend(_object_labels(groups, shape, pixscale, measure, u, occupied))
-    prims.extend(_star_labels(kept_stars, shape, measure, u, occupied))
+    prims.extend(_object_labels(groups, shape, pixscale, measure, u, occupied, rings))
+    prims.extend(_star_labels(kept_stars, shape, measure, u, occupied, rings))
     prims.extend(furniture)
     return prims
