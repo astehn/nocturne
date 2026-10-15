@@ -596,6 +596,18 @@ def test_a_named_star_is_yellow_and_its_label_starts_past_the_reticle():
     assert label.y < 300.0 < label.y + label.h, "level with the star"
 
 
+def test_a_star_name_keeps_the_mockups_clearance_from_the_arm():
+    """The real render showed '—56 Cyg' glued to the arm's tip. The mockup set
+    the name a ring-gap (6 px) beyond the arm plus its 2 px pad, as objects get."""
+    star = NamedStar("Deneb", 0.0, 0.0, 1.25, 300.0, 300.0)
+    for u in (1.0, 2.5):
+        prims = build_layout_for([], [star], None, (600, 800), 2.0, _layers(stars=True), "all",
+                                 measure=_measure, ui_scale=u)
+        label = next(p for p in prims if isinstance(p, Label))
+        gap, arm = STAR_RETICLE["star"]
+        assert label.x == pytest.approx(300.0 + (gap + arm + 2.0 + 6.0) * u)
+
+
 def test_an_object_label_never_covers_a_star_reticle():
     star = NamedStar("Deneb", 0.0, 0.0, 1.25, 330.0, 300.0)
     o = _obj(1.0, cx=300.0, cy=300.0, name="NGC 1")

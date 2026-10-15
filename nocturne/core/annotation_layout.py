@@ -470,7 +470,8 @@ def _star_labels(stars, shape, measure, u, occupied, rings=()):
     labels = []
     for st in sorted(stars, key=lambda s: s.mag):
         tw, th = measure(st.name, "star")
-        cands = _rim_candidates(st.x, st.y, _star_reach(st, u) + _PAD * u, tw, th)
+        # Past the arm by the same gap a label keeps from a ring (the mockup's).
+        cands = _rim_candidates(st.x, st.y, _star_reach(st, u) + (_PAD + _GAP) * u, tw, th)
         spot = _place_block(cands, tw, th, shape, inset, occupied, pad,
                             _rings_blocking(rings, st.x, st.y))
         if spot is not None:
