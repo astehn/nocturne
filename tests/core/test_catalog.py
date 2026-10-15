@@ -355,3 +355,49 @@ def test_the_trunk_is_not_the_region_around_it():
     from nocturne.core.catalog import common_name_for
     assert common_name_for("IC 1396A") == "Elephant's Trunk Nebula"
     assert common_name_for("IC 1396") == ""
+
+
+# --- star names formatted at load (solve restyle, 2026-10-15) -----------------
+
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("raw, shown", [
+    ("π 2Ori", "π² Ori"),      # the CSV glues the Bayer index to the constellation
+    ("ξ 1Cet", "ξ¹ Cet"),
+    ("μ 1Cnc", "μ¹ Cnc"),
+    ("π 6Ori", "π⁶ Ori"),
+    ("σ Ori", "σ Ori"),        # already right: untouched
+    ("57 Cyg", "57 Cyg"),      # Flamsteed number + space: untouched
+    ("6 Tau", "6 Tau"),
+    ("Deneb", "Deneb"),
+])
+def test_star_names_are_formatted_properly(raw, shown):
+    from nocturne.core.catalog import format_star_name
+    assert format_star_name(raw) == shown
+
+
+def test_bundled_named_stars_carry_no_glued_bayer_index():
+    import re
+    from nocturne.core.catalog import load_named_stars
+    names = [r[0] for r in load_named_stars()]
+    assert "π² Ori" in names, "the formatting must happen at load"
+    glued = [n for n in names if re.search(r"\d[A-Z][a-z]{2}$", n)]
+    assert not glued, glued[:5]
+
+
+@_pytest.mark.parametrize("designation, common", [
+    ("IC 1805", "Heart Nebula"),
+    ("IC 1848", "Soul Nebula"),
+    ("IC 1795", "Fish Head Nebula"),
+    ("NGC 281", "Pacman Nebula"),
+])
+def test_his_targets_have_their_common_names(designation, common):
+    from nocturne.core.catalog import common_name_for
+    assert common_name_for(designation) == common
+
+
+def test_the_heart_reaches_the_annotated_catalogue_row():
+    from nocturne.core.catalog import load_catalog
+    row = next(r for r in load_catalog() if r[0] == "IC1805")
+    assert row[1] == "Heart Nebula"

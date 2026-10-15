@@ -37,6 +37,14 @@ LDN935,Gulf of Mexico
 LDN1622,Boogeyman Nebula
 vdB141,Ghost Nebula
 vdB142,Elephant's Trunk Nebula
+# --- IC/NGC rows OpenNGC leaves blank (2026-10-15, the solve restyle) ---
+# Each is the name these objects go by in amateur use, on the object itself.
+IC1805,Heart Nebula
+IC1848,Soul Nebula
+IC1795,Fish Head Nebula
+IC0063,Ghost of Cassiopeia
+IC2177,Seagull Nebula
+NGC7380,Wizard Nebula
 # --- named for the title plate; not all of these can be annotated ---
 NGC0281,Pacman Nebula
 M45,Pleiades

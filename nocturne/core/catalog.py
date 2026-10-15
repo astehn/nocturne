@@ -148,13 +148,28 @@ def objects_in_field(wcs, shape, rows=None) -> list[CatalogObject]:
     return out
 
 
+_GLUED_BAYER = re.compile(r"^(\S+) (\d+)([A-Z][a-z]{2})$")
+_SUPERSCRIPT = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+
+
+def format_star_name(name: str) -> str:
+    """'π 2Ori' -> 'π² Ori'. named_stars.csv glues a Bayer letter's index to
+    the constellation (121 rows); the index is a superscript in print. Fixed
+    here at load rather than in the CSV, which is regenerated from its source."""
+    m = _GLUED_BAYER.match(name)
+    if not m:
+        return name
+    letter, index, constellation = m.groups()
+    return f"{letter}{index.translate(_SUPERSCRIPT)} {constellation}"
+
+
 @lru_cache(maxsize=1)
 def load_named_stars(path: str = _STARS):
     rows = []
     with open(path, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
             try:
-                rows.append((r["name"], float(r["ra_deg"]), float(r["dec_deg"]),
+                rows.append((format_star_name(r["name"]), float(r["ra_deg"]), float(r["dec_deg"]),
                              float(r.get("mag") or 99.0)))
             except (ValueError, KeyError):
                 continue
