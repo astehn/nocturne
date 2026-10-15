@@ -27,10 +27,12 @@ def resolve_settings_path(home: str | None = None) -> str:
 
 # Plate-solve annotation overlay defaults, shared with nocturne.ui.solve_panel
 # (which imports these rather than redefining them) so the panel's checkbox
-# states and the persisted settings can never drift apart.
+# states and the persisted settings can never drift apart. "by_type" (Colour by
+# type) was removed 2026-10-15 when the two tiers replaced it; an old file that
+# still carries it loads, and the panel drops it on hydration.
 DEFAULT_ANNOTATION_LAYERS = {
     "objects": True, "stars": True, "grid": False,
-    "compass": True, "scale": True, "by_type": False,
+    "compass": True, "scale": True,
 }
 DEFAULT_ANNOTATION_DENSITY = "balanced"
 

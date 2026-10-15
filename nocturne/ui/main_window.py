@@ -2954,7 +2954,7 @@ class MainWindow(QMainWindow):
         constant on-screen sizes (`ui_scale=1.0`, the default), while the
         export renders proportionally to the image (see
         `annotation_render.scale_for`). Passing the right scale here is what
-        makes `place_labels`' collision avoidance valid for whichever
+        makes the layout's collision avoidance valid for whichever
         adapter actually draws the result — the export gets its own layout
         PASS at its own scale, not just a repaint of the live layout.
 
@@ -2976,7 +2976,7 @@ class MainWindow(QMainWindow):
         drawn, for the LIVE canvas.
 
         Labels are screen-fixed (ItemIgnoresTransformations) so they stay
-        readable at any zoom, but place_labels does collision detection in IMAGE
+        readable at any zoom, but the layout does collision detection in IMAGE
         coordinates. At display scale Z a label 95 px wide on screen occupies
         95/Z image pixels, while the box reserved for it was 95 — so at fit zoom
         on a large frame every label is several times wider than its reservation

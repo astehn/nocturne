@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import pytest
 
 pytest.importorskip("PySide6")
+from PySide6.QtWidgets import QCheckBox  # noqa: E402
 from nocturne.ui.solve_panel import SolvePanel  # noqa: E402
 
 
@@ -31,7 +32,7 @@ def test_default_layers(qtbot):
     qtbot.addWidget(panel)
     assert panel.layers() == {
         "objects": True, "stars": True, "grid": False,
-        "compass": True, "scale": True, "by_type": False,
+        "compass": True, "scale": True,
     }
 
 
@@ -43,17 +44,41 @@ def test_toggling_a_layer_emits_the_complete_dict(qtbot):
     emitted = blocker.args[0]
     assert emitted == {
         "objects": True, "stars": True, "grid": True,
-        "compass": True, "scale": True, "by_type": False,
+        "compass": True, "scale": True,
     }
     # not a delta -- every key is present even though only one changed
-    assert set(emitted) == {"objects", "stars", "grid", "compass", "scale", "by_type"}
+    assert set(emitted) == {"objects", "stars", "grid", "compass", "scale"}
 
 
 def test_toggling_a_layer_updates_the_accessor(qtbot):
     panel = SolvePanel()
     qtbot.addWidget(panel)
-    panel.layer_checks["by_type"].setChecked(True)
-    assert panel.layers()["by_type"] is True
+    panel.layer_checks["grid"].setChecked(True)
+    assert panel.layers()["grid"] is True
+
+
+def test_colour_by_type_is_gone_from_the_panel(qtbot):
+    """The two tiers replaced it (ruled 2026-10-15): a box that changes nothing
+    is a lie on the panel."""
+    panel = SolvePanel()
+    qtbot.addWidget(panel)
+    assert "by_type" not in panel.layer_checks
+    texts = [b.text() for b in panel.findChildren(QCheckBox)]
+    assert texts == ["Objects", "Named stars", "RA/Dec grid", "Compass", "Scale bar"]
+
+
+def test_old_settings_carrying_by_type_still_hydrate_the_panel(qtbot):
+    """A settings.json from before the restyle has by_type in it. It must load,
+    set every real box from its own value, and not come back out of layers()."""
+    panel = SolvePanel()
+    qtbot.addWidget(panel)
+    old = {"objects": False, "stars": True, "grid": True,
+           "compass": False, "scale": True, "by_type": True}
+    panel.set_layers(old)
+    assert {k: b.isChecked() for k, b in panel.layer_checks.items()} == \
+        {"objects": False, "stars": True, "grid": True, "compass": False, "scale": True}
+    assert panel.layers() == {"objects": False, "stars": True, "grid": True,
+                              "compass": False, "scale": True}
 
 
 # --- density ------------------------------------------------------------
