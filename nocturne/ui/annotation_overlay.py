@@ -20,6 +20,8 @@ real angular extent once you zoom. The split:
     it's a cosmetic HUD indicator, not a measured line."""
 from __future__ import annotations
 
+import html
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainterPath, QPen
 from PySide6.QtWidgets import (QGraphicsEllipseItem, QGraphicsItem, QGraphicsItemGroup,
@@ -77,6 +79,14 @@ def make_measure(ui_scale: float = 1.0):
     return measure
 
 
+def _rich_tip(tip: str) -> str:
+    """Qt word-wraps a rich-text tooltip into a short paragraph and never wraps
+    a plain one: the scale bar's 176-character tip showed as one line across
+    the screen (2026-10-14). The core's texts stay plain; only the item gets
+    the markup, escaped so the words read exactly as written."""
+    return f"<qt>{html.escape(tip, quote=False)}</qt>" if tip else ""
+
+
 def _text(s, fill, size=_DEFAULT_PT, bold=False, outline="#0a0f18", tip=""):
     """Constant-size text with a TRUE halo: two stacked items, a wide dark one
     behind and the coloured fill in front.
@@ -85,6 +95,7 @@ def _text(s, fill, size=_DEFAULT_PT, bold=False, outline="#0a0f18", tip=""):
     the stroke eats into the letterform — which is why a thin outline was the
     only workable option before, and why labels vanished against bright
     nebulosity. Stacking keeps the letter intact at any halo width."""
+    tip = _rich_tip(tip)
     group = QGraphicsItemGroup()
     f = QFont()
     f.setPointSizeF(size)
