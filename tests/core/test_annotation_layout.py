@@ -949,3 +949,19 @@ def test_real_frames_keep_every_object_label(ra, dec, ui):
     for i, a in enumerate(labels):
         for b in labels[i + 1:]:
             assert not _boxes_overlap(_box(a), _box(b)), (a.text, b.text)
+
+
+@pytest.mark.parametrize("cy", [300.0, 30.0, 570.0])     # mid edge, and near both corners
+def test_a_label_clamped_back_into_the_frame_never_lands_on_its_own_ring(cy):
+    """NGC 7000 (2026-10-15 render): B 349 and LDN 931 sit by the right edge;
+    their right-hand spot was clamped back into the frame and onto their own
+    ring. The mockup set them to the left of it."""
+    r = 12.0
+    o = _obj(r * 2 * 2.0 / 60.0, cx=790.0, cy=cy, name="LDN 931")       # r = 12 px at 2"/px
+    prims = build_layout_for([o], [], None, (600, 800), 2.0, _layers(objects=True), "all",
+                             measure=_measure)
+    (label,) = [p for p in prims if isinstance(p, Label)]
+    nx = min(max(790.0, label.x), label.x + label.w)
+    ny = min(max(cy, label.y), label.y + label.h)
+    assert math.hypot(nx - 790.0, ny - cy) >= r, "the label covers its own ring"
+    assert label.x + label.w <= 790.0 - r, "it goes to the free side, the left"

@@ -410,14 +410,26 @@ def _rings_blocking(rings, x, y) -> list:
     return [b for b in rings if not _contains(b, x, y)]
 
 
-def _place_block(cands, tw, th, shape, inset, occupied, pad, blockers=()):
+def _covers_disc(r, disc) -> bool:
+    """Does box r reach inside the disc (cx, cy, radius)? Its closest point to
+    the centre decides."""
+    cx, cy, rad = disc
+    nx, ny = min(max(cx, r[0]), r[2]), min(max(cy, r[1]), r[3])
+    return math.hypot(nx - cx, ny - cy) < rad
+
+
+def _place_block(cands, tw, th, shape, inset, occupied, pad, blockers=(), own_disc=None):
     """First candidate that is free once clamped into the frame, or None — the
-    dropped-label rule: never a leader, never an overlap."""
+    dropped-label rule: never a leader, never an overlap. `own_disc`: the
+    label's own small ring, which the clamp at a frame edge can push it onto
+    (B 349 and LDN 931 by NGC 7000's right edge)."""
     if not _fits(tw, th, shape, inset):
         return None
     for lx, ly in cands:
         lx, ly = _clamp_into(lx, ly, tw, th, shape, inset)
         r = _rect(lx, ly, tw, th)
+        if own_disc is not None and _covers_disc(r, own_disc):
+            continue
         if _free(r, occupied) and _free(r, blockers):
             occupied.append((lx - pad, ly - pad, lx + tw + pad, ly + th + pad))
             return lx, ly
@@ -449,10 +461,14 @@ def _object_labels(groups, shape, pixscale, measure, u, occupied, rings=()):
             cands += [(ax - tw / 2, ay - th / 2), (ax - tw / 2, ay - th - _INNER_OFFSET * u),
                       (ax - tw / 2, ay + _INNER_OFFSET * u)]
         cands += _rim_candidates(ax, ay, r + gap, tw, th)
-        if r > _INNER_RIM_R * u:
-            cands += _inner_rim_candidates(ax, ay, r - gap, tw, th)
-        spot = _place_block(cands, tw, th, shape, inset, occupied, pad,
-                            _rings_blocking(rings, ax, ay))
+        blockers = _rings_blocking(rings, ax, ay)
+        # Outside the rim the label must stay off its own ring, which the frame
+        # clamp can push it onto; the inner rim is inside it on purpose.
+        own = (c.x, c.y, r) if r > 0 and not big else None
+        spot = _place_block(cands, tw, th, shape, inset, occupied, pad, blockers, own)
+        if spot is None and r > _INNER_RIM_R * u:
+            spot = _place_block(_inner_rim_candidates(ax, ay, r - gap, tw, th), tw, th, shape,
+                                inset, occupied, pad, blockers)
         if spot is None:
             continue
         labels.append(Label(text, spot[0], spot[1], _LABEL_COLOUR[tier], size, priority_of(o),
