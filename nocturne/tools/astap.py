@@ -321,6 +321,63 @@ class ASTAP:
         return r if r is not None else SolveResult(False, None, 0.0, 0.0, 0.0)
 
 
+# The noise floor the retry restores, as a fraction of the sky-to-bright-star
+# range (99.9th percentile minus median of the luminance). Measured 2026-10-15
+# on his finished IC 1805 and M 16: a stretched stack before noise reduction
+# carries 2.2% and solves; after RC-Astro NR it carries 0.15-0.2% and fails at
+# the correct header scale. Topping it back up solved IC 1805 from 0.4% and
+# M 16 from 1.4%, and both still solved at 3%. 2% is the undenoised level,
+# with margin over both thresholds. The same 2% is the "already noisy" gate:
+# a frame at or above the undenoised level has nothing to restore, and the
+# undenoised IC 1805 states at 2.2% all solved first time.
+_NOISE_FLOOR = 0.02
+
+# Lifts the noisy copy clear of _write_solve_fits' clip at zero: on a sky
+# crushed to black, half of zero-mean noise is negative, and a 0.0060 floor
+# arrived at ASTAP as 0.0025-0.0029. Five sigma leaves nothing to clip.
+_PEDESTAL_SIGMAS = 5.0
+
+
+def _pixel_noise(lum: np.ndarray) -> float:
+    """Pixel-to-pixel noise: MAD of neighbour differences, blind to nebulosity
+    and gradients that a plain MAD would count as noise."""
+    d = lum[::2, 1::2] - lum[::2, :-1:2]   # slice first: no full-size temporary
+    return float(1.4826 * np.median(np.abs(d - np.median(d))) / np.sqrt(2.0))
+
+
+def with_noise_floor(img: AstroImage) -> AstroImage | None:
+    """A mono copy of `img` with its noise floor topped up to _NOISE_FLOOR, or
+    None when it already has that much (a retry would repeat the first try).
+
+    ASTAP picks the ~500 stars it matches by SNR. Strong noise reduction
+    flattens the background unevenly, so on a finished picture SNR stops
+    ranking stars by brightness: on his IC 1805, 77% of the picks were among
+    the field's brightest Gaia stars before Noise Reduction and 57% after, too
+    few to match. Uniform noise makes SNR follow brightness again. Seeded, so
+    a retry is reproducible; the caller's image is never touched.
+
+    The span is the 99.9th percentile, so a field whose stars cover under
+    ~0.1% of the frame reads as all sky and gets no retry (measured on a
+    synthetic 9 MP field: 150 stars sit right at that edge). Left so on
+    purpose: a field that sparse holds no more than the few hundred stars
+    ASTAP picks anyway, so SNR ranking cannot change which ones it uses."""
+    if img.data.shape[0] < 2 or img.data.shape[1] < 2 or not np.isfinite(img.data).all():
+        return None
+    d = np.clip(img.data, 0.0, None)
+    lum = d.mean(axis=2) if d.ndim == 3 else d
+    sample = lum[::3, ::3]
+    span = float(np.percentile(sample, 99.9) - np.median(sample))
+    target = _NOISE_FLOOR * span
+    have = _pixel_noise(lum)
+    if span <= 0 or have >= target:
+        return None
+    add = float(np.sqrt(target * target - have * have))
+    noise = np.random.default_rng(0).normal(0.0, add, lum.shape).astype(np.float32)
+    noise += np.float32(_PEDESTAL_SIGMAS * add)
+    return AstroImage(lum.astype(np.float32) + noise, is_linear=img.is_linear,
+                      metadata=img.metadata)
+
+
 def solve_with_scale_fallback(astap, img, meta: dict, height_px: int):
     """Solve with the best scale hint available, retrying blind if that hint was
     a GUESS and the guess failed. Returns (SolveResult, scale_source).
@@ -338,9 +395,15 @@ def solve_with_scale_fallback(astap, img, meta: dict, height_px: int):
     once more. It costs a second attempt only on a path that already failed, it
     needs no instrument detection, and it is self-correcting for any rig.
 
-    NOT retried when the scale came from the header — that value is measured,
-    not guessed, so a failure means something else is wrong and a blind retry
-    would only waste seconds.
+    Before any of that, a failed solve is retried ONCE at the same scale with
+    the noise floor restored (with_noise_floor) — whatever the scale's source.
+    A heavily denoised picture fails at a perfectly good header scale, which
+    is why "a header failure means something else is wrong, never retry" was
+    wrong: it was the stars ASTAP picked, not the scale (his IC 1805, 2.58 deg
+    hint for a 2.52 deg field, 2026-10-15).
+
+    NOT retried blind when the scale came from the header — that value is
+    measured, not guessed, so a blind retry would only waste seconds.
 
     `scale_source` is "header", "profile", "blind" or "none", and the panel
     reports it: a solve that leaned on an assumed scale should say so, and one
@@ -354,7 +417,16 @@ def solve_with_scale_fallback(astap, img, meta: dict, height_px: int):
 
     res = astap.solve(img, fov_deg=fov, ra_hours=ra_h, dec_deg=dec_d,
                       header_cards=cards)
-    if res.solved or source != "profile":
+    if res.solved:
+        return res, source
+
+    floored = with_noise_floor(img)
+    if floored is not None:
+        retry = astap.solve(floored, fov_deg=fov, ra_hours=ra_h, dec_deg=dec_d,
+                            header_cards=cards)
+        if retry.solved:
+            return retry, source
+    if source != "profile":
         return res, source
 
     blind = astap.solve(img, fov_deg=None, ra_hours=ra_h, dec_deg=dec_d,

@@ -294,8 +294,10 @@ class _Recorder:
     def __init__(self, succeed_on=None):
         self.calls = []
         self._succeed_on = succeed_on          # index of the call that solves
+        self.images = []                       # the pixels each attempt was handed
     def solve(self, img, fov_deg=None, ra_hours=None, dec_deg=None, header_cards=None):
         self.calls.append(fov_deg)
+        self.images.append(np.array(img.data, copy=True))
         ok = self._succeed_on is not None and len(self.calls) - 1 == self._succeed_on
         return SolveResult(ok, object() if ok else None, 0.0, 0.0, 3.6)
 
@@ -305,15 +307,16 @@ _HEADER_META = {"focal_length": 400.0, "pixel_size": 3.76}
 
 
 def test_a_header_scale_is_used_and_never_retried_blind():
-    """A measured scale is not a guess. Failing with it means something else is
-    wrong, so a blind retry would only waste seconds."""
+    """A measured scale is not a guess, so a blind retry would only waste
+    seconds. (A flat frame has no noise floor to restore, so this is also the
+    one-attempt case.)"""
     from nocturne.tools.astap import solve_with_scale_fallback
     rec = _Recorder(succeed_on=None)            # never solves
     res, source = solve_with_scale_fallback(rec, _img(), _HEADER_META, 2000)
     assert not res.solved
     assert source == "header"
-    assert len(rec.calls) == 1, "no retry when the scale came from the header"
-    assert rec.calls[0] is not None
+    assert len(rec.calls) == 1, "nothing to retry on a frame with no stars"
+    assert None not in rec.calls, "a header scale is never dropped"
 
 
 def test_an_assumed_scale_that_fails_is_dropped_and_retried_blind():
@@ -348,3 +351,147 @@ def test_both_attempts_failing_reports_the_original_result():
     assert not res.solved
     assert source == "profile"
     assert len(rec.calls) == 2, "it still tried blind before giving up"
+
+
+# --- noise-floor retry ---------------------------------------------------------
+#
+# ASTAP picks the ~500 stars it matches by SNR. Strong noise reduction strips the
+# noise floor unevenly, so on a finished picture SNR stops ranking stars by
+# brightness and the picked stars no longer overlap the catalogue's brightest.
+# Measured on his IC 1805 (2026-10-15): 77% of ASTAP's picks were among the
+# field's 649 brightest Gaia stars before Noise Reduction, 57% after, and the
+# solve failed from that step on at the correct header scale.
+
+def _star_field(noise_sigma: float, seed: int = 1) -> AstroImage:
+    """A finished-looking frame: flat sky, 60 stars, and as much pixel noise as
+    asked for — ~0 is what a strong denoise leaves."""
+    rng = np.random.default_rng(seed)
+    h, w = 400, 400
+    yy, xx = np.mgrid[0:h, 0:w]
+    lum = np.full((h, w), 0.10, np.float32)
+    for _ in range(60):
+        cy, cx = rng.uniform(10, h - 10), rng.uniform(10, w - 10)
+        peak = rng.uniform(0.2, 0.9)
+        lum += (peak * np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / (2 * 2.0 ** 2))).astype(np.float32)
+    lum += rng.normal(0, noise_sigma, lum.shape).astype(np.float32)
+    return AstroImage(np.repeat(lum[..., None], 3, axis=2), is_linear=False)
+
+
+def _pixel_noise(a: np.ndarray) -> float:
+    lum = a.mean(axis=2) if a.ndim == 3 else a
+    d = lum[:, 1:] - lum[:, :-1]
+    return float(1.4826 * np.median(np.abs(d - np.median(d))) / np.sqrt(2))
+
+
+def _span(a: np.ndarray) -> float:
+    lum = a.mean(axis=2) if a.ndim == 3 else a
+    return float(np.percentile(lum, 99.9) - np.median(lum))
+
+
+def test_a_denoised_frame_that_fails_is_retried_with_its_noise_floor_restored():
+    """His IC 1805: correct header scale, ASTAP 'No solution found', solved at
+    once with a noise floor put back. A header scale must not stop the retry —
+    the scale was never the problem."""
+    from nocturne.tools.astap import solve_with_scale_fallback
+    img = _star_field(noise_sigma=0.0005)
+    before = img.data.copy()
+    rec = _Recorder(succeed_on=1)
+    res, source = solve_with_scale_fallback(rec, img, _HEADER_META, 400)
+    assert res.solved
+    assert source == "header", "the scale used was still the header's"
+    assert len(rec.calls) == 2
+    assert rec.calls[0] == rec.calls[1] and rec.calls[1] is not None, \
+        "the retry keeps the measured scale"
+    assert _pixel_noise(rec.images[0]) < 0.002, "first attempt: the frame as it is"
+    floor = _pixel_noise(rec.images[1]) / _span(rec.images[1])
+    assert 0.015 < floor < 0.03, f"retry noise floor {floor:.4f} of the star range"
+    np.testing.assert_array_equal(img.data, before)   # the user's image is untouched
+
+
+def test_a_frame_that_already_has_its_noise_is_not_retried():
+    """Nothing to restore, so a second attempt would be the first one again."""
+    from nocturne.tools.astap import solve_with_scale_fallback
+    img = _star_field(noise_sigma=0.03)               # ~3.5% of the range
+    rec = _Recorder(succeed_on=None)
+    res, source = solve_with_scale_fallback(rec, img, _HEADER_META, 400)
+    assert not res.solved and source == "header"
+    assert len(rec.calls) == 1
+
+
+def test_a_solved_frame_is_never_handed_noise():
+    from nocturne.tools.astap import solve_with_scale_fallback
+    img = _star_field(noise_sigma=0.0005)
+    rec = _Recorder(succeed_on=0)
+    res, _source = solve_with_scale_fallback(rec, img, _HEADER_META, 400)
+    assert res.solved and len(rec.calls) == 1
+    np.testing.assert_array_equal(rec.images[0], img.data)
+
+
+def test_an_assumed_scale_tries_the_noise_floor_before_going_blind():
+    """The noise retry is cheap and keeps the hint; blind is the last resort."""
+    from nocturne.tools.astap import solve_with_scale_fallback
+    img = _star_field(noise_sigma=0.0005)
+    rec = _Recorder(succeed_on=2)
+    res, source = solve_with_scale_fallback(rec, img, _SEESTAR_META, 400)
+    assert res.solved and source == "blind"
+    assert len(rec.calls) == 3
+    assert rec.calls[0] is not None and rec.calls[1] == rec.calls[0]
+    assert rec.calls[2] is None
+
+
+def test_a_retry_that_also_fails_reports_the_first_attempt():
+    """The caller gets the frame as the user made it, not the noisy copy:
+    the first attempt's ASTAP message is the honest diagnostic."""
+    from nocturne.tools.astap import solve_with_scale_fallback
+
+    class _Messages(_Recorder):
+        def solve(self, img, **kw):
+            super().solve(img, **kw)
+            return SolveResult(False, None, 0.0, 0.0, 0.0,
+                               message=f"attempt {len(self.calls) - 1}")
+
+    rec = _Messages()
+    res, source = solve_with_scale_fallback(rec, _star_field(0.0005), _HEADER_META, 400)
+    assert len(rec.calls) == 2, "the noise retry ran"
+    assert not res.solved and source == "header"
+    assert res.message == "attempt 0"
+
+
+def test_a_crushed_black_sky_still_reaches_astap_with_the_whole_floor(tmp_path):
+    """_write_solve_fits clips at zero. On a sky crushed to black, half of
+    zero-mean noise is negative and would be clipped away — measured on a
+    dark sky: a 0.0060 target arrived as 0.0025-0.0029, ~1% of the range,
+    below M 16's 1.4% rescue level."""
+    from astropy.io import fits
+    from nocturne.tools.astap import _NOISE_FLOOR, _write_solve_fits, with_noise_floor
+    img = _star_field(noise_sigma=0.0)
+    img = AstroImage(np.clip(img.data - 0.10, 0.0, None), is_linear=False)  # sky at 0
+    floored = with_noise_floor(img)
+    assert floored is not None
+    path = str(tmp_path / "s.fits")
+    _write_solve_fits(floored, path, None)
+    handed = fits.getdata(path).astype(np.float32)
+    target = _NOISE_FLOOR * _span(img.data)
+    assert _pixel_noise(handed) >= 0.9 * target, \
+        f"ASTAP got {_pixel_noise(handed):.5f} of a {target:.5f} floor"
+
+
+@pytest.mark.parametrize("data", [
+    np.full((1, 1), 0.5, np.float32),
+    np.full((5, 1), 0.5, np.float32),
+    np.full((1, 5), 0.5, np.float32),
+    np.where(np.eye(50, dtype=bool), np.nan, 0.2).astype(np.float32),
+], ids=["1x1", "5x1", "1x5", "nan"])
+def test_degenerate_frames_get_no_retry_and_no_warnings(data):
+    import warnings
+    from nocturne.tools.astap import with_noise_floor
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert with_noise_floor(AstroImage(data, is_linear=False)) is None
+
+
+def test_the_retry_copy_is_reproducible():
+    from nocturne.tools.astap import with_noise_floor
+    img = _star_field(noise_sigma=0.0005)
+    a, b = with_noise_floor(img), with_noise_floor(img)
+    assert a.data.tobytes() == b.data.tobytes()
