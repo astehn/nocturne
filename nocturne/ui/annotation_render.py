@@ -42,9 +42,14 @@ FONT_FAMILIES = [FONT_FAMILY, "Segoe UI", "Arial", "DejaVu Sans"]
 _MEDIUM_SIZES = {"major", "major_common"}
 
 # The soft halo: widening faint dark strokes under the fill, widest first
-# (reference px, alpha), so text reads on bright nebula without a hard outline.
-HALO_RGB = (6, 9, 16)
-HALO_STROKES = ((7.0, 40), (4.6, 70), (2.6, 120))
+# (reference px, alpha), so small text reads on bright nebula. A dark slate,
+# not black, and faint: he found the near-black first version too heavy
+# (2026-10-15). Major labels read on their size and weight alone; the two
+# whisper strokes they keep only firm the letter edges where M 16's title sits
+# on same-red nebula (rendered with none and with these, cocoa, M16.nocturne).
+HALO_RGB = (22, 26, 36)
+HALO_STROKES = ((6.0, 24), (4.0, 44), (2.4, 76))
+MAJOR_HALO_STROKES = ((4.0, 18), (2.2, 34))
 HALO_PAD = HALO_STROKES[0][0] / 2 + 1.0   # + the antialias fringe, or it trails on scroll
 
 # Raised runs (the h and m of 2ʰ40ᵐ): set this much smaller and lifted by this
@@ -58,7 +63,7 @@ RING_HALO_WIDTH = 2.6
 RING_HALO_ALPHA = 60
 RETICLE_WIDTH = 1.4
 LEADER_WIDTH = 1.4
-GRID_WIDTH = 0.8
+GRID_WIDTH = 1.2
 
 
 def scale_for(shape) -> float:
@@ -162,9 +167,13 @@ def label_path(p: Label, scale: float = 1.0) -> QPainterPath:
     return out
 
 
-def halo_pens(scale: float) -> list:
+def halo_strokes(tier: str) -> tuple:
+    return MAJOR_HALO_STROKES if tier == "major" else HALO_STROKES
+
+
+def halo_pens(scale: float, tier: str = "") -> list:
     pens = []
-    for width, alpha in HALO_STROKES:
+    for width, alpha in halo_strokes(tier):
         pen = QPen(QColor(*HALO_RGB, alpha))
         pen.setWidthF(width * scale)
         pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
@@ -172,11 +181,12 @@ def halo_pens(scale: float) -> list:
     return pens
 
 
-def paint_text_path(painter: QPainter, path: QPainterPath, colour: str, scale: float) -> None:
-    """Halo strokes, widest first, then the fill. The fill is never stroked: a
-    centred stroke would eat into the letterform."""
+def paint_text_path(painter: QPainter, path: QPainterPath, colour: str, scale: float,
+                    tier: str = "") -> None:
+    """Halo strokes (by tier), widest first, then the fill. The fill is never
+    stroked: a centred stroke would eat into the letterform."""
     painter.setBrush(Qt.BrushStyle.NoBrush)
-    for pen in halo_pens(scale):
+    for pen in halo_pens(scale, tier):
         painter.setPen(pen)
         painter.drawPath(path)
     painter.setPen(Qt.PenStyle.NoPen)
@@ -231,7 +241,7 @@ def _paint_marker(painter: QPainter, p: Marker, scale: float) -> None:
 
 
 def _paint_label(painter: QPainter, p: Label, scale: float) -> None:
-    paint_text_path(painter, label_path(p, scale).translated(p.x, p.y), p.colour, scale)
+    paint_text_path(painter, label_path(p, scale).translated(p.x, p.y), p.colour, scale, p.tier)
 
 
 def _paint_leader(painter: QPainter, p: Leader, scale: float) -> None:

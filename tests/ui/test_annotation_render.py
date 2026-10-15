@@ -120,6 +120,54 @@ def test_text_gets_a_soft_halo_of_widening_faint_strokes_then_a_clean_fill(qtbot
     assert fill[2] == "#f4877c" and fill[3], "the fill is the colour, never stroked"
 
 
+def _halo(tier):
+    from PySide6.QtGui import QPainterPath
+    rec = _RecordingPainter()
+    R.paint_text_path(rec, QPainterPath(), "#f4877c", 1.0, tier)
+    return [(w, a) for w, a, _f, _n in rec.calls[:-1]]
+
+
+def test_major_labels_get_at_most_an_almost_invisible_halo(qtbot):
+    """His 2026-10-15 call: big salmon text reads without an outline. At most a
+    whisper is kept for edge definition over M 16's bright core."""
+    major, small = _halo("major"), _halo("minor")
+    assert len(major) == len(R.MAJOR_HALO_STROKES) <= 2
+    assert all(a <= 40 for _w, a in major), "a major halo must stay nearly invisible"
+    assert sum(a for _w, a in major) <= sum(a for _w, a in small) / 2
+    assert all(w <= R.HALO_STROKES[0][0] for w, _a in major), "HALO_PAD must still cover it"
+
+
+def test_small_labels_keep_a_soft_slate_halo_not_a_black_outline(qtbot):
+    for tier in ("minor", "star", "grid", "furniture", ""):
+        strokes = _halo(tier)
+        assert len(strokes) == len(R.HALO_STROKES) >= 3, tier
+        assert 50 <= max(a for _w, a in strokes) <= 90, tier
+    assert sum(R.HALO_RGB) >= 60 and R.HALO_RGB[2] >= R.HALO_RGB[0], "dark slate, not black"
+
+
+def test_both_adapters_hand_the_labels_tier_to_the_text_painter(qtbot, monkeypatch):
+    from PySide6.QtGui import QPainter
+    from nocturne.ui.annotation_overlay import build_annotation_group
+    seen = []
+    monkeypatch.setattr(R, "paint_text_path", lambda _p, _path, _c, _s, tier="": seen.append(tier))
+    prims = [Label("IC 1805", 10, 10, "#f4877c", "major", tier="major"),
+             Label("LDN 1362", 10, 60, "#eef1f6", "minor", tier="minor")]
+    paint_annotations(_blank(), prims, (300, 400))
+    assert seen == ["major", "minor"], "export"
+    seen.clear()
+    im = _blank()
+    painter = QPainter(im)
+    for item in build_annotation_group(prims, (300, 400)).childItems():
+        item.paint(painter, None)
+    painter.end()
+    assert seen == ["major", "minor"], "canvas"
+
+
+def test_grid_lines_are_wider_than_a_hairline_on_the_canvas_too():
+    # 0.8 floored to 1 px cosmetic was lost on every real field he tried.
+    assert R.grid_width(1.0) >= 1.15 and R.grid_width(2.0) == pytest.approx(2 * R.GRID_WIDTH)
+
+
 def test_the_measure_reads_label_pt_and_is_linear_in_the_scale(qtbot):
     from nocturne.ui.annotation_overlay import make_measure
     m1, m3 = make_measure(1.0), make_measure(3.0)

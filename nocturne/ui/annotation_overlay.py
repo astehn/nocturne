@@ -103,6 +103,7 @@ class LabelItem(QGraphicsItem):
         self.text = p.text
         self.sub = p.sub
         self.colour = p.colour
+        self.tier = p.tier
         self.path = R.label_path(p, 1.0)
         pad = R.HALO_PAD
         self._rect = self.path.boundingRect().adjusted(-pad, -pad, pad, pad)
@@ -121,7 +122,7 @@ class LabelItem(QGraphicsItem):
 
     def paint(self, painter, option, widget=None) -> None:
         painter.setRenderHint(_AA, True)
-        R.paint_text_path(painter, self.path, self.colour, 1.0)
+        R.paint_text_path(painter, self.path, self.colour, 1.0, self.tier)
 
 
 def _cosmetic(pen: QPen) -> QPen:

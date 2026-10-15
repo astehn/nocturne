@@ -666,9 +666,10 @@ def test_grid_labels_are_labels_with_their_tips_and_lines_carry_no_text():
     assert ra and all(l.parts and "".join(t for t, _ in l.parts) == l.text for l in ra)
 
 
-def test_grid_line_colour_is_white_at_about_a_quarter_opacity():
+def test_grid_line_colour_is_white_at_about_half_opacity():
+    # 27% was lost on all three of his test fields (2026-10-15); half reads and stays calm.
     a = int(GRID_LINE_COLOUR[1:3], 16) / 255
-    assert 0.22 <= a <= 0.32 and all(int(GRID_LINE_COLOUR[i:i + 2], 16) > 0xe0 for i in (3, 5, 7))
+    assert 0.45 <= a <= 0.55 and all(int(GRID_LINE_COLOUR[i:i + 2], 16) > 0xe0 for i in (3, 5, 7))
 
 
 def test_grid_labels_never_leave_the_frame_under_any_rotation_or_scale():

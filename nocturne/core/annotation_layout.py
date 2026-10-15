@@ -17,7 +17,7 @@ _MAX_CIRCLE_FRAMES = 0.75    # drop rings larger than this * the frame diagonal
 MAJOR_COLOUR = "#f4877c"     # soft salmon: Messier, NGC, IC, anything with a common name
 MINOR_COLOUR = "#eef1f6"     # white: LDN, Barnard, Sh2, vdB
 STAR_COLOUR = "#ffd447"      # yellow: named stars
-GRID_LINE_COLOUR = "#46ebf0f8"   # white at 70/255 = 27%: present, never competing
+GRID_LINE_COLOUR = "#80ebf0f8"   # white at 128/255 = 50%: 27% was lost on every real field
 GRID_TEXT_COLOUR = "#e6e6ebf2"
 FURNITURE_TEXT_COLOUR = "#dceef1f6"
 
