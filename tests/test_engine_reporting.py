@@ -17,6 +17,7 @@ import pytest
 
 from nocturne.core.image import AstroImage
 from nocturne.steps.star_split import splitter_name
+from nocturne.ui.main_window import render_engine
 
 
 def _img(h=24, w=24):
@@ -201,13 +202,13 @@ def test_the_dialog_driven_tools_name_the_engine_too(qtbot, tmp_path):
     qtbot.addWidget(win)
     img = _img()
 
-    assert win._split_engine_for(img) == "", "nothing has split yet"
+    assert win._split_tag_for(img) == "", "nothing has split yet"
 
     win._remember_split(img, img, img, "StarNet2")
-    assert win._split_engine_for(img) == " (StarNet2)"
+    assert win._split_tag_for(img) == "StarNet2"
 
     win._remember_split(img, img, img, "free")
-    assert win._split_engine_for(img) == " (built-in)", \
+    assert render_engine(win._split_tag_for(img)) == "built-in", \
         "the log is read by a person; 'free' names a price, not a method"
 
 
@@ -221,7 +222,7 @@ def test_a_tool_handed_a_cached_split_reports_no_engine_of_its_own(qtbot, tmp_pa
     qtbot.addWidget(win)
     img = _img()
     win._remember_split(img, img, img)          # no tag
-    assert win._split_engine_for(img) == ""
+    assert win._split_tag_for(img) == ""
 
 
 # --- an option dict must never reach the log as a repr (2026-09-22) ---------
@@ -295,13 +296,13 @@ def test_an_unknown_tag_never_overwrites_a_known_one(qtbot, tmp_path):
 
     win._remember_split(img, img, img, "StarNet2")
     win._remember_split(img, img, img)              # a dialog handed the cached split
-    assert win._split_engine_for(img) == " (StarNet2)", \
+    assert win._split_tag_for(img) == "StarNet2", \
         "a republish with no tag erased the engine that actually ran"
 
     # A real second opinion still wins: this is "unknown must not overwrite",
     # not "the first answer is frozen".
     win._remember_split(img, img, img, "StarX")
-    assert win._split_engine_for(img) == " (StarXTerminator)"
+    assert render_engine(win._split_tag_for(img)) == "StarXTerminator"
 
 
 def test_de_green_stars_never_invents_rc_astro(qtbot, tmp_path):
@@ -352,7 +353,7 @@ def test_the_free_path_is_called_the_same_thing_on_every_line(qtbot, tmp_path):
     assert render_engine("") == ""
 
     win._remember_split(img, img, img, "free")
-    assert win._split_engine_for(img) == " (built-in)"
+    assert render_engine(win._split_tag_for(img)) == "built-in"
     assert "free" not in win._sat_log_option(0.6, 0.3) or True  # see below
 
     win._sat_layers = (win._sr_sig(img), img, img, "free")

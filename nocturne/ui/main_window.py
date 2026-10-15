@@ -2092,7 +2092,7 @@ class MainWindow(QMainWindow):
             return
         self.project.run_step(_PrecomputedStep("Starless Levels", result), values)
         self._mark_dirty()
-        # No engine known, no engine named — the `_split_engine_for` rule.
+        # No engine known, no engine named — the `_split_tag_for` rule.
         path = getattr(self, "_starless_levels_path", "")
         self.log_panel.append_entry(format_log_entry(
             "Starless Levels",
@@ -2176,8 +2176,9 @@ class MainWindow(QMainWindow):
         hit = self._cached_layers(img)
         return (hit[0], hit[1]) if hit else (None, None)
 
-    def _split_engine_for(self, img) -> str:
-        """" (StarNet2)" for the history line, or "" when nothing split.
+    def _split_tag_for(self, img) -> str:
+        """"StarNet2" (or "StarX", "free") for the history line, or "" when
+        nothing split.
 
         The two dialog-driven tools do not run a Step, so they have no
         `last_engine` to read. They publish their tag into the shared split
@@ -2188,11 +2189,6 @@ class MainWindow(QMainWindow):
         ran no separation of its own, and a tool must not report work it did
         not do. Same rule as Saturation at neb 0.00.
         """
-        tag = self._split_tag_for(img)
-        return f" ({render_engine(tag)})" if tag else ""
-
-    def _split_tag_for(self, img) -> str:
-        """The raw tag behind `_split_engine_for` ("StarNet2", "free"), or ""."""
         hit = self._cached_layers(img)
         return hit[2] if hit and len(hit) > 2 else ""
 
@@ -3033,10 +3029,6 @@ class MainWindow(QMainWindow):
             kind = "StarX" if type(splitter).__name__ == "RCAstro" else "StarNet2"
             return (*splitter.remove_stars(img, runner=self._rc_runner), kind)
         return (*split_stars(img), "free")
-
-    def _remove_stars(self, img):
-        starless, stars, _path = self._split_tagged(img)
-        return starless, stars
 
     def _sat_log_option(self, amount: float, nebula: float) -> str:
         """Saturation's log line, naming the split path only when there WAS one.
@@ -5449,6 +5441,14 @@ class MainWindow(QMainWindow):
         Narrowband said "(StarNet2)" where the hand-applied one said
         "(HOO (StarNet2))" (2026-10-14). Takes the live option or the recorded
         (serialized) one: a run records what was serialized."""
+        if stage_id == "narrowband" and engine_tag == "free":
+            # Without a splitter Narrowband renders the whole image: nothing
+            # was separated, so no engine is named (the manual line never did).
+            engine_tag = None
+        elif stage_id == "green_fringe" and engine_tag in ("free", "mask"):
+            # Without a splitter De-green Stars always works inside a star
+            # mask. The step tags that "free" and the panel "mask"; one name.
+            engine_tag = "star mask"
         if stage_id == "levels" and parse_levels_option(option).auto:
             # The one Levels option that IS user-facing: it says the black point
             # will be re-derived per image, which a bare "Levels" cannot.
