@@ -174,16 +174,17 @@ def test_a_two_line_label_centres_each_line_in_the_block(qtbot, top, sub):
 
 def test_raised_runs_sit_above_the_baseline_and_smaller(qtbot):
     from PySide6.QtGui import QFontMetricsF
+    k = R.LABEL_PX["grid"] / R._BASE_PX         # glyphs are built at _BASE_PX, then scaled
     fm = QFontMetricsF(R._font("grid"))
-    base, adv2 = fm.ascent(), fm.horizontalAdvance("2")
+    base, adv2, asc = fm.ascent() * k, fm.horizontalAdvance("2") * k, fm.ascent() * k
     parts = (("2", False), ("h", True))
     raised = Label("2h", 0, 0, "#fff", "grid", parts=parts)
     plain = Label("2h", 0, 0, "#fff", "grid")
-    shift = (fm.horizontalAdvance("2h") - (adv2 + QFontMetricsF(R._font("grid", R.RAISED_SIZE))
-                                           .horizontalAdvance("h") + 1.0)) / 2
+    shift = k * (fm.horizontalAdvance("2h") - (fm.horizontalAdvance("2") + QFontMetricsF(
+        R._font("grid", R.RAISED_SIZE)).horizontalAdvance("h") + 1.0 / k)) / 2
     _l, h_raised = _ink_regions_x(R.label_path(raised, 1.0), shift + adv2)
     _l, h_plain = _ink_regions_x(R.label_path(plain, 1.0), adv2)
-    assert h_raised.bottom() < base - 0.3 * fm.ascent(), "lifted clear of the baseline"
+    assert h_raised.bottom() < base - 0.3 * asc, "lifted clear of the baseline"
     assert h_raised.height() < 0.8 * h_plain.height(), "set small"
 
 
@@ -261,3 +262,15 @@ def test_canvas_and_export_draw_the_same_pixels_at_the_reference_scale(qtbot):
 
 
 from PySide6.QtGui import QColor  # noqa: E402
+
+
+def test_text_size_is_fixed_in_pixels_whatever_the_platform_dpi(qtbot):
+    """Point sizes resolve through the screen's logical DPI: 72 on cocoa, 96
+    offscreen/Windows/Linux, so his Mac exported text at 0.75x the approved
+    mockup (rendered offscreen). Text is set in pixels: LABEL_PX = LABEL_PT x 96/72.
+    Run under QT_QPA_PLATFORM=cocoa as well as the default offscreen."""
+    for size in ("major", "minor", "grid"):
+        px = R.LABEL_PX[size]
+        assert px == pytest.approx(LABEL_PT[size] * 96 / 72)
+        _w, h = R.text_extent("H", size, 1.0)
+        assert 1.05 * px <= h <= 1.35 * px, (size, h, px)

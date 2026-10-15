@@ -24,7 +24,14 @@ from PySide6.QtGui import (QColor, QFont, QFontMetricsF, QImage, QPainter, QPain
 from ..core.annotation_layout import LABEL_PT, STAR_RETICLE, Circle, GridLine, Label, Leader, Marker
 
 _REF_DIM = 1200.0   # the reference frame LABEL_PT and the widths below are tuned at
-_MIN_PT = 4.0       # floor so text never vanishes on a tiny export
+
+# Text is set in PIXELS. A point size resolves through the screen's logical DPI
+# — 72 on macOS, 96 offscreen, on Windows and Linux — so the same LABEL_PT drew
+# his Mac's export at 0.75x the approved mockup (rendered offscreen, 96 dpi) and
+# every other platform 1.33x the Mac. LABEL_PT x 96/72 keeps the approved look.
+LABEL_PX = {k: v * 96.0 / 72.0 for k, v in LABEL_PT.items()}
+_MIN_PX = 4.0 * 96.0 / 72.0   # floor so text never vanishes on a tiny export
+_BASE_PX = 100      # glyphs are built at this pixel size, then scaled to LABEL_PX
 
 # Requested, not bundled: the approved mockup was drawn in it. Where it is absent
 # Qt substitutes the system sans for BOTH measure and paint, so layout holds.
@@ -35,7 +42,7 @@ _MEDIUM_SIZES = {"major", "major_common"}
 # (reference px, alpha), so text reads on bright nebula without a hard outline.
 HALO_RGB = (6, 9, 16)
 HALO_STROKES = ((7.0, 40), (4.6, 70), (2.6, 120))
-HALO_PAD = HALO_STROKES[0][0] / 2
+HALO_PAD = HALO_STROKES[0][0] / 2 + 1.0   # + the antialias fringe, or it trails on scroll
 
 # Raised runs (the h and m of 2ʰ40ᵐ): set this much smaller and lifted by this
 # fraction of the line's ascent, as the mockup drew them.
@@ -59,27 +66,35 @@ def scale_for(shape) -> float:
     return max(min(h, w), 1.0) / _REF_DIM
 
 
-def _ref_pt(size: str) -> float:
-    return LABEL_PT.get(size, LABEL_PT["minor"])
+def _ref_px(size: str) -> float:
+    return LABEL_PX.get(size, LABEL_PX["minor"])
 
 
 def _eff(size: str, scale: float) -> float:
     """The factor a size class is actually drawn at: `scale`, floored."""
-    return max(scale, _MIN_PT / _ref_pt(size))
+    return max(scale, _MIN_PX / _ref_px(size))
 
 
 def _font(size: str, factor: float = 1.0) -> QFont:
+    """The face at `_BASE_PX` x factor pixels; callers scale to LABEL_PX."""
     f = QFont(FONT_FAMILY)
-    f.setPointSizeF(_ref_pt(size) * factor)
+    f.setPixelSize(round(_BASE_PX * factor))
     if size in _MEDIUM_SIZES:
         f.setWeight(QFont.Weight.Medium)
     return f
 
 
 def _line_at_ref(text: str, size: str, parts=()) -> tuple[QPainterPath, float, float]:
-    """One line at the reference size, top-left at the origin: (path, w, h).
-    The width is the PLAIN text's advance — what the measure saw — and a line
-    of raised runs, being a little narrower, is centred inside it."""
+    """One line at the reference size, top-left at the origin: (path, w, h)."""
+    path, w, h = _line_at_base(text, size, parts)
+    k = _ref_px(size) / _BASE_PX
+    return QTransform.fromScale(k, k).map(path), w * k, h * k
+
+
+def _line_at_base(text: str, size: str, parts=()) -> tuple[QPainterPath, float, float]:
+    """One line at `_BASE_PX`. The width is the PLAIN text's advance — what the
+    measure saw — and a line of raised runs, being a little narrower, is
+    centred inside it."""
     f = _font(size)
     fm = QFontMetricsF(f)
     w, h, base = fm.horizontalAdvance(text), fm.height(), fm.ascent()
@@ -89,13 +104,14 @@ def _line_at_ref(text: str, size: str, parts=()) -> tuple[QPainterPath, float, f
         return path, w, h
     small = _font(size, RAISED_SIZE)
     sfm = QFontMetricsF(small)
-    runs_w = sum(sfm.horizontalAdvance(r) + 1.0 if raised else fm.horizontalAdvance(r)
+    kern = 1.0 * _BASE_PX / _ref_px(size)      # the mockup's 1 px, in base px
+    runs_w = sum(sfm.horizontalAdvance(r) + kern if raised else fm.horizontalAdvance(r)
                  for r, raised in parts)
     x = max(w - runs_w, 0.0) / 2
     for run, raised in parts:
         if raised:
-            path.addText(QPointF(x + 0.5, base - fm.ascent() * RAISED_LIFT), small, run)
-            x += sfm.horizontalAdvance(run) + 1.0
+            path.addText(QPointF(x + kern / 2, base - fm.ascent() * RAISED_LIFT), small, run)
+            x += sfm.horizontalAdvance(run) + kern
         else:
             path.addText(QPointF(x, base), f, run)
             x += fm.horizontalAdvance(run)
@@ -103,10 +119,22 @@ def _line_at_ref(text: str, size: str, parts=()) -> tuple[QPainterPath, float, f
 
 
 def text_extent(text: str, size: str, scale: float = 1.0) -> tuple[float, float]:
-    """(w, h) of one line at `scale` — the measure both consumers lay out with."""
-    _p, w, h = _line_at_ref(text, size)
-    e = _eff(size, scale)
-    return w * e, h * e
+    """(w, h) of one line at `scale` — the measure both consumers lay out with.
+    The same numbers `_line_at_base` lays the line out with, from metrics alone:
+    building the glyph path just to measure it tripled the canvas relayout."""
+    fm = _base_metrics(size)
+    k = _ref_px(size) / _BASE_PX * _eff(size, scale)
+    return fm.horizontalAdvance(text) * k, fm.height() * k
+
+
+_METRICS: dict = {}
+
+
+def _base_metrics(size: str) -> QFontMetricsF:
+    fm = _METRICS.get(size)
+    if fm is None:
+        fm = _METRICS[size] = QFontMetricsF(_font(size))
+    return fm
 
 
 def _scaled_line(text, size, scale, parts=()):

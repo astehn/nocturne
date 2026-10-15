@@ -114,3 +114,20 @@ def test_the_canvas_reticle_has_the_star_reticle_gap(qtbot):
 
 def test_an_empty_primitive_list_yields_an_empty_group(qtbot):
     assert build_annotation_group([], (600, 800)).childItems() == []
+
+
+def test_a_label_is_cached_so_a_repaint_does_not_restroke_its_halo(qtbot):
+    from PySide6.QtWidgets import QGraphicsItem
+    g = build_annotation_group([Label("NGC 7000", 10, 10, "#f4877c", "major")], (600, 800))
+    (item,) = g.childItems()
+    assert item.cacheMode() == QGraphicsItem.CacheMode.DeviceCoordinateCache
+
+
+def test_a_labels_box_covers_its_widest_halo_and_the_antialias_fringe(qtbot):
+    from nocturne.ui import annotation_render as R
+    g = build_annotation_group([Label("NGC 7000", 10, 10, "#f4877c", "major")], (600, 800))
+    (item,) = g.childItems()
+    ink, box = item.path.boundingRect(), item.boundingRect()
+    reach = R.HALO_STROKES[0][0] / 2 + 1.0
+    assert ink.left() - box.left() >= reach and box.right() - ink.right() >= reach
+    assert ink.top() - box.top() >= reach and box.bottom() - ink.bottom() >= reach

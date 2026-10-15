@@ -107,6 +107,10 @@ class LabelItem(QGraphicsItem):
         pad = R.HALO_PAD
         self._rect = self.path.boundingRect().adjusted(-pad, -pad, pad, pad)
         self.setFlag(_IGNORE, True)
+        # Three wide antialiased halo strokes per label per repaint made a dense
+        # field's canvas repaint 4x slower (NGC 7000 at fit, cocoa: 19 -> 86 ms);
+        # cached, it is 13 ms. The label never changes, so the cache never goes stale.
+        self.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
         self.setPos(p.x, p.y)
         tip = _rich_tip(p.tip)
         if tip:
