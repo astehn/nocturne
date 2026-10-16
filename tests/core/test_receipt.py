@@ -34,7 +34,8 @@ def test_an_unconfigured_tool_names_the_fallback_AND_the_reason(tmp_path):
     somebody made; "because RC-Astro is not configured" is actionable."""
     note = engine_for("star_reduction", Settings())
     assert "free star split" in note.engine
-    assert "not configured" in note.reason
+    assert note.reason == "no star tool set up (StarXTerminator or StarNet2)"
+    assert "not configured" in engine_for("deconvolution", Settings()).reason
     assert note.is_fallback is True
     assert note.unavailable is False
 
@@ -44,9 +45,9 @@ def test_the_fallback_is_named_specifically_where_that_is_knowable():
     star steps share steps/star_split.resolve_star_split, so they share a name."""
     assert "sky balance" in engine_for("color", Settings()).engine
     assert "built-in sharpen" in engine_for("deconvolution", Settings()).engine
-    # De-green Stars and Narrowband were listed here too; neither splits
-    # without a splitter (see the 2026-10-14 tests below).
-    for sid in ("star_reduction", "saturation", "color_balance", "starless_levels"):
+    # De-green Stars, Narrowband and Colour Balance were listed here too; none
+    # splits without a splitter (see the tests below).
+    for sid in ("star_reduction", "saturation", "starless_levels"):
         assert "free star split" in engine_for(sid, Settings()).engine, sid
 
 
@@ -207,15 +208,16 @@ def test_split_steps_name_the_built_in_path_only_when_nothing_is_installed():
     expected = {
         "star_reduction": "Nocturne (free star split)",
         "saturation": "Nocturne (free star split)",
-        "color_balance": "Nocturne (free star split)",
         "starless_levels": "Nocturne (free star split)",
         "green_fringe": "Nocturne (star mask)",
         "narrowband": "Nocturne (whole image, no split)",
+        # 2026-10-16: the step follows the dialog, which adjusts the whole image.
+        "color_balance": "Nocturne (whole image, no split)",
     }
     for sid, engine in expected.items():
         note = engine_for(sid, Settings())
         assert note.engine == engine, sid
-        assert note.reason == "RC-Astro is not configured in Settings", sid
+        assert note.reason == "no star tool set up (StarXTerminator or StarNet2)", sid
         assert note.is_fallback, sid
 
 

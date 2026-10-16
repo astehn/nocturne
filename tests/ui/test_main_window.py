@@ -5021,6 +5021,9 @@ def test_colour_balance_reuses_a_star_split_across_opens(qtbot, tmp_path, monkey
     # patched in ITS OWN module: _open_color_balance imports it locally, so a
     # patch on main_window's namespace never takes and a real modal dialog opens
     monkeypatch.setattr(cbd, "ColorBalanceDialog", _RecordingCB)
+    # A star tool is set up: with none, Colour Balance adjusts the whole image
+    # and takes no split from the cache (2026-10-16).
+    monkeypatch.setattr("nocturne.ui.main_window.preferred_splitter", lambda s: object())
     win = _stretched_window(qtbot, tmp_path)
 
     win._open_color_balance()
@@ -5073,6 +5076,9 @@ def test_star_reductions_split_is_reused_by_colour_balance(qtbot, tmp_path, monk
     # patched in ITS OWN module: _open_color_balance imports it locally, so a
     # patch on main_window's namespace never takes and a real modal dialog opens
     monkeypatch.setattr(cbd, "ColorBalanceDialog", _RecordingCB)
+    # A star tool is set up: with none, Colour Balance adjusts the whole image
+    # and takes no split from the cache (2026-10-16).
+    monkeypatch.setattr("nocturne.ui.main_window.preferred_splitter", lambda s: object())
     win = _stretched_window(qtbot, tmp_path)
 
     cur = win.project.current()
@@ -6044,6 +6050,9 @@ def test_saturations_split_is_visible_to_colour_balance(qtbot, tmp_path, monkeyp
     import nocturne.ui.color_balance_dialog as cbd
     _RecordingCB.opened = []
     monkeypatch.setattr(cbd, "ColorBalanceDialog", _RecordingCB)
+    # A star tool is set up: with none, Colour Balance adjusts the whole image
+    # and takes no split from the cache (2026-10-16).
+    monkeypatch.setattr("nocturne.ui.main_window.preferred_splitter", lambda s: object())
     win = _stretched_window(qtbot, tmp_path)
 
     cur = win.project.current()

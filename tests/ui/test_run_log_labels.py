@@ -231,4 +231,31 @@ def test_the_preset_summary_reports_the_built_in_split_as_a_fallback(qtbot, tmp_
     _choose(win, p); _box(win); win._apply_crop()
     out = win.output_panel.toPlainText()
     assert ("Star Reduction and Starless Levels used Nocturne (free star split): "
-            "RC-Astro is not configured in Settings.") in out, out
+            "no star tool set up (StarXTerminator or StarNet2).") in out, out
+
+
+def test_the_preset_summary_names_no_splitter_for_steps_that_split_nothing(qtbot, tmp_path):
+    """Saturation with no nebula boost and Star Reduction at 0 separate no
+    stars, so the summary must not say they "used Nocturne (free star split)",
+    nor suggest a better splitter for them (2026-10-15)."""
+    from tests.ui.test_preset_apply import STEPS, _box, _choose, _setup
+    steps = STEPS + [{"stage": "saturation", "option": [0.6, 0.0]},
+                     {"stage": "star_reduction", "option": 0.0}]
+    win, p = _setup(qtbot, tmp_path, steps=steps)
+    _choose(win, p); _box(win); win._apply_crop()
+    out = win.output_panel.toPlainText()
+    assert "Applied preset" in out, out
+    assert "used" not in out and "free star split" not in out, out
+    assert "cleaner stars" not in out, out
+
+
+def test_the_preset_summary_still_names_the_split_when_one_ran(qtbot, tmp_path):
+    from tests.ui.test_preset_apply import STEPS, _box, _choose, _setup
+    steps = STEPS + [{"stage": "saturation", "option": [0.6, 0.3]},
+                     {"stage": "star_reduction", "option": 0.0}]
+    win, p = _setup(qtbot, tmp_path, steps=steps)
+    _choose(win, p); _box(win); win._apply_crop()
+    out = win.output_panel.toPlainText()
+    assert ("Saturation used Nocturne (free star split): "
+            "no star tool set up (StarXTerminator or StarNet2).") in out, out
+    assert "cleaner stars" in out, out

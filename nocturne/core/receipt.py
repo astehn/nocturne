@@ -63,7 +63,7 @@ _PREFERS: dict[str, tuple[str, str, str]] = {
 # RC-Astro was missing — written before StarNet2 existed, so a summary told
 # StarNet2 users the free split had run under log lines saying StarNet2
 # (2026-10-14). `engine_for` asks the resolver; only the last rung,
-# `_FALLBACKS`, is a fallback — and for two steps it is not a split at all.
+# `_FALLBACKS`, is a fallback — and for three steps it is not a split at all.
 SPLIT_STAGES = frozenset({"star_reduction", "saturation", "green_fringe",
                           "narrowband", "color_balance", "starless_levels"})
 _FREE_SPLIT = "Nocturne (free star split)"
@@ -73,12 +73,13 @@ _FALLBACKS: dict[str, str] = {
     "noise_sharpen": "Nocturne (built-in denoise)",
     "star_reduction": _FREE_SPLIT,
     "saturation": _FREE_SPLIT,
-    "color_balance": _FREE_SPLIT,
     "starless_levels": _FREE_SPLIT,
     # GreenFringeStep without a splitter de-greens inside a star mask, and
-    # NarrowbandStep renders the whole image: neither separates anything.
+    # NarrowbandStep and ColorBalanceStep work on the whole image: none of
+    # them separates anything.
     "green_fringe": "Nocturne (star mask)",
     "narrowband": "Nocturne (whole image, no split)",
+    "color_balance": "Nocturne (whole image, no split)",
 }
 
 # Steps with NO fallback: without the tool they cannot run at all, and the app
@@ -86,6 +87,8 @@ _FALLBACKS: dict[str, str] = {
 _REQUIRED = {"background"}
 
 UNAVAILABLE = ""     # EngineNote.engine when the step cannot run
+
+NO_STAR_TOOL = "no star tool set up (StarXTerminator or StarNet2)"
 
 _NEEDS = {"graxpert": graxpert_valid, "rcastro": rcastro_valid, "astap": astap_valid}
 
@@ -151,18 +154,55 @@ def _split_note(stage_id: str, settings) -> EngineNote:
         # A choice, not a degradation (2026-10-15): named, but never reported
         # as a fallback — that would nag about a paid tool nobody needs.
         return EngineNote(name, "StarNet2", "")
-    return EngineNote(name, _FALLBACKS[stage_id], _NOT_CONFIGURED[needs])
+    # Either tool would do, so the reason names both — "RC-Astro is not
+    # configured" read as though only the paid one could help.
+    return EngineNote(name, _FALLBACKS[stage_id], NO_STAR_TOOL)
 
 
-def engine_for(stage_id: str, settings, engine: str | None = None) -> EngineNote | None:
+_NO_OPTION = object()
+
+
+def splits_stars(stage_id: str, option) -> bool:
+    """Does this star stage, with this option, separate stars at all?
+
+    Two of them skip the split for one option, and BEFORE any splitter runs:
+    Saturation with no nebula boost (SaturationStep: `if nebula > 0.0`) and
+    Star Reduction at 0 (StarReductionStep returns a copy). The rest split
+    whatever the option — De-green Stars even when off. Asked through the
+    steps' own parsers, so the rule cannot drift from what apply() does. An
+    option the parser cannot read is the step's problem; the receipt then
+    answers as it always did.
+    """
+    if stage_id not in SPLIT_STAGES:
+        return False
+    try:
+        if stage_id == "saturation":
+            from ..steps.saturation_step import parse_saturation_option
+            return parse_saturation_option(option)[1] > 0.0
+        if stage_id == "star_reduction":
+            from ..steps.star_reduction import parse_star_reduction_option
+            return parse_star_reduction_option(option) != 0.0
+    except (TypeError, ValueError):
+        return True
+    return True
+
+
+def engine_for(stage_id: str, settings, engine: str | None = None, *,
+               option=_NO_OPTION) -> EngineNote | None:
     """What `make_step` will use for this stage, or None if it has no choice.
 
     None is the honest answer for a step with one implementation — Stretch does
     not have an engine, and inventing "Nocturne (built-in)" for it would pad the
-    receipt with rows that carry no decision.
+    receipt with rows that carry no decision. It is also the answer for a star
+    step whose `option` splits nothing (Saturation at nebula 0, Star Reduction
+    at 0): the run summary named a splitter, and a fallback, for those
+    (2026-10-15). Without `option` the answer is the settings' alone, as before.
     """
     prefers = _PREFERS.get(stage_id)
     if prefers is None:
+        return None
+    if (option is not _NO_OPTION and stage_id in SPLIT_STAGES
+            and not splits_stars(stage_id, option)):
         return None
     if stage_id == "noise_sharpen":
         return _noise_note(settings, engine)
@@ -176,21 +216,26 @@ def engine_for(stage_id: str, settings, engine: str | None = None) -> EngineNote
     return EngineNote(name, _FALLBACKS.get(stage_id, BUILT_IN), _NOT_CONFIGURED[needs])
 
 
-def notes_for(step_names, settings, engines: dict | None = None) -> list[EngineNote]:
+def notes_for(step_names, settings, engines: dict | None = None,
+              options=None) -> list[EngineNote]:
     """Engine notes for the steps actually applied, in order, without repeats.
 
     Takes the NAMES from a history rather than stage ids, because that is what
     a project stores and what the provenance report already walks. `engines`
-    maps a step name to the engine its RECORDED option asked for.
+    maps a step name to the engine its RECORDED option asked for. `options`,
+    when given, runs alongside `step_names`: an entry whose option split
+    nothing contributes no note (see `engine_for`).
     """
     by_name = {name: sid for sid, (name, _e, _n) in _PREFERS.items()}
     out: list[EngineNote] = []
     seen: set[str] = set()
-    for name in step_names:
+    opts = list(options) if options is not None else None
+    for i, name in enumerate(step_names):
         sid = by_name.get(name)
         if sid is None or name in seen:
             continue
-        note = engine_for(sid, settings, (engines or {}).get(name))
+        kw = {} if opts is None else {"option": opts[i]}
+        note = engine_for(sid, settings, (engines or {}).get(name), **kw)
         if note is not None:
             seen.add(name)
             out.append(note)

@@ -405,6 +405,7 @@ def build_panel(
     on_reset_step=None,
     apply_enabled: bool = True,
     split_enabled: bool = False,
+    mono: bool = False,
     option_default: str | None = None,
     denoise_engine_choices: list | None = None,
     denoise_default_engine: str = "rcastro",
@@ -1398,7 +1399,8 @@ def build_panel(
         space_box = SegmentRow([_SPACE_LABELS.get(s, s) for s in SPACES], values=list(SPACES))
         space_note = _desc_label(
             "Tagged, so other programs show it as you see it here. "
-            "Wider spaces for 16-bit TIFF only.")
+            + ("A mono picture exports in sRGB." if mono
+               else "Wider spaces for 16-bit TIFF only."))
 
         def _restrict_space(fmt: str) -> None:
             """Wide gamut only for 16-bit TIFF.
@@ -1409,7 +1411,9 @@ def build_panel(
             pulling the selection back, not by hiding them: a user who picks
             Adobe RGB and then PNG must not quietly get a banded file.
             """
-            wide_ok = fmt in SIXTEEN_BIT_FORMATS
+            # Nor for MONO: a grey file cannot carry an RGB working space,
+            # and the conversion has no colour to move.
+            wide_ok = fmt in SIXTEEN_BIT_FORMATS and not mono
             for i, b in enumerate(space_box.buttons()):
                 b.setEnabled(wide_ok or space_box.itemText(i) in EIGHT_BIT_SPACES)
             if not wide_ok and space_box.currentText() not in EIGHT_BIT_SPACES:

@@ -245,7 +245,8 @@ def build_report(entries, metadata, *, app_version: str, date: datetime.date,
                       if rec_noise and isinstance(rec_noise[-1], dict) else None)
         engine_lines = render_lines(notes_for(
             [n for n, _ in entries], settings,
-            {"Noise Reduction": rec_engine} if rec_engine else None))
+            {"Noise Reduction": rec_engine} if rec_engine else None,
+            options=[ser for _n, ser in ser_entries]))
         # Colour is the one step whose history records what RAN (fell_back,
         # 2026-09-30), so its line comes from the record, not the current
         # setup: a fallback must not be reported as "ASTAP + Gaia".

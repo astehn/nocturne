@@ -56,14 +56,17 @@ class ColorBalanceStep(Step):
             preserve_lum=bool(o.get("preserve_lum", True)),
             strength=float(o.get("strength", 1.0)),
         )
-        # Stars are held aside and screened back untouched, exactly as the dialog
-        # does it — the whole point of the tool is that a colour shift aimed at
-        # nebulosity does not tint the stars. Through the SHARED resolver, so
-        # that without RC-Astro this falls back to the free SEP split like the
-        # other four star steps, rather than skipping the split and tinting the
-        # stars on any machine that has not configured StarX.
+        # With a star tool the stars are held aside and screened back untouched,
+        # exactly as the dialog does it. With NO tool the dialog adjusts the
+        # whole image, stars included, and says so — and a replay must give
+        # what the dialog showed (ruling 2026-10-15). This used to run the free
+        # split here, so a preset or batch differed from the hand-applied
+        # result by up to 0.02 on a synthetic star field. As NarrowbandStep.
         self.last_engine = splitter_name(self._rc)
-        starless, stars = resolve_star_split(img, self._rc, runner=self._runner)
+        if self._rc is not None:
+            starless, stars = resolve_star_split(img, self._rc, runner=self._runner)
+        else:
+            starless, stars = img, None
 
         data = starless.data
         lum = data.mean(axis=2) if data.ndim == 3 else data

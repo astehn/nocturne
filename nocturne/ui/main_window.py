@@ -603,7 +603,12 @@ _SPLIT_STAGES, _SPLIT_TAPS = _split_sets()
 
 
 def _uses_star_split(stage_id: str, option) -> bool:
-    return stage_id in _SPLIT_STAGES or (stage_id == "enhance" and option in _SPLIT_TAPS)
+    if stage_id in _SPLIT_STAGES:
+        # Saturation at nebula 0 and Star Reduction at 0 split nothing, so a
+        # better splitter would change nothing either.
+        from ..core.receipt import splits_stars
+        return splits_stars(stage_id, option)
+    return stage_id == "enhance" and option in _SPLIT_TAPS
 
 
 def _and_join(words: list[str]) -> str:
@@ -2164,7 +2169,12 @@ class MainWindow(QMainWindow):
             return
         from . import color_balance_dialog as _cbd
         base = self.project.current()
-        starless, stars = self._cached_split(base)
+        # Only a split the configured TOOL would make. With no tool the step
+        # (presets, recipes, batch) adjusts the whole image, so the dialog must
+        # too — a free split Saturation left in the cache would otherwise make
+        # the hand-applied result differ from a replay of the same options.
+        hit = self._cached_layers(base) if preferred_splitter(self.settings) is not None else None
+        starless, stars = (hit[0], hit[1]) if hit and hit[2] != "free" else (None, None)
         _cbd.ColorBalanceDialog(self.settings, base, parent=self,
                                 on_apply=self._apply_color_balance,
                                 starless=starless, stars=stars,
@@ -5489,9 +5499,9 @@ class MainWindow(QMainWindow):
         Narrowband said "(StarNet2)" where the hand-applied one said
         "(HOO (StarNet2))" (2026-10-14). Takes the live option or the recorded
         (serialized) one: a run records what was serialized."""
-        if stage_id == "narrowband" and engine_tag == "free":
-            # Without a splitter Narrowband renders the whole image: nothing
-            # was separated, so no engine is named (the manual line never did).
+        if stage_id in ("narrowband", "color_balance") and engine_tag == "free":
+            # Without a splitter Narrowband and Colour Balance work on the
+            # whole image: nothing was separated, so no engine is named.
             engine_tag = None
         elif stage_id == "green_fringe" and engine_tag in ("free", "mask"):
             # Without a splitter De-green Stars always works inside a star
@@ -7825,7 +7835,21 @@ class MainWindow(QMainWindow):
         from ..core.colour import convert
         if space == "sRGB":
             return img, icc_bytes("sRGB")     # no conversion, but still declared
-        from ..core.image import AstroImage
+        from ..core.image import AstroImage, finite_or_zero
+        if img.data.ndim == 2:
+            # The panel greys these out for mono; this is the backstop. A grey
+            # TIFF cannot carry an RGB working space, and the conversion itself
+            # throws on a 2-D array — say why instead of a matmul error.
+            raise ValueError(f"A mono picture exports in sRGB only, not {space}.")
+        if img.is_linear:
+            # STRETCH, THEN CONVERT. The canvas shows display_data; converting
+            # the linear data and letting save_tiff stretch it afterwards wrote
+            # a file up to 0.22 off the canvas (synthetic star field, ProPhoto,
+            # unlinked) — and off the Starless + Stars pair, which stretched
+            # first all along.
+            from ..core.export import display_data
+            img = AstroImage(finite_or_zero(display_data(img, linked=self._view_linked)),
+                             is_linear=False, metadata=dict(img.metadata))
         moved = convert(img.data, space)
         return (AstroImage(moved, is_linear=img.is_linear,
                            metadata=dict(img.metadata)),
@@ -8262,6 +8286,10 @@ class MainWindow(QMainWindow):
             on_reset_step=self._reset_step,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
+            # Only Export asks, and from the shape kept in memory: current() is a
+            # full np.load (~0.3 s on a 33 MP drizzle) on every step change.
+            mono=(loaded and stage.kind == "export"
+                  and len(self.project.shape_at(self.project.position)) == 2),
             option_default=(self._process_option_default(stage.id)
                             if stage.kind == "process" else None),
             denoise_engine_choices=denoise_choices,
