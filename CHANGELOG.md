@@ -2,6 +2,31 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.54.0] — 2026-10-16
+
+A calmer, clearer plate-solve overlay, the nebula names that were missing, and a provenance report that says only what it knows.
+
+### Added
+- Lynds' Bright Nebulae (LBN): 278 faint nebulae appear on the plate-solve overlay at density All, as labels with a small ring that marks where each one is.
+- A Glossary in Help: 44 astrophotography terms in plain words, from stretch and black point to SPCC and HOO.
+
+### Changed
+- Plate solve has a new look: big objects in salmon with their common name underneath, small ones in white, no leader lines, a soft halo behind the text, gapped crosshairs on named stars, and grid labels on their lines. Colour by type is gone.
+- The provenance report says which tool actually ran Noise Reduction, in plain names, and takes its Engines section from what the steps recorded rather than from the tools you have set up today. Where something wasn't recorded, it says so.
+- An Upscale Crop copy or a Combine result reports what it was made from, instead of "No processing steps applied".
+- The Crop and Stretch panels open faster on large pictures.
+
+### Fixed
+- Nebula common names such as Horsehead, Soul, Cave and Wizard now appear in the downloaded app. They were missing from every build since 0.10.0; plate solving itself always worked. IC 434 is no longer called the Flame Nebula.
+- Plate solving failed on some pictures after strong noise reduction. It now retries and solves them.
+- A reopened project listed every Rotate and Flip as a Crop. The picture was always right; the names are now right too, and projects already saved that way are corrected when you open them.
+- Batch TIFF and PNG files are now tagged with their colour profile, as Export's are, so other programs show them correctly.
+- A problem report that couldn't be sent from Nocturne opened the support page without what you had typed. The text now arrives in the form.
+- Exporting a picture that was still linear in a wide colour space (Display P3, Adobe RGB, ProPhoto) now looks the way the screen showed it.
+- Colour Balance without a star tool now replays exactly what its window previewed.
+- In Levels, the "Auto stopped at…" note no longer makes the sliders jump while you drag Black point.
+- The log and the run summary name the star tool that actually ran, and no longer name one for steps that split nothing.
+
 ## [0.53.0] — 2026-10-14
 
 Your own presets, a clearer clipping warning, and clipping you choose.
