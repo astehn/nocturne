@@ -4880,8 +4880,9 @@ class MainWindow(QMainWindow):
         # after a commit; the panel has no way to know the image is linear.
         visual = getattr(self._panel, "visual_btn", None)
         if visual is not None:
-            visual.setEnabled(
-                self.project is not None and self.project.current().is_linear)
+            visual.setEnabled(  # is_linear_at: one boolean without the pixels
+                self.project is not None
+                and self.project.is_linear_at(self.project.position))
         if getattr(self._panel, "export_btn", None) is not None:
             self._show_export_done()
         linkage_note = getattr(self._panel, "linkage_note", None)
@@ -6030,7 +6031,9 @@ class MainWindow(QMainWindow):
     def _picture_ratio(self) -> float | None:
         if self.project is None:
             return None
-        h, w = self.project.current().data.shape[:2]
+        # From the stored shape: current() reads every pixel, twice per Crop
+        # panel build, on the UI thread, for two numbers (2026-10-16).
+        h, w = self.project.shape_at(self.project.position)[:2]
         return w / h
 
     def _crop_ratio(self, shape: str) -> float | None:
