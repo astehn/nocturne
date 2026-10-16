@@ -506,10 +506,13 @@ def test_a_midtone_move_on_a_revisited_v2_keeps_autos_exact_black(qtbot, tmp_pat
     assert win.project.entries()[-1][1] == new_levels_option(exact, 1.2, 1.0)
 
 
-def test_dragging_black_point_keeps_the_note_until_the_drag_ends(qtbot, tmp_path):
-    """His find (2026-10-16): the note vanished mid-drag, the sliders jumped up
-    and Black point was no longer under the pointer. During a drag the layout
-    must hold still; the note goes when the slider is released."""
+
+@pytest.mark.parametrize("slider", ["black_slider", "gamma_slider", "white_slider"])
+def test_overriding_auto_never_moves_the_sliders(qtbot, tmp_path, slider):
+    """His find (2026-10-16): the "Auto stopped at …" note vanished as he dragged
+    Black point to override Auto, the sliders jumped up and the handle slid out
+    from under the pointer. Midtones/White drags and wheel scrolls did the same.
+    When the note goes, its space stays, so nothing below it moves."""
     win = _at_levels(qtbot, tmp_path)
     win.resize(1440, 900)
     win.show()
@@ -517,33 +520,36 @@ def test_dragging_black_point_keeps_the_note_until_the_drag_ends(qtbot, tmp_path
     p = win._panel
     win._on_levels_auto()
     qtbot.wait(20)
-    assert not p.auto_note.isHidden(), "fixture: Auto must have stopped"
-    y_before = p.black_slider.mapTo(win, p.black_slider.rect().topLeft()).y()
+    assert p.auto_note.isVisible(), "fixture: Auto must have stopped"
+    rows = {n: getattr(p, n) for n in ("black_slider", "gamma_slider", "white_slider")}
+    ys = {n: w.mapTo(win, w.rect().topLeft()).y() for n, w in rows.items()}
 
-    p.black_slider.setSliderDown(True)                 # the user grabs the handle
-    p.black_slider.setValue(p.black_slider.value() + 5)
+    s = getattr(p, slider)
+    s.setSliderDown(True)                              # a drag (a wheel tick is just setValue)
+    s.setValue(s.value() + (5 if s.value() + 5 <= s.maximum() else -5))
+    s.setSliderDown(False)
     qtbot.wait(20)
-    assert win._levels_auto is False, "dragging Black point still takes over from Auto"
-    assert not p.auto_note.isHidden(), "the note vanished mid-drag"
-    assert p.black_slider.mapTo(win, p.black_slider.rect().topLeft()).y() == y_before, (
-        "Black point moved under the pointer during the drag")
-
-    p.black_slider.setSliderDown(False)                # released
-    qtbot.wait(20)
-    assert p.auto_note.isHidden(), "the note outlived the drag"
+    assert win._levels_auto is False, "moving it still takes over from Auto"
+    assert not p.auto_note.isVisible(), "the note outlived the override"
+    assert {n: w.mapTo(win, w.rect().topLeft()).y() for n, w in rows.items()} == ys, (
+        "a slider moved under the pointer when the note went")
 
 
-def test_a_released_drag_that_returns_to_auto_keeps_nothing_stale(qtbot, tmp_path):
-    """Pressing Auto again during or after the deferred hide must not leave the
-    note hidden by a late release."""
+def test_pressing_auto_again_shows_the_note_in_the_kept_space(qtbot, tmp_path):
     win = _at_levels(qtbot, tmp_path)
+    win.resize(1440, 900)
+    win.show()
+    qtbot.waitExposed(win)
     p = win._panel
     win._on_levels_auto()
-    p.black_slider.setSliderDown(True)
     p.black_slider.setValue(p.black_slider.value() + 5)
-    p.black_slider.setSliderDown(False)
     win._on_levels_auto()                              # back to Auto
-    p.black_slider.setSliderDown(True)
-    p.black_slider.setSliderDown(False)                # a click with no move
     qtbot.wait(20)
-    assert win._levels_auto is True and not p.auto_note.isHidden()
+    assert win._levels_auto is True and p.auto_note.isVisible() and p.auto_note.text() == NOTE
+
+
+def test_a_fresh_levels_panel_has_no_empty_gap(qtbot, tmp_path):
+    """Space is kept only once the note has been shown — a Levels panel where
+    Auto never stopped must not open with a blank line above Black point."""
+    win = _at_levels(qtbot, tmp_path)
+    assert not win._panel.auto_note.sizePolicy().retainSizeWhenHidden()
