@@ -24,10 +24,16 @@ def test_nothing_typed_opens_the_bare_page():
     assert support_url("") == SUPPORT_URL
 
 
+def test_the_cap_stays_under_what_windows_can_open():
+    # A literal, not the constant: a later edit raising the cap must fail here.
+    # Windows hands a URL to the browser only up to 2083 characters.
+    assert MAX_SUPPORT_URL <= 2083
+
+
 def test_a_long_problem_is_shortened_and_says_so():
     text = "Ærlig talt — stjärnorna blev gröna. " * 200      # multi-byte, ~7 kB
     url = support_url(text)
-    assert len(url) <= MAX_SUPPORT_URL
+    assert len(url) <= MAX_SUPPORT_URL <= 2083
     got = _problem(url)
     assert got.endswith(SHORTENED)
     kept = got[: -len(SHORTENED)]
