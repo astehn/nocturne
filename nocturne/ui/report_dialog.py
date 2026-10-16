@@ -342,14 +342,44 @@ def _open_web_form(problem: str) -> None:
     whole reason the dialog exists — and the tooltip says so rather than
     letting somebody believe the log went with it.
     """
-    from urllib.parse import urlencode
-
     from PySide6.QtCore import QUrl
     from PySide6.QtGui import QDesktopServices
 
+    QDesktopServices.openUrl(QUrl(support_url(problem)))
+
+
+# The longest URL handed to the browser. The fragment never reaches a server,
+# but the hand-off itself has a ceiling: Windows' shell (ShellExecute, which
+# QDesktopServices uses there) is limited to INTERNET_MAX_URL_LENGTH, 2083
+# characters. Under it with room to spare, on every platform.
+MAX_SUPPORT_URL = 2000
+SHORTENED = " […shortened — please paste the rest]"
+
+
+def support_url(problem: str) -> str:
+    """support.html with the typed problem in the fragment (the page's
+    support.js fills the field from it). A problem too long for the hand-off
+    is cut at a character boundary and says so, rather than the whole URL
+    failing to open or the browser receiving a silently truncated one."""
+    from urllib.parse import urlencode
+
     from ..core.update_check import SUPPORT_URL
-    frag = urlencode({"problem": problem}) if problem else ""
-    QDesktopServices.openUrl(QUrl(f"{SUPPORT_URL}#{frag}" if frag else SUPPORT_URL))
+    if not problem:
+        return SUPPORT_URL
+
+    def url(text: str) -> str:
+        return f"{SUPPORT_URL}#{urlencode({'problem': text})}"
+
+    if len(url(problem)) <= MAX_SUPPORT_URL:
+        return url(problem)
+    lo, hi = 0, len(problem)          # the longest prefix that fits, with the note
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if len(url(problem[:mid] + SHORTENED)) <= MAX_SUPPORT_URL:
+            lo = mid
+        else:
+            hi = mid - 1
+    return url(problem[:lo].rstrip() + SHORTENED)
 
 
 def _first_line(text: str) -> str:

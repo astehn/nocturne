@@ -140,6 +140,6 @@ def test_the_report_names_the_shape_on_the_button_never_the_token(stored, shown)
     r = provenance.build_report(entries, {}, app_version="t",
                                 date=datetime.date(2026, 10, 10))
     assert f"1. Crop — {shown}" in r and f"2. Trim — {shown}" in r
-    assert f"- aspect: {shown}" in r
+    assert f"- shape: {shown}" in r
     if stored != shown:
-        assert f"— {stored}" not in r and f"aspect: {stored}" not in r
+        assert f"— {stored}" not in r and f"shape: {stored}" not in r

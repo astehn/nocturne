@@ -72,9 +72,12 @@ def test_files_saved_before_the_field_read_as_no_fallback():
     assert deserialize_option("color", old).fell_back is False
 
 
-def test_a_recipe_without_a_fallback_is_unchanged_on_disk():
-    """No new key in the common case, so existing recipes and projects diff clean."""
-    assert "fell_back" not in serialize_option("color", ColorSettings(method="photometric"))
+def test_a_photometric_entry_records_that_it_did_not_fall_back():
+    """Explicit False since 2026-10-16, so the report can tell "ran" from "not
+    recorded" (an entry written before the key existed has none). Sky balance
+    cannot fall back and stays as it was."""
+    assert serialize_option("color", ColorSettings(method="photometric"))["fell_back"] is False
+    assert "fell_back" not in serialize_option("color", ColorSettings(method="sky"))
 
 
 def test_the_provenance_headline_says_what_ran():
@@ -83,7 +86,7 @@ def test_the_provenance_headline_says_what_ran():
     head = _headline("Color", ser)
     assert "sky" in head and "fell back" in head
     assert _headline("Color", serialize_option(
-        "color", ColorSettings(method="photometric"))) == "photometric"
+        "color", ColorSettings(method="photometric"))) == "Photometric (SPCC)"
 
 
 def test_auto_enhance_records_the_fallback_too():

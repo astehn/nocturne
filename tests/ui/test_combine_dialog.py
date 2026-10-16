@@ -391,3 +391,31 @@ def test_a_failed_combine_hides_the_ring(qtbot, tmp_path):
     d.run()
     qtbot.waitUntil(lambda: not d._busy, timeout=5000)
     assert d.status_ring.isHidden()
+
+
+def test_the_combined_master_records_what_it_was_made_from(qtbot, tmp_path):
+    """A combined picture opens as a new project with no steps, and the report
+    said "No processing steps applied" about it. The image now carries what the
+    Combine was made from — file names, never paths (2026-10-16)."""
+    import datetime
+    from nocturne.core.provenance import build_report
+    got = {}
+    d = CombineDialog(Settings(), on_master=lambda img: got.setdefault("img", img))
+    qtbot.addWidget(d)
+    d.show()
+    d.ha_edit.setText(_blob_file(tmp_path / "ha_master.fits", 32.0))
+    d.oiii_edit.setText(_blob_file(tmp_path / "oiii_master.fits", 36.0))
+    d.check_alignment()
+    qtbot.waitUntil(lambda: d.align_row.isVisible(), timeout=3000)
+    d.align_check.setChecked(True)
+    d.run()
+    qtbot.waitUntil(lambda: "img" in got, timeout=3000)
+    rec = got["img"].metadata["combine"]
+    assert rec["ha"] == "ha_master.fits" and rec["oiii"] == "oiii_master.fits"
+    assert rec["aligned"] is True and abs(rec["shift"][0] + 4.0) < 0.5
+    assert str(tmp_path) not in str(rec)
+    r = build_report([], got["img"].metadata, app_version="x",
+                     date=datetime.date(2026, 10, 16))
+    assert "No processing steps applied" not in r
+    assert "- Ha master: ha\\_master.fits" in r and "- OIII master: oiii\\_master.fits" in r
+    assert "- OIII aligned to Ha: moved" in r and "px up" in r   # OIII sat 4 px low

@@ -77,6 +77,47 @@ def _migrate_step_name(name: str) -> str:
     return _RENAMED_STEPS.get(name, name)
 
 
+# Rotate and the flips replay through CropStep, whose name is "Crop": a replay
+# recorded THAT name, so a reopened project's report said "Crop — Free" for a
+# rotation and a re-save persisted it (found 2026-10-16). The name comes from
+# the stage, which the manifest has always stored.
+_GEOMETRY_STAGE_NAMES = {"rotate": "Rotate", "flip_h": "Flip H", "flip_v": "Flip V"}
+
+# What such a re-save wrote: name "Crop", stage "crop" (from the name), cached,
+# and the option `deserialize_option` builds for one geometry action. A Crop the
+# user made never carries a rotation or a flip (MainWindow._apply_geometry), so
+# exactly these three shapes are the mislabelled actions and nothing else is.
+_MISLABELLED_GEOMETRY = {
+    (90, False, False): "Rotate",
+    (0, True, False): "Flip H",
+    (0, False, True): "Flip V",
+}
+
+
+def _healed_geometry_name(option) -> str | None:
+    """"Rotate" / "Flip H" / "Flip V" for a cached "Crop" entry that is really
+    one of them, else None."""
+    from ..core.crop import FREE, LEGACY_FREE
+    if not isinstance(option, dict) or option.get("aspect") not in (FREE, LEGACY_FREE):
+        return None
+    key = (option.get("rotate"), option.get("flip_h"), option.get("flip_v"))
+    return _MISLABELLED_GEOMETRY.get(key)
+
+
+def restored_entry(step: dict) -> tuple[str, Any]:
+    """(name, option) a manifest step is restored under. The one place the
+    display name of a reopened step is decided, so the provenance report, the
+    history and a re-save agree with what the live session recorded."""
+    stage, option = step.get("stage"), step.get("option")
+    if not step.get("cached") and stage in _GEOMETRY_STAGE_NAMES:
+        return _GEOMETRY_STAGE_NAMES[stage], option
+    name = _migrate_step_name(step.get("name", ""))
+    if name == "Crop" and (healed := _healed_geometry_name(option)) is not None:
+        # The live action records "" (no shape); so does the healed one.
+        return healed, ""
+    return name, option
+
+
 def _ensure_serialized(stage, option):
     """Uniform JSON option, whether it came from run_step (native) or
     record_precomputed (already serialized)."""
@@ -326,10 +367,17 @@ def load_project(path: str, cache_dir: str, *, on_progress=None) -> LoadedProjec
         settings = Settings()
         total = len(manifest["steps"])
         for done, step in enumerate(manifest["steps"], start=1):
+            name, option = restored_entry(step)
             if step["cached"]:
                 data = _bytes_to_array(zf.read(step["cache"]))
                 img = AstroImage(data, is_linear=step["is_linear"], metadata=step["metadata"])
-                project.record_precomputed(_migrate_step_name(step["name"]), step["option"], img)
+                project.record_precomputed(name, option, img)
+            elif step["stage"] in _GEOMETRY_STAGE_NAMES:
+                # Replayed through CropStep, recorded as the live action was:
+                # its own name and the option it was saved with.
+                native = deserialize_option(step["stage"], step["option"], project=True)
+                img = make_step(step["stage"], settings).apply(project.current(), native)
+                project.record_precomputed(name, option, img)
             else:
                 native = deserialize_option(step["stage"], step["option"], project=True)
                 step_obj = make_step(step["stage"], settings)

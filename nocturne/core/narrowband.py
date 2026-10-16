@@ -202,6 +202,11 @@ class NarrowbandParams:
 
 GOLD_BLUE = "SHO-style (gold and blue)"
 
+# The Tame core slider's span: 100% on the slider is highlight_reduction 5.0.
+# Here rather than in the dialog so the provenance report (Qt-free) can show a
+# recorded highlight_reduction as the percentage the slider showed.
+TAME_SPAN = 4.0
+
 PALETTES = ("HOO", "Pseudo-SHO", "Pseudo-bicolor", GOLD_BLUE)
 
 # Pseudo-bicolor left the dialog on 2026-10-09. Andreas: "I think that is not

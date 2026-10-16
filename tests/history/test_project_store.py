@@ -417,3 +417,84 @@ def test_photometric_colour_is_cached_so_reopening_never_reruns_it(tmp_path):
         assert step["stage"] == "color" and step["cached"] is True
         loaded = load_project(str(d / "p.nocturne"), str(d / "reopen"))
         np.testing.assert_array_equal(loaded.project.state_at(1).data, saved.data)
+
+
+class _Precomputed:
+    """MainWindow._PrecomputedStep: a name and a result computed elsewhere."""
+
+    def __init__(self, name, img):
+        self.name, self._img = name, img
+
+    def apply(self, base, option):
+        return self._img
+
+
+def _geometry_project(tmp_path):
+    """Rotate, Flip H, Flip V and a shaped Crop, recorded the way
+    MainWindow._apply_geometry records them: CropStep's pixels, the action's
+    own name, "" for the three actions and the shaped params for Crop."""
+    from nocturne.core.crop import CropParams
+    rng = np.random.default_rng(3)
+    base = AstroImage(rng.random((12, 20, 3)).astype(np.float32), is_linear=True)
+    p = Project(base, str(tmp_path / "live"))
+    crop = make_step("crop", Settings())
+    for name, params, option in (
+            ("Rotate", CropParams(rotate=90), ""),
+            ("Flip H", CropParams(flip_h=True), ""),
+            ("Flip V", CropParams(flip_v=True), ""),
+            ("Crop", CropParams(bounds=(1, 18, 2, 10)),
+             CropParams(bounds=(1, 18, 2, 10), aspect="2:3"))):
+        p.run_step(_Precomputed(name, crop.apply(p.current(), params)), option)
+    return p
+
+
+def test_reopening_keeps_rotate_and_flip_under_their_own_names(tmp_path):
+    """They replay through CropStep, whose name is "Crop", and the replay
+    recorded that: the reopened report said "Crop — Free" for a rotation, and a
+    re-save made it permanent (2026-10-16)."""
+    p = _geometry_project(tmp_path)
+    live_names = [n for n, _o in p.entries()]
+    save_project(p, str(tmp_path / "g.nocturne"))
+    with zipfile.ZipFile(str(tmp_path / "g.nocturne")) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+    # The stage the fix derives the name from is in the manifest.
+    assert [s["stage"] for s in manifest["steps"][:3]] == ["rotate", "flip_h", "flip_v"]
+    lp = load_project(str(tmp_path / "g.nocturne"), str(tmp_path / "reopen")).project
+    assert [n for n, _o in lp.entries()] == live_names
+    assert [o for _n, o in lp.entries()][:3] == ["", "", ""]
+    # Same pixels at every position — the name changed, the replay did not.
+    for i in range(len(live_names) + 1):
+        np.testing.assert_array_equal(lp.state_at(i).data, p.state_at(i).data)
+
+
+def test_a_bundle_resaved_with_the_wrong_name_heals_on_open(tmp_path):
+    """What the bug wrote on a re-save: name "Crop", stage "crop" (taken from
+    the name), cached, and the option the replay built. It reopens as the
+    action it was, with the live action's option."""
+    from nocturne.core.crop import CropParams
+    base = AstroImage(np.random.default_rng(4).random((6, 8, 3)).astype(np.float32),
+                      is_linear=True)
+    p = Project(base, str(tmp_path / "live"))
+    crop = make_step("crop", Settings())
+    for params in (CropParams(rotate=90), CropParams(flip_h=True), CropParams(flip_v=True)):
+        p.run_step(_Precomputed("Crop", crop.apply(p.current(), params)), params)
+    save_project(p, str(tmp_path / "bad.nocturne"))
+    with zipfile.ZipFile(str(tmp_path / "bad.nocturne")) as zf:
+        steps = json.loads(zf.read("manifest.json"))["steps"]
+    assert [(s["name"], s["stage"], s["cached"]) for s in steps] == [("Crop", "crop", True)] * 3
+    lp = load_project(str(tmp_path / "bad.nocturne"), str(tmp_path / "reopen")).project
+    assert lp.entries() == [("Rotate", ""), ("Flip H", ""), ("Flip V", "")]
+    for i in range(4):
+        np.testing.assert_array_equal(lp.state_at(i).data, p.state_at(i).data)
+
+
+def test_a_real_crop_is_never_renamed(tmp_path):
+    """Only the exact option a replayed action produced heals: a Crop the user
+    made has a shape and never a rotation."""
+    from nocturne.history.project_store import restored_entry
+    for opt in ({"aspect": "2:3", "rotate": 0, "flip_h": False, "flip_v": False},
+                {"aspect": "Free", "rotate": 0, "flip_h": False, "flip_v": False},
+                {"aspect": "16:9", "rotate": 90, "flip_h": True, "flip_v": False},
+                ""):
+        step = {"name": "Crop", "stage": "crop", "cached": True, "option": opt}
+        assert restored_entry(step) == ("Crop", opt)

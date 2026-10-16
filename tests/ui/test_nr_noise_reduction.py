@@ -105,7 +105,8 @@ def test_apply_stores_the_id_and_the_log_names_the_model(qtbot, tmp_path, monkey
     assert opt == {"engine": "nr:v20.0", "level": "medium"}
     before = win.project.current().data.copy()
     win.apply_current(opt)
-    assert win.project.entries()[-1] == ("Noise Reduction", {"engine": "nr:v20.0", "level": "medium"})
+    assert win.project.entries()[-1] == ("Noise Reduction", {"engine": "nr:v20.0", "level": "medium",
+                                                             "ran": "nr:v20.0"})
     assert "Noise Reduction (medium (Nocturne NR — Odin v20.0))" in win.log_panel.text()
     assert not np.array_equal(win.project.current().data, before)
     # Revisited, the step shows what it ran with.
@@ -140,7 +141,7 @@ def test_review_focus_4_a_project_outlives_its_model(qtbot, tmp_path, monkeypatc
     assert win.project.entries() == entries
     report = build_report(win.project.entries(), {}, app_version="x",
                           date=datetime.date(2026, 10, 6), settings=win.settings)
-    assert "Noise Reduction — Nocturne NR — v20.0" in report
+    assert "Noise Reduction — strong, Nocturne NR — v20.0" in report
     # The model is no longer offered, and the step does not pretend it is.
     win._go_to_id("noise_sharpen")
     assert _items(win) is None or "Nocturne NR — Odin" not in _items(win)
@@ -223,3 +224,25 @@ def test_a_very_long_model_name_is_elided_with_the_full_name_as_tooltip(
     assert win._panel.commit_option() is not None
     box.setCurrentIndex(1)
     assert win._panel.commit_option()["engine"] == "nr:v20.0"
+
+
+def test_recording_what_ran_leaves_the_applied_step_settled(qtbot, tmp_path, monkeypatch, tray):
+    """The commit now carries "ran" beside the choice. The panel compares its
+    choice with the commit, and a key it never sends would leave Apply green
+    and Next asking about a change that does not exist."""
+    _tools(monkeypatch, rc=False, gx=False)
+    _deliver(tray, "v20.0", id="v20.0", name="Odin")
+    win = _at_noise_reduction(qtbot, tmp_path)
+    win._panel.engine_box.setCurrentText("Nocturne NR — Odin")
+    opt = win._panel.commit_option()
+    win.apply_current(opt)
+    assert win.project.entries()[-1][1]["ran"] == "nr:v20.0"
+    # Unchanged controls match the commit, so Apply is switched off (R13)
+    # rather than offering an identical re-run.
+    assert win._controls_match_commit("noise_sharpen")
+    assert not win._has_pending()
+    win._go_to_id("stretch")
+    win._go_to_id("noise_sharpen")
+    assert win._controls_match_commit("noise_sharpen")
+    assert not win._has_pending()
+    assert win._panel.engine_box.currentText() == "Nocturne NR — Odin"

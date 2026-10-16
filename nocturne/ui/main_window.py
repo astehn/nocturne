@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from .. import APP_NAME, __version__, app_title
 from ..core.auto_enhance import DUALBAND_ONLY, PRESET_NAMES, build_auto_plan, run_auto_plan, stages_left_out
 from ..core import telemetry as telemetry_mod
-from ..core.provenance import build_report
+from ..core.provenance import COMBINED_SOURCE_LABEL, build_report
 from ..core import nr_models
 from ..core.crop import (
     FREE, CropParams, detect_content_bounds, shape_label, shape_ratio,
@@ -54,6 +54,7 @@ from ..user_presets import PresetError, PresetLibrary, presets_dir
 from ..steps.star_split import preferred_splitter
 from ..steps.factory import make_step
 from ..steps.load import load_fits
+from ..steps.noise_sharpen import strip_ran
 from ..tools.base import run_cli, ToolError
 from ..core.metrics import rms_delta
 from ..core.update_check import DOWNLOAD_URL, SUPPORT_URL, is_newer, latest_release_version
@@ -1930,7 +1931,7 @@ class MainWindow(QMainWindow):
         it held nowhere else, so closing on a "Cancel" would destroy it."""
         if not self._confirm_save_if_dirty():
             return False
-        self._open_in_background(img, "combined narrowband",
+        self._open_in_background(img, COMBINED_SOURCE_LABEL,
                                  busy_label="Opening the combined image…",
                                  fail_label="Could not open the combined image",
                                  cancellable=False)
@@ -4511,7 +4512,9 @@ class MainWindow(QMainWindow):
             return None
         for entry_name, option in reversed(self.project.entries()):
             if entry_name == name:
-                return option
+                # Noise Reduction records what RAN beside what was chosen;
+                # every reader here compares with the panel, which only chooses.
+                return strip_ran(option)
         return None
 
     def _has_pending(self) -> bool:
@@ -4877,8 +4880,9 @@ class MainWindow(QMainWindow):
         # after a commit; the panel has no way to know the image is linear.
         visual = getattr(self._panel, "visual_btn", None)
         if visual is not None:
-            visual.setEnabled(
-                self.project is not None and self.project.current().is_linear)
+            visual.setEnabled(  # is_linear_at: one boolean without the pixels
+                self.project is not None
+                and self.project.is_linear_at(self.project.position))
         if getattr(self._panel, "export_btn", None) is not None:
             self._show_export_done()
         linkage_note = getattr(self._panel, "linkage_note", None)
@@ -6027,7 +6031,9 @@ class MainWindow(QMainWindow):
     def _picture_ratio(self) -> float | None:
         if self.project is None:
             return None
-        h, w = self.project.current().data.shape[:2]
+        # From the stored shape: current() reads every pixel, twice per Crop
+        # panel build, on the UI thread, for two numbers (2026-10-16).
+        h, w = self.project.shape_at(self.project.position)[:2]
         return w / h
 
     def _crop_ratio(self, shape: str) -> float | None:
@@ -7824,36 +7830,10 @@ class MainWindow(QMainWindow):
         return box.currentText() if box is not None else "sRGB"
 
     def _prepare_for_export(self, img, space: str):
-        """Convert into `space` and return (image, profile bytes).
-
-        Conversion first, THEN the tag — the two must agree. Tagging without
-        converting would mis-declare the file, which is worse than the untagged
-        exports this work exists to fix: a reader would faithfully render the
-        wrong thing instead of guessing.
-        """
-        from ..colour_profiles import icc_bytes
-        from ..core.colour import convert
-        if space == "sRGB":
-            return img, icc_bytes("sRGB")     # no conversion, but still declared
-        from ..core.image import AstroImage, finite_or_zero
-        if img.data.ndim == 2:
-            # The panel greys these out for mono; this is the backstop. A grey
-            # TIFF cannot carry an RGB working space, and the conversion itself
-            # throws on a 2-D array — say why instead of a matmul error.
-            raise ValueError(f"A mono picture exports in sRGB only, not {space}.")
-        if img.is_linear:
-            # STRETCH, THEN CONVERT. The canvas shows display_data; converting
-            # the linear data and letting save_tiff stretch it afterwards wrote
-            # a file up to 0.22 off the canvas (synthetic star field, ProPhoto,
-            # unlinked) — and off the Starless + Stars pair, which stretched
-            # first all along.
-            from ..core.export import display_data
-            img = AstroImage(finite_or_zero(display_data(img, linked=self._view_linked)),
-                             is_linear=False, metadata=dict(img.metadata))
-        moved = convert(img.data, space)
-        return (AstroImage(moved, is_linear=img.is_linear,
-                           metadata=dict(img.metadata)),
-                icc_bytes(space))
+        """Convert into `space` and return (image, profile bytes): the one
+        convert-then-tag, shared with Batch (colour_profiles.prepare_for_export)."""
+        from ..colour_profiles import prepare_for_export
+        return prepare_for_export(img, space, linked=self._view_linked)
 
     # --- the wall ------------------------------------------------------
     #
@@ -8663,10 +8643,11 @@ class MainWindow(QMainWindow):
     def _show_provenance(self) -> None:
         if self.project is None:
             return
-        report = build_report(self.project.entries(), self.project.current().metadata,
+        report = build_report(self.project.entries(),
+                              self.project.meta_at(self.project.position),
                               app_version=__version__, date=datetime.date.today(),
-                              settings=self.settings,
-                              saved_version=self._saved_app_version)
+                              saved_version=self._saved_app_version,
+                              source_label=self._source_label)
         ProvenanceDialog(report, self.settings, source_label=self._source_label, parent=self).exec()
 
     def _refresh(self) -> None:

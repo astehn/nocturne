@@ -51,7 +51,7 @@ def test_a_portrait_crop_is_tall_and_says_so_everywhere(qtbot, tmp_path):
     assert name == "Crop" and option.aspect == "2:3"
     report = provenance.build_report(win.project.entries(), {}, app_version="t",
                                      date=datetime.date(2026, 10, 10))
-    assert "Crop — 2:3" in report and "aspect: 2:3" in report
+    assert "Crop — 2:3" in report and "- shape: 2:3" in report
 
 
 def test_the_crop_log_line_names_the_shape(qtbot, tmp_path, monkeypatch):

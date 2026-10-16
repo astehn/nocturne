@@ -36,7 +36,7 @@ def test_narrative_uses_scalar_and_headline_field():
     r = provenance.build_report(_entries(), META, app_version="0.4.0", date=D)
     assert "1. Crop" in r                       # dict w/o headline field -> name only
     assert "2. Background — graxpert" in r       # scalar str
-    assert "3. Color — photometric" in r         # dict headline field 'method'
+    assert "3. Color — Photometric (SPCC)" in r  # the panel's word for the method
     assert "4. Stretch — 0.5" in r               # scalar float
     assert "5. Levels" in r                      # list -> name only
 
@@ -46,7 +46,7 @@ def test_parameters_skips_scalars_lists_dicts_only_as_configured():
     params = r.split("## Parameters")[1]
     assert "### 1. Crop" in params               # dict option -> block present
     assert "### 3. Color" in params
-    assert "- method: photometric" in params
+    assert "- method: Photometric (SPCC)" in params
     assert "### 5. Levels" in params             # list option -> block present
     # Named, not "values: 0.02, 1.0, 1.0" — the reader had to guess which number
     # was which until 2026-09-17. Names come from the sliders' own labels.
