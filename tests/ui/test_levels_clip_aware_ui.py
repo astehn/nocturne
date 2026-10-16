@@ -504,3 +504,46 @@ def test_a_midtone_move_on_a_revisited_v2_keeps_autos_exact_black(qtbot, tmp_pat
     assert win._levels_auto is False                    # a midtone move is a choice
     win._apply_current_step()
     assert win.project.entries()[-1][1] == new_levels_option(exact, 1.2, 1.0)
+
+
+def test_dragging_black_point_keeps_the_note_until_the_drag_ends(qtbot, tmp_path):
+    """His find (2026-10-16): the note vanished mid-drag, the sliders jumped up
+    and Black point was no longer under the pointer. During a drag the layout
+    must hold still; the note goes when the slider is released."""
+    win = _at_levels(qtbot, tmp_path)
+    win.resize(1440, 900)
+    win.show()
+    qtbot.waitExposed(win)
+    p = win._panel
+    win._on_levels_auto()
+    qtbot.wait(20)
+    assert not p.auto_note.isHidden(), "fixture: Auto must have stopped"
+    y_before = p.black_slider.mapTo(win, p.black_slider.rect().topLeft()).y()
+
+    p.black_slider.setSliderDown(True)                 # the user grabs the handle
+    p.black_slider.setValue(p.black_slider.value() + 5)
+    qtbot.wait(20)
+    assert win._levels_auto is False, "dragging Black point still takes over from Auto"
+    assert not p.auto_note.isHidden(), "the note vanished mid-drag"
+    assert p.black_slider.mapTo(win, p.black_slider.rect().topLeft()).y() == y_before, (
+        "Black point moved under the pointer during the drag")
+
+    p.black_slider.setSliderDown(False)                # released
+    qtbot.wait(20)
+    assert p.auto_note.isHidden(), "the note outlived the drag"
+
+
+def test_a_released_drag_that_returns_to_auto_keeps_nothing_stale(qtbot, tmp_path):
+    """Pressing Auto again during or after the deferred hide must not leave the
+    note hidden by a late release."""
+    win = _at_levels(qtbot, tmp_path)
+    p = win._panel
+    win._on_levels_auto()
+    p.black_slider.setSliderDown(True)
+    p.black_slider.setValue(p.black_slider.value() + 5)
+    p.black_slider.setSliderDown(False)
+    win._on_levels_auto()                              # back to Auto
+    p.black_slider.setSliderDown(True)
+    p.black_slider.setSliderDown(False)                # a click with no move
+    qtbot.wait(20)
+    assert win._levels_auto is True and not p.auto_note.isHidden()
