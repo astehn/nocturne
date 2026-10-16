@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .. import glossary as _glossary
+
 
 @dataclass(frozen=True)
 class HelpTopic:
@@ -55,6 +57,16 @@ def _t(id: str, title: str, summary: str, body: str) -> HelpTopic:
     return HelpTopic(id, title, summary, body)
 
 
+def gloss(text: str, term: str) -> str:
+    """`text` as a link to `term` in the Glossary. Raises KeyError at import for
+    an unknown term, so a typo cannot ship as a link to nowhere. Use it where a
+    word FIRST appears in a topic, and sparingly."""
+    t = _glossary.lookup(term)
+    if t is None:
+        raise KeyError(term)
+    return f'<a href="help:glossary#{t.anchor}">{text}</a>'
+
+
 # --- The content ------------------------------------------------------------
 # Beginner-friendly and concept-teaching. Every step topic follows the
 # "What it does / How to use it / Tips" shape. Kept accurate to how the app
@@ -65,7 +77,7 @@ _TOPIC_LIST = (
     _t("getting-started", "Getting started",
        "Turn a stacked Seestar image into a finished picture, one guided step at a time.",
        "<h4>What it does</h4>"
-       "<p>Nocturne takes the stacked <b>FITS</b> file your Seestar produces and walks "
+       "<p>Nocturne takes the stacked " + gloss("<b>FITS</b>", "FITS") + " file your Seestar produces and walks "
        "you through finishing it — crop, remove gradients, colour, stretch, and polish — as a "
        "guided, one-step-at-a-time flow. Nothing is destructive: you can undo, redo, or jump "
        "back to any earlier step at any time, and nothing is written to disk until you export.</p>"
@@ -75,7 +87,7 @@ _TOPIC_LIST = (
        "and, if you have them, <b>RC-Astro</b> and <b>ASTAP</b> (both optional — ASTAP powers "
        "<b>Plate Solve</b>). Use <b>Test</b> to confirm each works.</li>"
        "<li>Click <b>Open Image</b> and pick a stacked master (or use <b>Stack</b> to build one "
-       "from a folder of subs).</li>"
+       "from a folder of " + gloss("subs", "sub") + ").</li>"
        "<li>Work left-to-right through the steps in the sidebar — or click any step to jump to "
        "it. The panel on the right holds that step's controls; this box explains what it does. "
        "One button is lit at a time — the next thing to press: the green <b>Apply</b> while "
@@ -160,8 +172,8 @@ _TOPIC_LIST = (
        "and the two tools that do something about it.",
        "<h4>The idea</h4>"
        "<p>The Seestar's <b>LP</b> filter is a <b>dualband</b> filter. Rather than passing all "
-       "visible light it passes two narrow bands and blocks everything else: <b>Ha</b> (hydrogen, "
-       "deep red) and <b>OIII</b> (oxygen, teal). Emission nebulae glow in precisely those two "
+       "visible light it passes two narrow bands and blocks everything else: " + gloss("<b>Ha</b>", "Ha") + " (hydrogen, "
+       "deep red) and " + gloss("<b>OIII</b>", "OIII") + " (oxygen, teal). Emission nebulae glow in precisely those two "
        "colours and most light pollution does not, which is why a filter sold as a light-"
        "pollution filter is really a narrowband one. Nebulae are usually far brighter in Ha, so "
        "the frames come out red. Nothing is wrong with them.</p>"
@@ -403,7 +415,7 @@ _TOPIC_LIST = (
        "<b>nudge to taste</b>.</p>"
        "<p><b>1 — Calibrate.</b> Pick a <b>Method</b>. <b>Sky balance</b> (the default) "
        "neutralises the sky cast automatically. <b>Photometric (SPCC)</b> instead corrects "
-       "the colour of the <i>stars</i>: it plate-solves the field, looks up each star's colour in "
+       "the colour of the <i>stars</i>: it " + gloss("plate-solves", "plate solving") + " the field, looks up each star's colour in "
        "the <b>Gaia</b> catalogue, and sets the red, green and blue balance so the stars come out "
        "the colours Gaia measured — a sun-like star renders white. The sky under them is taken "
        "off before each star is measured, so a bright sky does not wash the stars out to grey "
@@ -457,7 +469,7 @@ _TOPIC_LIST = (
     _t("stretch", "Stretch",
        "Reveal faint detail by committing a real non-linear stretch.",
        "<h4>What it does</h4>"
-       "<p>Applies the real, permanent stretch that turns dark linear data into "
+       "<p>Applies the real, permanent stretch that turns dark " + gloss("linear", "linear") + " data into "
        "a visible picture. Up to this point you have been looking at a preview "
        "stretch; this is the one that is written into the image and carried "
        "forward by every step after it.</p>"
@@ -529,8 +541,8 @@ _TOPIC_LIST = (
     _t("levels", "Levels",
        "Fine-tune black point, midtones, and white point against the histogram.",
        "<h4>What it does</h4>"
-       "<p>Precise control over the tonal range: set where black begins (black point), adjust the "
-       "midtones (gamma), and set the white point — read against the histogram top-right.</p>"
+       "<p>Precise control over the tonal range: set where black begins (" + gloss("black point", "black point") + "), adjust the "
+       "midtones (gamma), and set the white point — read against the " + gloss("histogram", "histogram") + " top-right.</p>"
        "<h4>How to use it</h4>"
        "<p>Press <b>Auto black point</b> for a starting point, then adjust. Nudge the <b>black point</b> up "
        "to deepen the background; use <b>midtones</b> to brighten or darken the middle of the "
@@ -1160,7 +1172,7 @@ _TOPIC_LIST = (
        "is not published is deleted rather than kept, and a published one can be taken "
        "down by asking through the support page.</p>"
        "<h4>How to use it</h4>"
-       "<p>Choose a format with the buttons under <b>Format</b>: <b>TIFF</b> (16-bit), "
+       "<p>Choose a format with the buttons under <b>Format</b>: " + gloss("<b>TIFF</b>", "TIFF") + " (16-bit), "
        "<b>PNG</b> (8-bit) or <b>FITS</b> (the data). Or <b>Layers</b> exports a "
        "<b>starless + stars</b> pair (two TIFFs) for compositing elsewhere. It uses the "
        "same star split as the rest of Nocturne — StarXTerminator, else StarNet2, else the "
@@ -1306,7 +1318,7 @@ _TOPIC_LIST = (
        "<h4>What it does</h4>"
        "<p>Works out exactly where your image is pointing by matching its star pattern against "
        "a catalogue, then overlays what is there: deep-sky objects drawn at their true size on "
-       "the sky, named stars, an RA/Dec grid, a north compass and a scale bar.</p>"
+       "the sky, named stars, an " + gloss("RA", "RA") + "/" + gloss("Dec", "Dec") + " grid, a north compass and a scale bar.</p>"
        "<h4>Before you start</h4>"
        "<p>Plate solving needs <b>ASTAP</b> <i>and its star database</i> — the database is a "
        "separate download from ASTAP itself, and a missing one is much the most common reason "
@@ -1713,7 +1725,7 @@ _t("upscale", "Upscale Crop",
     _t("stacking", "Stacking",
        "Build a master image from a folder of subs.",
        "<h4>What it does</h4>"
-       "<p>Turns a folder of individual sub-exposures into a single clean <b>master</b>: it "
+       "<p>Turns a folder of individual " + gloss("sub-exposures", "sub-exposure") + " into a single clean <b>master</b>: it "
        "grades and rejects poor frames, registers (aligns) the rest — handling the field rotation "
        "an alt-az mount like the Seestar introduces — and integrates them.</p>"
        "<h4>How to use it</h4>"
@@ -1783,7 +1795,7 @@ _t("upscale", "Upscale Crop",
        "headline shows; <b>details ▸</b> opens the rest.</p>"
        "<h4>The quality chart</h4>"
        "<p>Across the window, under the verdict and above the list, a chart plots each "
-       "frame's <b>FWHM</b> through the session — higher is softer — with rejected frames "
+       "frame's " + gloss("<b>FWHM</b>", "FWHM") + " through the session — higher is softer — with rejected frames "
        "in amber and the frame you are on ringed. Frames you have moved into "
        "<code>rejected/</code> turn faint grey: out of this stack, but kept on the chart "
        "as the record of the night — also when you open the folder again later, from "
@@ -2252,13 +2264,21 @@ _t("upscale", "Upscale Crop",
        "sanity check that a step did what you expected.</p>"),
 )
 
+# Built from nocturne/glossary.py, the same list the website page is made from,
+# and last so its "More in" links can name every other topic by its title.
+_TOPIC_LIST = _TOPIC_LIST + (
+    _t("glossary", "Glossary",
+       "The words of astrophotography, each explained in plain words in a line or two.",
+       _glossary.help_body({t.id: t.title for t in _TOPIC_LIST})),
+)
+
 TOPICS: dict[str, HelpTopic] = {t.id: t for t in _TOPIC_LIST}
 
 
 SECTIONS: tuple[HelpSection, ...] = (
     HelpSection("Getting Started", ("getting-started", "keyboard-shortcuts")),
     HelpSection("Concepts", ("linear-vs-stretched", "dualband", "step-order", "history",
-                             "readout", "fullscreen")),
+                             "readout", "fullscreen", "glossary")),
     HelpSection("The Steps", ("crop", "background", "color", "deconvolution", "stretch",
                               "remove_green", "recover_core", "levels", "curves", "saturation",
                               "green_fringe", "noise_sharpen", "local_contrast",
