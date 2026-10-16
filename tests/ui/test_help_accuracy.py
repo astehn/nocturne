@@ -2795,23 +2795,45 @@ def test_plate_solve_help_two_tiers_are_the_ones_the_overlay_draws():
     b = _plain(_body("plate-solve"))
     assert "Messier, NGC and IC objects, and anything with a common name" in b
     assert "soft salmon" in b and "IC 1805 over Heart Nebula" in b
-    assert "LDN and Barnard (B) dark nebulae, Sh 2 and vdB" in b and "smaller and white" in b
+    assert "LDN and Barnard (B) dark nebulae, Sh 2, vdB and LBN bright nebulae" in b
+    assert "smaller and white" in b
     majors = [_solve_obj("IC 1805", 300, 300, common="Heart Nebula"),
               _solve_obj("NGC 7822", 900, 300), _solve_obj("NGC 6611", 1500, 300, messier="16"),
               _solve_obj("Sh 2-112", 2100, 2100, common="A Named Survey One")]
     minors = [_solve_obj("LDN 1251", 300, 2100), _solve_obj("B 349", 900, 2100),
-              _solve_obj("Sh 2-199", 1500, 2100), _solve_obj("vdB 141", 2100, 1500)]
+              _solve_obj("Sh 2-199", 1500, 2100), _solve_obj("vdB 141", 2100, 1500),
+              _solve_obj("LBN 437", 1500, 1500)]
     labels = {l.text: l for l in _solve_layout(majors + minors, objects=True)
               if isinstance(l, Label)}
     for name in ("IC 1805", "NGC 7822", "M 16", "Sh 2-112"):
         assert _is_salmon(labels[name].colour), name
         assert LABEL_PT[labels[name].size] > LABEL_PT["minor"], f"{name} is not larger"
-    for name in ("LDN 1251", "B 349", "Sh 2-199", "vdB 141"):
+    for name in ("LDN 1251", "B 349", "Sh 2-199", "vdB 141", "LBN 437"):
         assert _is_white(labels[name].colour), name
         assert labels[name].size == "minor", name
     heart = labels["IC 1805"]
     assert heart.sub == "Heart Nebula" and LABEL_PT[heart.sub_size] < LABEL_PT[heart.size], \
         "the common name goes on a smaller line under the designation"
+
+
+def test_plate_solve_help_lbn_is_ringless_and_only_at_all():
+    from nocturne.core.annotation_layout import Circle, Label, Marker, build_layout_for
+    b = _plain(_body("plate-solve"))
+    assert "LBN bright nebulae appear only when Density is All" in b
+    assert "a label by a small faint circle, with no true-size ring" in b
+    assert "positions date from 1965 and are approximate" in b
+    lbn = _solve_obj("LBN 437", 1500, 1500, arcmin=60.0)
+
+    def lay(density):
+        base = {"objects": True}
+        return build_layout_for([lbn], [], None, (3000, 3000), 2.0, base, density,
+                                measure=lambda t, s: (7.0 * len(t), 14.0))
+    for d in ("minimal", "balanced"):
+        assert not [p for p in lay(d) if isinstance(p, Label)], d
+    prims = lay("all")
+    assert [p.text for p in prims if isinstance(p, Label)] == ["LBN 437"]
+    assert not [p for p in prims if isinstance(p, Circle)]
+    assert [(m.x, m.y, m.kind) for m in prims if isinstance(m, Marker)] == [(1500, 1500, "point")]
 
 
 def test_plate_solve_help_merged_duplicates_read_as_the_overlay_writes_them():

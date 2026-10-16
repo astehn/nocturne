@@ -63,7 +63,6 @@ def _pretty_name(name: str) -> str:
 
 
 @lru_cache(maxsize=1)
-@lru_cache(maxsize=1)
 def _curated_names() -> dict:
     """Colloquial names for objects whose catalogues carry none.
 
@@ -73,25 +72,38 @@ def _curated_names() -> dict:
 
     Only fills a BLANK common name — a name the source catalogue supplies always
     wins, so this can never override real data."""
-    out = {}
+    return {d: c for d, c in _curated_rows() if not d.startswith("!") and c}
+
+
+@lru_cache(maxsize=1)
+def _name_corrections() -> dict:
+    """Rows written "!designation": the catalogue's own name is WRONG, and this
+    replaces it — blank clears it. The one exception to "catalogue data wins":
+    OpenNGC calls IC 434 the "Flame Nebula", which is NGC 2024, and a wrong
+    common name outranks size in identify_target, so it named Horsehead
+    frames for the Flame (found 2026-10-16)."""
+    return {d[1:]: c for d, c in _curated_rows() if d.startswith("!") and len(d) > 1}
+
+
+def _curated_rows() -> list:
     if not _NAMES.exists():
-        return out
-    with open(_NAMES, newline="", encoding="utf-8") as f:
-        for r in csv.DictReader(line for line in f if not line.startswith("#")):
-            d, c = (r.get("designation") or "").replace(" ", ""), (r.get("common") or "").strip()
-            if d and c:
-                out[d] = c
-    return out
+        return []
+    # utf-8-sig: a BOM would make the header "\ufeffdesignation", and every
+    # row's designation None — all curated names gone, without a word.
+    with open(_NAMES, newline="", encoding="utf-8-sig") as f:
+        return [((r.get("designation") or "").replace(" ", ""), (r.get("common") or "").strip())
+                for r in csv.DictReader(line for line in f if not line.startswith("#"))]
 
 
 def load_catalog(path: str = _DATA):
-    curated = _curated_names()
+    curated, fixes = _curated_names(), _name_corrections()
     rows = []
     with open(path, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
             try:
-                common = r.get("common", "").strip() or curated.get(
-                    r["name"].replace(" ", ""), "")
+                key = r["name"].replace(" ", "")
+                common = (fixes[key] if key in fixes
+                          else r.get("common", "").strip() or curated.get(key, ""))
                 rows.append((r["name"], common, float(r["ra_deg"]),
                              float(r["dec_deg"]), float(r.get("major_arcmin") or 0.0),
                              r.get("type", ""), float(r.get("minor_arcmin") or 0.0),
@@ -210,7 +222,13 @@ def identify_target_parts(objects: list[CatalogObject], shape) -> tuple[str, str
     frame (not its clamped label anchor — that made a Heart frame "the Soul"),
     then one whose ring covers the frame centre (a Fish Head frame also holds
     the Heart's centre), then an NGC/IC name over a survey alias, as the
-    overlay leads with it; then size and nearness."""
+    overlay leads with it; then size and nearness.
+
+    An LBN entry comes last of all, before even a Messier: Lynds' 1965 bright
+    nebulae carry B1950 whole-minute positions (median 6' off a modern centre)
+    and photographic-fringe sizes, so on the centred/covers/size rules a vague
+    LBN outline would beat the object the frame was actually aimed at (ruled
+    2026-10-16, spec 2026-10-16-lbn-research). It names a frame only alone."""
     if not objects:
         return ("", "")
     h, w = shape
@@ -222,7 +240,8 @@ def identify_target_parts(objects: list[CatalogObject], shape) -> tuple[str, str
         covers = r_px > 0 and (o.cx - cx) ** 2 + (o.cy - cy) ** 2 <= r_px ** 2
         # An object far larger than the frame says little about what was imaged.
         sane_size = o.major_arcmin if o.major_arcmin <= 3.0 * (h * w) ** 0.5 else 0.0
-        return (bool(getattr(o, "messier", "")), bool(o.common), centred, covers,
+        return (not o.name.startswith("LBN"),
+                bool(getattr(o, "messier", "")), bool(o.common), centred, covers,
                 o.name.startswith(("NGC", "IC")), sane_size,
                 -((o.x - cx) ** 2 + (o.y - cy) ** 2))
 
@@ -238,6 +257,18 @@ def identify_target(objects: list[CatalogObject], shape) -> str:
     FITS export), so the join stays here rather than moving to the callers."""
     name, common = identify_target_parts(objects, shape)
     return f"{name} · {common}" if common else name
+
+
+def name_correction(designation_str: str):
+    """The corrected common name for a designation ("" = the catalogue's name
+    was wrong and there is none), or None when the catalogue's name stands.
+    For callers holding a name from before the correction, e.g. a saved
+    bundle: `common_name_for(x) or saved` would bring a cleared name back."""
+    want = _lookup_key(designation_str)
+    for d, common in _name_corrections().items():
+        if _lookup_key(d) == want:
+            return common
+    return None
 
 
 def _lookup_key(designation_str: str) -> str:
@@ -288,7 +319,7 @@ _NAME_CACHE: dict[str, str] | None = None
 
 def common_name_for(designation_str: str) -> str:
     """Colloquial name for a designation, or "" — for images that were never
-    plate-solved but carry an OBJECT header. Built once; the catalogue is 15,890
+    plate-solved but carry an OBJECT header. Built once; the catalogue is 16,168
     rows and the plate asks per keystroke."""
     global _NAME_CACHE
     if _NAME_CACHE is None:

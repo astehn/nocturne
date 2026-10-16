@@ -445,3 +445,65 @@ def test_an_object_whose_centre_is_off_frame_never_counts_as_centred():
     small = CatalogObject("IC 1805", "Heart Nebula", 0, 0, 60.0, 1500.0, 500.0, True, 1500.0, 500.0,
                           r_px=400.0)
     assert identify_target([big, small], (1080, 1920)) == "IC 1805 · Heart Nebula"
+
+
+# --- corrections: a curated row that REPLACES a wrong catalogue name ------------
+
+def _raw_common():
+    import csv
+    return {r["name"]: r["common"].strip()
+            for r in csv.DictReader(open("nocturne/data/openngc.csv", encoding="utf-8"))}
+
+
+def test_ic434_loses_the_flame_name_and_ngc2024_gains_it():
+    """OpenNGC names IC 434 "Flame Nebula"; the Flame is NGC 2024. IC 434 is the
+    emission behind the Horsehead and has no settled name of its own."""
+    from nocturne.core.catalog import load_catalog
+    rows = {r[0]: r[1] for r in load_catalog()}
+    assert _raw_common()["IC0434"] == "Flame Nebula"      # still wrong at the source
+    assert rows["IC0434"] == ""
+    assert rows["NGC2024"] == "Flame Nebula"
+
+
+def test_common_name_for_follows_the_correction():
+    import nocturne.core.catalog as cat
+    cat._NAME_CACHE = None
+    try:
+        assert cat.common_name_for("IC 434") == ""
+        assert cat.common_name_for("NGC 2024") == "Flame Nebula"
+    finally:
+        cat._NAME_CACHE = None
+
+
+def test_every_correction_replaces_a_real_catalogue_name():
+    """A correction of a blank is just a curated name in the wrong section, and a
+    correction of a missing row is a typo — both are silent, so both fail here."""
+    from nocturne.core.catalog import _name_corrections
+    raw, fixes = _raw_common(), _name_corrections()
+    assert fixes, "no corrections loaded"
+    for d, new in fixes.items():
+        assert d in raw, f"{d} is not in the catalogue"
+        assert raw[d] and raw[d] != new, f"{d}: nothing to correct"
+
+
+def test_the_horsehead_field_is_no_longer_named_for_the_flame():
+    from nocturne.core.catalog import identify_target, objects_in_field
+    shape = (2160, 3840)
+    assert "Flame" not in identify_target(objects_in_field(_field(85.25, -2.45), shape), shape)
+
+
+def test_a_byte_order_mark_does_not_silently_drop_every_curated_name(tmp_path, monkeypatch):
+    """Saved from an editor that writes a BOM, the header read "\\ufeffdesignation":
+    every row's designation came back None, and every curated name vanished."""
+    import nocturne.core.catalog as cat
+    f = tmp_path / "common_names.csv"
+    f.write_text("designation,common\nB33,Horsehead Nebula\n!IC0434,\n", encoding="utf-8-sig")
+    assert f.read_bytes().startswith(b"\xef\xbb\xbf")
+    monkeypatch.setattr(cat, "_NAMES", f)
+    cat._curated_names.cache_clear(); cat._name_corrections.cache_clear()
+    try:
+        assert cat._curated_names() == {"B33": "Horsehead Nebula"}
+        assert cat._name_corrections() == {"IC0434": ""}
+    finally:
+        monkeypatch.undo()
+        cat._curated_names.cache_clear(); cat._name_corrections.cache_clear()

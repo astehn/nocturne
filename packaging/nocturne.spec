@@ -100,6 +100,10 @@ hiddenimports += collect_submodules("astroalign")
 hiddenimports += collect_submodules("astropy.wcs") + collect_submodules("astropy.coordinates")
 datas += [(os.path.join(ROOT, "nocturne", "data", "openngc.csv"), "nocturne/data")]
 datas += [(os.path.join(ROOT, "nocturne", "data", "named_stars.csv"), "nocturne/data")]
+# Curated common names (Heart, Soul, Horsehead...) and the IC 434 correction.
+# Missing from every build until 2026-10-16: catalog._curated_names() treats an
+# absent file as "no names", so nothing failed — the names just never shipped.
+datas += [(os.path.join(ROOT, "nocturne", "data", "common_names.csv"), "nocturne/data")]
 
 a = Analysis(
     [SCRIPT],

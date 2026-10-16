@@ -280,6 +280,7 @@ def test_canvas_and_export_draw_the_same_pixels_at_the_reference_scale(qtbot):
     assert R.scale_for(shape) == 1.0
     prims = [Circle(300, 300, 80, "#c8f4877c", False, "major"),
              Marker(700, 300, "star", "#ebffd447"),
+             Marker(900, 900, "point", "#80eef1f6", "point"),
              Leader(100, 1100, 400, 1100, "#d2eef1f6"),
              GridLine([(0.0, 600.0), (1200.0, 650.0)], "#46ebf0f8"),
              Label("IC 1805", 250, 400, "#f4877c", "major", sub="Heart Nebula",
@@ -336,3 +337,29 @@ def test_font_falls_back_through_sans_faces_not_the_system_serif():
     f = R._font("minor")
     assert f.families()[:4] == ["Helvetica Neue", "Segoe UI", "Arial", "DejaVu Sans"]
     assert f.styleHint() == QFont.StyleHint.SansSerif
+
+
+def test_an_lbn_point_is_a_small_hollow_ring_in_the_export():
+    """A filled dot read as a faint star (v3 crop, LBN 348). A small solid
+    ring with a hollow centre cannot, and it is not LDN's dashed ring either."""
+    import numpy as np
+    img = QImage(400, 300, QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(0xff000000)
+    paint_annotations(img, [Marker(200, 150, "point", "#94eef1f6", "point")], (1200, 1200))
+    a = np.frombuffer(img.constBits(), np.uint8).reshape(300, 400, 4)[..., :3].astype(int)
+    lit = np.argwhere(a.max(axis=2) > 8)
+    assert len(lit), "nothing painted"
+    d = np.hypot(lit[:, 0] - 150, lit[:, 1] - 200)
+    assert d.max() <= R.POINT_RADIUS + 2.0                    # small: no arms, no true size
+    assert a[150, 200].max() <= 8                             # hollow: the centre stays dark
+    assert 3.5 <= R.POINT_RADIUS <= 4.0
+    import math
+    # Solid, not dashed: every direction round the ring is lit; and soft.
+    peaks = []
+    for ang in range(0, 360, 15):
+        x = 200 + R.POINT_RADIUS * math.cos(math.radians(ang))
+        y = 150 + R.POINT_RADIUS * math.sin(math.radians(ang))
+        xi, yi = int(round(x)), int(round(y))
+        peaks.append(a[yi - 1:yi + 2, xi - 1:xi + 2].max())
+    assert min(peaks) > 60, peaks
+    assert max(peaks) < 230, peaks

@@ -15,8 +15,13 @@ _MAX_CIRCLE_FRAMES = 0.75    # drop rings larger than this * the frame diagonal
 # "#RRGGBB", or "#AARRGGBB" where the primitive is meant to be translucent —
 # the form QColor(str) reads directly, so the alpha travels with the colour.
 MAJOR_COLOUR = "#f4877c"     # soft salmon: Messier, NGC, IC, anything with a common name
-MINOR_COLOUR = "#eef1f6"     # white: LDN, Barnard, Sh2, vdB
+MINOR_COLOUR = "#eef1f6"     # white: LDN, Barnard, Sh2, vdB, LBN
 STAR_COLOUR = "#ffd447"      # yellow: named stars
+# An LBN's "about here": a small, solid, hollow white ring at ~58% alpha, so it
+# reads as approximate (B1950 whole-minute positions, median 6' off). His call
+# 2026-10-16, after the ringless render had labels pointing at nothing; a filled
+# dot read as a faint star (v3 crop, LBN 348). Never reserved as an obstacle.
+LBN_POINT_COLOUR = "#94eef1f6"
 GRID_LINE_COLOUR = "#80ebf0f8"   # white at 128/255 = 50%: 27% was lost on every real field
 GRID_TEXT_COLOUR = "#e6e6ebf2"
 FURNITURE_TEXT_COLOUR = "#dceef1f6"
@@ -60,7 +65,7 @@ class Circle(NamedTuple):
 class Marker(NamedTuple):
     x: float
     y: float
-    kind: str            # "star" (gapped crosshair, see STAR_RETICLE)
+    kind: str            # "star" (gapped crosshair, see STAR_RETICLE) | "point" (LBN dot)
     colour: str
     size: str = "star"   # "star" | "star_bright": a key of STAR_RETICLE
 
@@ -166,11 +171,21 @@ def _is_messier(obj) -> bool:
 
 _MAJOR_PREFIXES = ("NGC", "IC")
 
+# Lynds' 1965 bright nebulae: B1950 whole-minute positions and photographic-
+# fringe sizes. Drawn true-size, a dozen 40'-120' rings webbed the NGC 7000
+# frame, several round empty sky (render 2026-10-16); his call: labels only,
+# and only at density "all". The CSV keeps the size for the list's tooltip.
+_RINGLESS_PREFIXES = ("LBN",)
+
+
+def _ringless(obj) -> bool:
+    return getattr(obj, "name", "").startswith(_RINGLESS_PREFIXES)
+
 
 def tier_of(obj) -> str:
     """Two tiers, like the reference: what people name (Messier, NGC, IC, or
     anything with a common name) is major; the survey catalogues (LDN,
-    Barnard, Sh2, vdB) are minor. Replaces "Colour by type" (ruled 2026-10-15)."""
+    Barnard, Sh2, vdB, LBN) are minor. Replaces "Colour by type" (ruled 2026-10-15)."""
     if not hasattr(obj, "major_arcmin"):
         return "star"
     if _is_messier(obj) or getattr(obj, "common", "") or obj.name.startswith(_MAJOR_PREFIXES):
@@ -183,6 +198,8 @@ def priority_of(obj) -> int:
     most significant labels down before the crowded ones fight for space."""
     if getattr(obj, "mag", None) is not None and not hasattr(obj, "major_arcmin"):
         return 10                                   # a NamedStar
+    if _ringless(obj):
+        return 15                # under every other catalogue: placed last, never taking a spot
     if _is_messier(obj):
         return 40
     return 30 if obj.common else 20
@@ -192,6 +209,8 @@ def filter_by_density(objects, stars, pixscale_arcsec, density="balanced"):
     """Drop the least significant content first, so what survives at a lower
     density is always the most meaningful subset rather than an arbitrary one."""
     min_r, max_mag = _DENSITY.get(density, _DENSITY["balanced"])
+    if density != "all":
+        objects = [o for o in objects if not _ringless(o)]
     if min_r is None:
         keep = [o for o in objects if _is_messier(o) or o.common]
     else:
@@ -458,7 +477,7 @@ def _object_labels(groups, shape, pixscale, measure, u, occupied, rings=()):
         c = circle_for(o, pixscale)
         r = c.r if c.r <= max_r else 0.0
         big = c.r > _BIG_CIRCLE_FRAC * min(h, w)
-        if not (0 <= o.cx < w and 0 <= o.cy < h):
+        if not (0 <= o.cx < w and 0 <= o.cy < h) or _ringless(o):
             r, big = 0.0, False              # off-frame centre: label by the clamped anchor
         ax, ay = o.x, o.y
         cands = []
@@ -466,6 +485,11 @@ def _object_labels(groups, shape, pixscale, measure, u, occupied, rings=()):
             cands += [(ax - tw / 2, ay - th / 2), (ax - tw / 2, ay - th - _INNER_OFFSET * u),
                       (ax - tw / 2, ay + _INNER_OFFSET * u)]
         cands += _rim_candidates(ax, ay, r + gap, tw, th)
+        if _ringless(o):
+            # A bare point has no rim to slide round, only these 8 spots: try
+            # a few steps further out, still near enough to read as its own.
+            for k in (1, 2, 3):
+                cands += _rim_candidates(ax, ay, gap + k * th, tw, th)
         blockers = _rings_blocking(rings, ax, ay)
         # Outside the rim the label must stay off its own ring, which the frame
         # clamp can push it onto; the inner rim is inside it on purpose.
@@ -676,6 +700,8 @@ def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density,
     for rep, grp in groups:
         tier = tier_of(rep)
         for o in grp:
+            if _ringless(o):
+                continue                     # no ring drawn, so none to keep labels off
             c = circle_for(o, pixscale, _RING_COLOUR[tier], tier)
             if c.r <= max_r:
                 prims.append(c)
@@ -694,8 +720,19 @@ def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density,
         e = _star_reach(s, u)
         occupied.append((s.x - e, s.y - e, s.x + e, s.y + e))
 
+    points_at = len(prims)    # LBN points go here: under every label, decided at the end
     prims.extend(grid_labels)
-    prims.extend(_object_labels(groups, shape, pixscale, measure, u, occupied, rings))
+    prims.extend(_object_labels([g for g in groups if not _ringless(g[0])], shape, pixscale,
+                                measure, u, occupied, rings))
     prims.extend(_star_labels(kept_stars, shape, measure, u, occupied, rings))
+    # LBN last of all, after the star names (review 2026-10-16: placed with the
+    # objects, they took 57 Cyg's spot and dropped 30 Cyg). Only those whose
+    # point is in the frame: an off-frame LBN would be a label for nothing.
+    bare = [g for g in groups if _ringless(g[0]) and 0 <= g[0].cx < w and 0 <= g[0].cy < h]
+    bare_labels = _object_labels(bare, shape, pixscale, measure, u, occupied, rings)
+    shown = {lab.text for lab in bare_labels}
+    prims[points_at:points_at] = [Marker(o.cx, o.cy, "point", LBN_POINT_COLOUR, "point")
+                                  for o, _ in bare if designation(o) in shown]
+    prims.extend(bare_labels)
     prims.extend(furniture)
     return prims

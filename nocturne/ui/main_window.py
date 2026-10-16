@@ -429,10 +429,13 @@ def _restored_object(saved: dict, wcs):
     IC 1805 was named saved "" and would show the old label for ever. r_px is
     not saved (see _solve_state_dict) and is recomputed as objects_in_field does."""
     from dataclasses import fields
-    from ..core.catalog import CatalogObject, _pixscale_arcsec, common_name_for
+    from ..core.catalog import CatalogObject, _pixscale_arcsec, common_name_for, name_correction
     known = {f.name for f in fields(CatalogObject)}
     o = CatalogObject(**{k: v for k, v in saved.items() if k in known and k != "r_px"})
-    o.common = common_name_for(o.name) or o.common
+    # A correction wins, a blank one too: "" or the saved name would restore
+    # IC 434 as the "Flame Nebula" that the correction exists to remove.
+    fix = name_correction(o.name)
+    o.common = fix if fix is not None else (common_name_for(o.name) or o.common)
     pixscale = _pixscale_arcsec(wcs) if wcs is not None else 0.0
     o.r_px = (o.major_arcmin * 60.0 / 2.0) / pixscale if pixscale > 0 else 0.0
     return o
@@ -4270,6 +4273,31 @@ class MainWindow(QMainWindow):
         except Exception:
             self._solve = None   # degrade to "re-solve to re-annotate" — never raise
             self._solve_freshness = None
+            return
+        try:
+            self._refresh_corrected_target(objs)
+        except Exception:
+            pass   # a stale target name is cosmetic; it must not cost a valid restored solve
+
+    def _refresh_corrected_target(self, objs) -> None:
+        """A saved target naming an object whose catalogue name was since
+        corrected ("IC 434 · Flame Nebula") is recomputed from the restored
+        objects, or the Share plate keeps the wrong name. Any other saved
+        target is the user's record of that solve and stays as it was."""
+        from ..core.catalog import identify_target, identify_target_parts, name_correction
+        pos = self.project.position
+        meta = self.project.meta_at(pos)
+        desig = str(meta.get("target_designation") or "").strip()
+        if not desig:
+            desig = str(meta.get("target_solved") or "").split(" · ")[0].strip()
+        if not desig or name_correction(desig) is None:
+            return
+        shape = self.project.shape_at(pos)[:2]
+        name = identify_target(objs, shape)
+        d, c = identify_target_parts(objs, shape)
+        self.project.set_current_metadata("target_solved", name)
+        self.project.set_current_metadata("target_designation", d)
+        self.project.set_current_metadata("target_common", c)
 
     # --- apply a processing stage ---
     def _step_for(self, stage_id: str):

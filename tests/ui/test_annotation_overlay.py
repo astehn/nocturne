@@ -131,3 +131,24 @@ def test_a_labels_box_covers_its_widest_halo_and_the_antialias_fringe(qtbot):
     reach = R.HALO_STROKES[0][0] / 2 + 1.0
     assert ink.left() - box.left() >= reach and box.right() - ink.right() >= reach
     assert ink.top() - box.top() >= reach and box.bottom() - ink.bottom() >= reach
+
+
+def test_an_lbn_point_is_a_screen_fixed_hollow_ring_on_the_canvas(qtbot):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QGraphicsItem
+    from nocturne.core.annotation_layout import Circle
+    from nocturne.ui import annotation_render as R
+    p = Marker(50, 60, "point", "#94eef1f6", "point")
+    g = build_annotation_group([p], (600, 800))
+    items = g.childItems()
+    want = R.ring_pens(Circle(0, 0, R.POINT_RADIUS, p.colour), 1.0)   # the rings' own pair
+    assert len(items) == len(want) == 2
+    for item, pen in zip(items, want):
+        assert item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+        assert (item.pos().x(), item.pos().y()) == (50, 60)
+        assert item.rect().width() == pytest.approx(2 * R.POINT_RADIUS)
+        assert item.brush().style() == Qt.BrushStyle.NoBrush          # hollow
+        assert item.pen().style() == Qt.PenStyle.SolidLine            # not LDN's dashes
+        assert item.pen().color() == pen.color() and item.pen().widthF() == pen.widthF()
+    assert items[1].pen().color() == QColor("#94eef1f6")
