@@ -17,11 +17,11 @@ _MAX_CIRCLE_FRAMES = 0.75    # drop rings larger than this * the frame diagonal
 MAJOR_COLOUR = "#f4877c"     # soft salmon: Messier, NGC, IC, anything with a common name
 MINOR_COLOUR = "#eef1f6"     # white: LDN, Barnard, Sh2, vdB, LBN
 STAR_COLOUR = "#ffd447"      # yellow: named stars
-# An LBN's "about here": a soft white dot at half alpha, not a ring, not a
-# reticle, so it reads as approximate (B1950 whole-minute positions, median 6'
-# off). His call 2026-10-16, after the ringless render had labels pointing at
-# nothing. Never reserved as an obstacle.
-LBN_POINT_COLOUR = "#80eef1f6"
+# An LBN's "about here": a small, solid, hollow white ring at ~58% alpha, so it
+# reads as approximate (B1950 whole-minute positions, median 6' off). His call
+# 2026-10-16, after the ringless render had labels pointing at nothing; a filled
+# dot read as a faint star (v3 crop, LBN 348). Never reserved as an obstacle.
+LBN_POINT_COLOUR = "#94eef1f6"
 GRID_LINE_COLOUR = "#80ebf0f8"   # white at 128/255 = 50%: 27% was lost on every real field
 GRID_TEXT_COLOUR = "#e6e6ebf2"
 FURNITURE_TEXT_COLOUR = "#dceef1f6"

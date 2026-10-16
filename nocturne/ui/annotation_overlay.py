@@ -143,14 +143,16 @@ def _circle_items(p: Circle) -> list:
 
 
 def _point_items(p: Marker) -> list:
-    # Screen-fixed like the reticle; the same radius and fill the export paints.
+    # Screen-fixed like the reticle; the same radius and pens the export paints.
     r = R.POINT_RADIUS
-    dot = _Ellipse(-r, -r, 2 * r, 2 * r)
-    dot.setPos(p.x, p.y)
-    dot.setPen(QPen(Qt.PenStyle.NoPen))
-    dot.setBrush(QColor(p.colour))
-    dot.setFlag(_IGNORE, True)
-    return [dot]
+    items = []
+    for pen in R.point_pens(p, 1.0):
+        item = _Ellipse(-r, -r, 2 * r, 2 * r)
+        item.setPos(p.x, p.y)
+        item.setPen(_cosmetic(pen))
+        item.setFlag(_IGNORE, True)
+        items.append(item)
+    return items
 
 
 def _reticle_items(p: Marker) -> list:

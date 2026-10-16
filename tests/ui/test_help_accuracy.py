@@ -2820,7 +2820,7 @@ def test_plate_solve_help_lbn_is_ringless_and_only_at_all():
     from nocturne.core.annotation_layout import Circle, Label, Marker, build_layout_for
     b = _plain(_body("plate-solve"))
     assert "LBN bright nebulae appear only when Density is All" in b
-    assert "a label by a faint dot, with no ring" in b
+    assert "a label by a small faint circle, with no true-size ring" in b
     assert "positions date from 1965 and are approximate" in b
     lbn = _solve_obj("LBN 437", 1500, 1500, arcmin=60.0)
 

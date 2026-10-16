@@ -62,7 +62,7 @@ RING_WIDTH = 1.1
 RING_HALO_WIDTH = 2.6
 RING_HALO_ALPHA = 60
 RETICLE_WIDTH = 1.4
-POINT_RADIUS = 2.5        # an LBN's soft "about here" dot, reference px
+POINT_RADIUS = 3.75       # an LBN's "about here" ring, reference px: not a star, not LDN's dashes
 LEADER_WIDTH = 1.4
 GRID_WIDTH = 1.2
 
@@ -208,6 +208,12 @@ def ring_pens(p: Circle, scale: float) -> list:
     return [halo, ring]
 
 
+def point_pens(p: Marker, scale: float) -> list:
+    """An LBN point is a ring in miniature: the same faint dark under-stroke
+    and thin solid stroke as the object rings, so it reads on bright nebula."""
+    return ring_pens(Circle(p.x, p.y, POINT_RADIUS, p.colour), scale)
+
+
 def reticle_spans(p: Marker, scale: float = 1.0) -> list:
     """Four arms from `gap` to `gap + arm` out from the star — a hole over the
     star itself, so the star stays visible."""
@@ -237,10 +243,10 @@ def _paint_circle(painter: QPainter, p: Circle, scale: float) -> None:
 
 def _paint_marker(painter: QPainter, p: Marker, scale: float) -> None:
     if p.kind == "point":
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(p.colour))
-        painter.drawEllipse(QPointF(p.x, p.y), POINT_RADIUS * scale, POINT_RADIUS * scale)
         painter.setBrush(Qt.BrushStyle.NoBrush)
+        for pen in point_pens(p, scale):
+            painter.setPen(pen)
+            painter.drawEllipse(QPointF(p.x, p.y), POINT_RADIUS * scale, POINT_RADIUS * scale)
         return
     painter.setPen(line_pen(p.colour, RETICLE_WIDTH * scale))
     for (x1, y1), (x2, y2) in reticle_spans(p, scale):

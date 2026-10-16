@@ -339,17 +339,27 @@ def test_font_falls_back_through_sans_faces_not_the_system_serif():
     assert f.styleHint() == QFont.StyleHint.SansSerif
 
 
-def test_an_lbn_point_is_a_small_soft_dot_in_the_export():
-    """Not a reticle (no gap, no arms): a filled dot of POINT_RADIUS ref px."""
+def test_an_lbn_point_is_a_small_hollow_ring_in_the_export():
+    """A filled dot read as a faint star (v3 crop, LBN 348). A small solid
+    ring with a hollow centre cannot, and it is not LDN's dashed ring either."""
     import numpy as np
     img = QImage(400, 300, QImage.Format.Format_ARGB32_Premultiplied)
     img.fill(0xff000000)
-    shape = (1200, 1200)                                     # scale 1
-    paint_annotations(img, [Marker(200, 150, "point", "#80eef1f6", "point")], shape)
+    paint_annotations(img, [Marker(200, 150, "point", "#94eef1f6", "point")], (1200, 1200))
     a = np.frombuffer(img.constBits(), np.uint8).reshape(300, 400, 4)[..., :3].astype(int)
     lit = np.argwhere(a.max(axis=2) > 8)
     assert len(lit), "nothing painted"
-    r = np.hypot(lit[:, 0] - 150, lit[:, 1] - 200).max()
-    assert r <= R.POINT_RADIUS + 1.0                          # a dot, no arms reaching out
-    assert a[150, 200].max() > 60                             # filled at its centre: no gap
-    assert a[150, 200].max() < 200                            # and soft, not full white
+    d = np.hypot(lit[:, 0] - 150, lit[:, 1] - 200)
+    assert d.max() <= R.POINT_RADIUS + 2.0                    # small: no arms, no true size
+    assert a[150, 200].max() <= 8                             # hollow: the centre stays dark
+    assert 3.5 <= R.POINT_RADIUS <= 4.0
+    import math
+    # Solid, not dashed: every direction round the ring is lit; and soft.
+    peaks = []
+    for ang in range(0, 360, 15):
+        x = 200 + R.POINT_RADIUS * math.cos(math.radians(ang))
+        y = 150 + R.POINT_RADIUS * math.sin(math.radians(ang))
+        xi, yi = int(round(x)), int(round(y))
+        peaks.append(a[yi - 1:yi + 2, xi - 1:xi + 2].max())
+    assert min(peaks) > 60, peaks
+    assert max(peaks) < 230, peaks

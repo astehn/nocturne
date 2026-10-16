@@ -250,7 +250,7 @@ def test_a_labelled_lbn_gets_a_soft_point_and_nothing_else_does():
     lbn, ldn = _lay("LBN 437", 60.0, 500.0, 500.0), _lay("LDN 1234", 0.0, 1100.0, 500.0)
     marks = [m for m in _layout([lbn, ldn]) if isinstance(m, Marker)]
     assert marks == [Marker(500.0, 500.0, "point", LBN_POINT_COLOUR, "point")]
-    assert int(LBN_POINT_COLOUR[1:3], 16) <= 140            # translucent: "about here"
+    assert 0x8c <= int(LBN_POINT_COLOUR[1:3], 16) <= 0x99   # ~55-60%: "about here"
     assert not [m for m in _layout([lbn, ldn], density="balanced") if isinstance(m, Marker)]
 
 
