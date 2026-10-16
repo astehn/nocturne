@@ -240,3 +240,60 @@ def test_source_collision_on_a_case_insensitive_filesystem(tmp_path):
     if insensitive:
         assert results[0]["ok"] is False
         assert "overwrite the source file" in results[0]["message"]
+
+
+@pytest.mark.parametrize("fmt", ["TIFF", "PNG"])
+def test_batch_output_is_tagged_and_matches_the_single_export(tmp_path, fmt):
+    """Batch wrote untagged TIFF/PNG while Export tagged them (2026-10-16):
+    Photoshop then read the file in its own working space, the defect the
+    colour-management work exists to prevent. Same input, same space: the
+    same profile and the same pixels as Export writes."""
+    import tifffile
+    from PIL import Image
+
+    from nocturne.colour_profiles import icc_bytes, prepare_for_export
+    from nocturne.core.export import save_png, save_tiff
+    from nocturne.steps.load import load_fits
+    from types import SimpleNamespace
+    from nocturne.ui.main_window import MainWindow
+
+    src = tmp_path / "m16.fits"
+    _fits(src, 20, 28)
+    outdir = tmp_path / "out"
+    outdir.mkdir()
+    recipe = Recipe(steps=[{"stage": "stretch", "option": 0.5}])
+    [res] = run_batch(recipe, [str(src)], str(outdir), fmt, Settings())
+    assert res["ok"], res
+
+    # What the single Export does with the same picture (its own method).
+    img = apply_recipe(load_fits(str(src)), recipe, Settings())
+    out, icc = MainWindow._prepare_for_export(SimpleNamespace(_view_linked=True), img, "sRGB")
+    single = tmp_path / ("single.tiff" if fmt == "TIFF" else "single.png")
+    (save_tiff if fmt == "TIFF" else save_png)(out, str(single), icc=icc, linked=True)
+
+    batch = outdir / ("m16.tiff" if fmt == "TIFF" else "m16.png")
+    if fmt == "TIFF":
+        with tifffile.TiffFile(str(batch)) as t:
+            tag = t.pages[0].tags.get(34675)
+            got_icc, got = (tag.value if tag else None), t.asarray()
+        expected = tifffile.imread(str(single))
+    else:
+        with Image.open(str(batch)) as im:
+            got_icc, got = im.info.get("icc_profile"), np.asarray(im)
+        with Image.open(str(single)) as im:
+            expected = np.asarray(im)
+    assert got_icc == icc_bytes("sRGB")
+    np.testing.assert_array_equal(got, expected)
+    assert prepare_for_export(img, "sRGB")[1] == icc
+
+
+def test_batch_fits_carries_no_profile(tmp_path):
+    """FITS is data, not a picture: no ICC, written as before."""
+    src = tmp_path / "a.fits"
+    _fits(src)
+    outdir = tmp_path / "o"
+    outdir.mkdir()
+    [res] = run_batch(Recipe(steps=[{"stage": "stretch", "option": 0.5}]), [str(src)],
+                      str(outdir), "FITS", Settings())
+    assert res["ok"], res
+    assert (outdir / "a.fits").exists()

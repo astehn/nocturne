@@ -40,4 +40,36 @@ def icc_bytes(space: str) -> bytes:
     return bytes(cs.iccProfile())
 
 
-__all__ = ["SPACES", "icc_bytes", "qt_colour_space"]
+def prepare_for_export(img, space: str, *, linked: bool = True):
+    """Convert into `space` and return (image, profile bytes) — for the single
+    Export and for Batch, which wrote untagged files until 2026-10-16.
+
+    Conversion first, THEN the tag — the two must agree. Tagging without
+    converting would mis-declare the file, which is worse than an untagged
+    export: a reader would faithfully render the wrong thing instead of
+    guessing.
+    """
+    from .core.colour import convert
+    if space == "sRGB":
+        return img, icc_bytes("sRGB")     # no conversion, but still declared
+    from .core.image import AstroImage, finite_or_zero
+    if img.data.ndim == 2:
+        # The panel greys these out for mono; this is the backstop. A grey
+        # TIFF cannot carry an RGB working space, and the conversion itself
+        # throws on a 2-D array — say why instead of a matmul error.
+        raise ValueError(f"A mono picture exports in sRGB only, not {space}.")
+    if img.is_linear:
+        # STRETCH, THEN CONVERT. The canvas shows display_data; converting
+        # the linear data and letting save_tiff stretch it afterwards wrote
+        # a file up to 0.22 off the canvas (synthetic star field, ProPhoto,
+        # unlinked) — and off the Starless + Stars pair, which stretched
+        # first all along.
+        from .core.export import display_data
+        img = AstroImage(finite_or_zero(display_data(img, linked=linked)),
+                         is_linear=False, metadata=dict(img.metadata))
+    moved = convert(img.data, space)
+    return (AstroImage(moved, is_linear=img.is_linear, metadata=dict(img.metadata)),
+            icc_bytes(space))
+
+
+__all__ = ["SPACES", "icc_bytes", "prepare_for_export", "qt_colour_space"]

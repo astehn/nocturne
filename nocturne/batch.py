@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 
+from .colour_profiles import prepare_for_export
 from .core.crop import detect_content_bounds
 from .core.export import save_fits, save_png, save_tiff
 from .core.tasks import current as current_token
@@ -9,6 +10,8 @@ from .recipe import PRESET_ONLY_STAGE_IDS, RETIRED_STAGES, Recipe, deserialize_o
 from .steps.factory import make_step
 from .steps.load import load_fits
 from .tools.base import run_cli
+
+BATCH_SPACE = "sRGB"
 
 _EXPORTERS = {"TIFF": (save_tiff, ".tiff"), "PNG": (save_png, ".png"), "FITS": (save_fits, ".fits")}
 
@@ -103,7 +106,15 @@ def run_batch(recipe, input_paths, output_dir, fmt, settings, *,
                                  "different output folder or format")
             out = apply_recipe(load_fits(path), recipe, settings,
                                bg_runner=bg_runner, rc_runner=rc_runner)
-            exporter(out, output_path(path, output_dir, fmt))
+            if fmt == "FITS":
+                exporter(out, output_path(path, output_dir, fmt))
+            else:
+                # Tagged as the single Export tags: a picture format with no
+                # profile is read in whatever working space the reader has
+                # (Photoshop's is often ProPhoto), which is why an untagged
+                # M 16 export rendered dark. Batch has no space choice; sRGB.
+                out, icc = prepare_for_export(out, BATCH_SPACE)
+                exporter(out, output_path(path, output_dir, fmt), icc=icc)
             results.append({"path": path, "ok": True, "message": ""})
         except Exception as exc:
             results.append({"path": path, "ok": False, "message": str(exc)})
