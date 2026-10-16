@@ -97,10 +97,14 @@ def serialize_option(stage_id, option):
         out = {"neutralize_background": c.neutralize_background,
                "remove_green": c.remove_green,
                "method": c.method}
-        if c.fell_back:
-            # Only when true: files without a fallback stay byte-identical,
-            # and files written before the field read it as False.
-            out["fell_back"] = True
+        if c.fell_back or c.method == "photometric":
+            # Written for every photometric entry since 2026-10-16, False
+            # included: a MISSING key then means "not recorded" (an entry made
+            # before 0.44, or before this) rather than "it did not fall back",
+            # which the provenance report could not tell apart. Sky balance
+            # cannot fall back, so its entries stay as they were. Files
+            # written before the field still read it as False.
+            out["fell_back"] = bool(c.fell_back)
         if c.stepped_aside:
             out["stepped_aside"] = True
         return out

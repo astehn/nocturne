@@ -418,4 +418,4 @@ def test_the_combined_master_records_what_it_was_made_from(qtbot, tmp_path):
                      date=datetime.date(2026, 10, 16))
     assert "No processing steps applied" not in r
     assert "- Ha master: ha\\_master.fits" in r and "- OIII master: oiii\\_master.fits" in r
-    assert "- OIII aligned to Ha: shifted" in r
+    assert "- OIII aligned to Ha: moved" in r and "px up" in r   # OIII sat 4 px low

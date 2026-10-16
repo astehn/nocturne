@@ -45,8 +45,9 @@ FREE = "free"   # engine option: the built-in denoise, chosen rather than fallen
 # The option's "engine" is a PREFERENCE: an "rcastro" request runs GraXpert on a
 # machine without RC-Astro. "ran" records the engine that did, in the same
 # vocabulary, so the provenance report can say it instead of the request
-# (2026-10-16). Added beside the two keys every build reads; an older build
-# ignores it. `strip_ran` removes it wherever an option is compared with the
+# (2026-10-16). Added beside the two keys every build reads: an older build
+# runs and reports it correctly, though its panel compares the whole dict and
+# so keeps Apply live on a step this build committed. `strip_ran` removes it wherever an option is compared with the
 # panel's or replayed as a decision (a recipe), neither of which it belongs to.
 RAN = "ran"
 _RAN_FROM_TAG = {"NoiseX": "rcastro", "GraXpert": "graxpert", "free": FREE}

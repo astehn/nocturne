@@ -187,7 +187,7 @@ def _narrowband_params(ser: dict) -> list[str]:
     """The dialog's controls by the labels beside them, in its order, in the
     units its value labels show (narrowband_dialog._update_value_labels).
     Fields with no control (black point, SCNR…) are fixed and not listed."""
-    from .narrowband import GOLD_BLUE
+    from .narrowband import GOLD_BLUE, PALETTES_USING_BLEND
     gold_blue = ser.get("palette") == GOLD_BLUE
     lines = [f"- palette: {ser.get('palette', '')}"]
     if "oxygen_strength" in ser:
@@ -197,7 +197,9 @@ def _narrowband_params(ser: dict) -> list[str]:
     elif "oiii_boost" in ser:
         # The control before 2026-09-09; it has no equivalent today.
         lines.append(f"- OIII boost (an earlier control): ×{float(ser['oiii_boost']):.2f}")
-    if "blend_amount" in ser:
+    # Greyed in the dialog where they do nothing (narrowband_dialog
+    # ._update_palette_controls): not listed as though they had an effect.
+    if "blend_amount" in ser and ser.get("palette") in PALETTES_USING_BLEND:
         lines.append(f"- green blend: {float(ser['blend_amount']):.2f}")
     if "protect_background" in ser:
         lines.append(f"- protect background: {round(float(ser['protect_background']) * 100)}%")
@@ -213,7 +215,7 @@ def _narrowband_params(ser: dict) -> list[str]:
         lines.append(f"- tame core: {'off' if tame <= 0 else f'{tame}%'}")
     if "brightness" in ser:
         lines.append(f"- brightness: ×{float(ser['brightness']):.2f}")
-    if "lightness_preserve" in ser:
+    if "lightness_preserve" in ser and not gold_blue:
         lines.append(f"- preserve lightness: {_num(bool(ser['lightness_preserve']))}")
     return lines
 
@@ -474,10 +476,14 @@ def _origin_lines(metadata: dict, source_label: str | None) -> list[str]:
         if "aligned" in comb:
             shift = comb.get("shift")
             if comb["aligned"] and shift and len(shift) == 2:
-                out.append(f"- OIII aligned to Ha: shifted {_num(float(shift[1]))} px "
-                           f"horizontally, {_num(float(shift[0]))} px vertically")
+                dy, dx = float(shift[0]), float(shift[1])
+                out.append(f"- OIII aligned to Ha: moved {_num(abs(dx))} px "
+                           f"{'right' if dx >= 0 else 'left'} and {_num(abs(dy))} px "
+                           f"{'down' if dy >= 0 else 'up'}")
             else:
-                out.append("- OIII aligned to Ha: no")
+                # Either declined, or never offered (the pair was already
+                # within tolerance); the record does not say which.
+                out.append("- OIII moved to align with Ha: no")
         return out
     if source_label == COMBINED_SOURCE_LABEL:
         # Opened before Combine recorded its inputs (2026-10-16).
@@ -491,25 +497,27 @@ _DECONV_UNRECORDED = ("not recorded — BlurXTerminator when RC-Astro was set up
                       "otherwise Nocturne's built-in sharpen")
 _SPLIT_UNRECORDED = ("not recorded — the stars were separated by StarXTerminator, "
                      "StarNet2 or Nocturne's own split, whichever was set up")
+# Three star steps do NOT fall back to a split: without a star tool they work on
+# the whole image, or inside a star mask (core.receipt._FALLBACKS; the log says
+# the same, MainWindow._step_log_label).
+_WHOLE_UNRECORDED = ("not recorded — the stars were separated by StarXTerminator or "
+                     "StarNet2 if one was set up; otherwise it worked on the whole "
+                     "image, with nothing separated")
+_MASK_UNRECORDED = ("not recorded — the stars were separated by StarXTerminator or "
+                    "StarNet2 if one was set up; otherwise it worked inside a star mask")
 # Steps whose engine the history does not record, with what can honestly be
 # said instead. The star steps are core.receipt's SPLIT_STAGES plus the two
 # Enhancements taps that split (steps/enhance_step._LAYERED).
 _UNRECORDED = {"Deconvolution": _DECONV_UNRECORDED,
+               "Narrowband": _WHOLE_UNRECORDED, "Colour Balance": _WHOLE_UNRECORDED,
+               "De-green Stars": _MASK_UNRECORDED,
                **{n: _SPLIT_UNRECORDED for n in (
-                   "Saturation", "De-green Stars", "Star Reduction", "Narrowband",
-                   "Colour Balance", "Starless Levels", "Star Colour",
+                   "Saturation", "Star Reduction", "Starless Levels", "Star Colour",
                    "Sharpen Nebulosity")}}
 _STAGE_OF = {"Saturation": "saturation", "Star Reduction": "star_reduction"}
 
 
-def _version_tuple(v) -> tuple:
-    try:
-        return tuple(int(x) for x in str(v).split(".")[:3])
-    except ValueError:
-        return ()
-
-
-def _engine_text(name: str, ser, saved_version) -> str | None:
+def _engine_text(name: str, ser) -> str | None:
     """What ran for one entry, from its record alone, or None when the step has
     no engine choice (or, for a star step, split nothing)."""
     if name == "Background":
@@ -525,14 +533,12 @@ def _engine_text(name: str, ser, saved_version) -> str | None:
             return (f"**{SKY_BALANCE_ENGINE}** — photometric calibration was chosen "
                     "but could not run")
         if ser.get("method") == "photometric":
-            text = "**ASTAP + Gaia** — photometric calibration (SPCC)"
-            v = _version_tuple(saved_version)
-            if v and v < (0, 44, 0):
-                # A fallback has been recorded since 0.44; this project was last
-                # saved before it, so the record cannot show one.
-                text += ("; this project was saved before Nocturne 0.44, which "
-                         "did not record a fallback to sky balance")
-            return text
+            if "fell_back" in ser:
+                return "**ASTAP + Gaia** — photometric calibration (SPCC)"
+            # Written explicitly since 2026-10-16; before that a successful
+            # run and an unrecorded fallback (pre-0.44) looked the same.
+            return ("ASTAP + Gaia was chosen (photometric calibration); whether it ran "
+                    "or fell back to sky balance was not recorded for this step")
         return f"**{SKY_BALANCE_ENGINE}**"
     if name == "Noise Reduction":
         ran, known = _nr_ran(ser)
@@ -557,7 +563,7 @@ def _engine_lines(ser_entries, saved_version) -> list[str]:
     for i, (name, ser) in enumerate(ser_entries, 1):
         if ser is _FAILED:
             continue
-        text = _engine_text(name, ser, saved_version)
+        text = _engine_text(name, ser)
         if text is not None:
             by_name.setdefault(name, []).append((i, text))
     lines = []

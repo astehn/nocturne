@@ -25,7 +25,7 @@ def test_the_engines_section_ignores_the_current_setup():
     import datetime
     from nocturne.core.provenance import build_report
     from nocturne.settings import Settings
-    entries = [("Color", {"method": "photometric"}), ("Background", "strong"),
+    entries = [("Color", {"method": "photometric", "fell_back": False}), ("Background", "strong"),
                ("Noise Reduction", {"engine": "rcastro", "level": "strong", "ran": "rcastro"})]
     bare = build_report(entries, {}, app_version="1", date=datetime.date(2026, 10, 16),
                         settings=Settings())
@@ -146,3 +146,29 @@ def test_the_stretch_headline_says_linked_or_unlinked():
         r = build_report([("Stretch", {"amount": 0.12, "linked": linked})], {},
                          app_version="0.42.0", date=datetime.date(2026, 9, 29))
         assert word in r, r
+
+
+def test_a_photometric_entry_without_the_record_is_not_called_a_run():
+    """Before 2026-10-16 a successful calibration wrote no fell_back key, and
+    before 0.44 a fallback wrote none either: a missing key cannot be read
+    as "ASTAP + Gaia ran"."""
+    import datetime
+    from nocturne.core.provenance import build_report
+    r = build_report([("Color", {"method": "photometric"})], {}, app_version="1",
+                     date=datetime.date(2026, 10, 16))
+    line = [ln for ln in r.splitlines() if ln.startswith("- Color:")][0]
+    assert "**ASTAP + Gaia**" not in line and "not recorded" in line
+
+
+def test_star_steps_that_never_split_without_a_tool_are_not_said_to_have():
+    """Narrowband and Colour Balance work on the whole image without a star
+    tool, De-green Stars inside a star mask (receipt._FALLBACKS)."""
+    import datetime
+    from nocturne.core.provenance import build_report
+    r = build_report([("Narrowband", {"palette": "HOO"}), ("De-green Stars", 1.0),
+                      ("Star Reduction", 0.3)], {}, app_version="1",
+                     date=datetime.date(2026, 10, 16))
+    eng = r.split("## Engines")[1]
+    assert "- Narrowband: not recorded" in eng and "whole image" in eng
+    assert "- De-green Stars: not recorded" in eng and "star mask" in eng
+    assert "- Star Reduction: not recorded — the stars were separated by" in eng
