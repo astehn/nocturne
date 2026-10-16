@@ -15,7 +15,7 @@ _MAX_CIRCLE_FRAMES = 0.75    # drop rings larger than this * the frame diagonal
 # "#RRGGBB", or "#AARRGGBB" where the primitive is meant to be translucent —
 # the form QColor(str) reads directly, so the alpha travels with the colour.
 MAJOR_COLOUR = "#f4877c"     # soft salmon: Messier, NGC, IC, anything with a common name
-MINOR_COLOUR = "#eef1f6"     # white: LDN, Barnard, Sh2, vdB
+MINOR_COLOUR = "#eef1f6"     # white: LDN, Barnard, Sh2, vdB, LBN
 STAR_COLOUR = "#ffd447"      # yellow: named stars
 GRID_LINE_COLOUR = "#80ebf0f8"   # white at 128/255 = 50%: 27% was lost on every real field
 GRID_TEXT_COLOUR = "#e6e6ebf2"
@@ -170,7 +170,7 @@ _MAJOR_PREFIXES = ("NGC", "IC")
 def tier_of(obj) -> str:
     """Two tiers, like the reference: what people name (Messier, NGC, IC, or
     anything with a common name) is major; the survey catalogues (LDN,
-    Barnard, Sh2, vdB) are minor. Replaces "Colour by type" (ruled 2026-10-15)."""
+    Barnard, Sh2, vdB, LBN) are minor. Replaces "Colour by type" (ruled 2026-10-15)."""
     if not hasattr(obj, "major_arcmin"):
         return "star"
     if _is_messier(obj) or getattr(obj, "common", "") or obj.name.startswith(_MAJOR_PREFIXES):

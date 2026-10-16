@@ -210,7 +210,13 @@ def identify_target_parts(objects: list[CatalogObject], shape) -> tuple[str, str
     frame (not its clamped label anchor — that made a Heart frame "the Soul"),
     then one whose ring covers the frame centre (a Fish Head frame also holds
     the Heart's centre), then an NGC/IC name over a survey alias, as the
-    overlay leads with it; then size and nearness."""
+    overlay leads with it; then size and nearness.
+
+    An LBN entry comes last of all, before even a Messier: Lynds' 1965 bright
+    nebulae carry B1950 whole-minute positions (median 6' off a modern centre)
+    and photographic-fringe sizes, so on the centred/covers/size rules a vague
+    LBN outline would beat the object the frame was actually aimed at (ruled
+    2026-10-16, spec 2026-10-16-lbn-research). It names a frame only alone."""
     if not objects:
         return ("", "")
     h, w = shape
@@ -222,7 +228,8 @@ def identify_target_parts(objects: list[CatalogObject], shape) -> tuple[str, str
         covers = r_px > 0 and (o.cx - cx) ** 2 + (o.cy - cy) ** 2 <= r_px ** 2
         # An object far larger than the frame says little about what was imaged.
         sane_size = o.major_arcmin if o.major_arcmin <= 3.0 * (h * w) ** 0.5 else 0.0
-        return (bool(getattr(o, "messier", "")), bool(o.common), centred, covers,
+        return (not o.name.startswith("LBN"),
+                bool(getattr(o, "messier", "")), bool(o.common), centred, covers,
                 o.name.startswith(("NGC", "IC")), sane_size,
                 -((o.x - cx) ** 2 + (o.y - cy) ** 2))
 
@@ -288,7 +295,7 @@ _NAME_CACHE: dict[str, str] | None = None
 
 def common_name_for(designation_str: str) -> str:
     """Colloquial name for a designation, or "" — for images that were never
-    plate-solved but carry an OBJECT header. Built once; the catalogue is 15,890
+    plate-solved but carry an OBJECT header. Built once; the catalogue is 16,168
     rows and the plate asks per keystroke."""
     global _NAME_CACHE
     if _NAME_CACHE is None:

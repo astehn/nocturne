@@ -404,6 +404,7 @@ from nocturne.core.catalog import CatalogObject  # noqa: E402,F811
     ("B 33", "", "", "minor"),
     ("Sh 2-131", "", "", "minor"),
     ("vdB 141", "", "", "minor"),
+    ("LBN 437", "", "", "minor"),
     ("Sh 2-155", "", "Cave Nebula", "major"),     # a common name lifts any catalogue
     ("vdB 142", "", "Elephant's Trunk Nebula", "major"),
 ])
