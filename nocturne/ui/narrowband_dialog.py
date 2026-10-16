@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.image import AstroImage
+from ..core.narrowband import TAME_SPAN
 from ..core.narrowband import (
     GOLD_BLUE, PALETTE_DESCRIPTIONS, OFFERED_PALETTES as _CORE_PALETTES, PALETTES_USING_BLEND,
     NarrowbandParams, gold_blue_stats, palette_defaults, render, screen,
@@ -27,7 +28,7 @@ from .zoom_row import ZoomRow
 
 _SPLIT_MSG = "Separating stars…\n(one-time, then tweak live)"
 
-_TAME_SPAN = 4.0     # slider 100% -> highlight_reduction 5.0
+_TAME_SPAN = TAME_SPAN     # slider 100% -> highlight_reduction 5.0
 
 # THE REVERT SWITCH: the palette the dialog opens on (and Reset returns to).
 # Before gold and blue the dialog opened on "HOO"; set it back to that (or to

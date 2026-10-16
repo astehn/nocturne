@@ -83,7 +83,7 @@ def test_the_provenance_headline_says_what_ran():
     head = _headline("Color", ser)
     assert "sky" in head and "fell back" in head
     assert _headline("Color", serialize_option(
-        "color", ColorSettings(method="photometric"))) == "photometric"
+        "color", ColorSettings(method="photometric"))) == "Photometric (SPCC)"
 
 
 def test_auto_enhance_records_the_fallback_too():

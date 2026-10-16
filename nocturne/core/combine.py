@@ -7,6 +7,8 @@ put through the extractor's own fit.
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 from scipy.ndimage import shift as _ndshift
 from skimage.registration import phase_cross_correlation
@@ -56,6 +58,19 @@ def align_to(oiii: np.ndarray, shift: tuple) -> np.ndarray:
     """OIII resampled onto Ha's grid by the offset measure_offset found."""
     return _ndshift(np.asarray(oiii, np.float32), shift,
                     order=1, mode="nearest").astype(np.float32)
+
+
+def combine_record(ha_path: str, oiii_path: str, balance: float,
+                   shift: tuple | None) -> dict:
+    """What a Combine was made from, for the image's metadata — the provenance
+    report's only source for a combined picture, which opens as a new project
+    with no steps (2026-10-16). File NAMES, not paths: a report gets shared,
+    and a path carries the reporter's user name."""
+    out = {"ha": os.path.basename(ha_path), "oiii": os.path.basename(oiii_path),
+           "balance": round(float(balance), 3), "aligned": shift is not None}
+    if shift is not None:
+        out["shift"] = [round(float(shift[0]), 2), round(float(shift[1]), 2)]
+    return out
 
 
 def combine_gases(ha: np.ndarray, oiii: np.ndarray, balance: float = 1.0,

@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from .. import APP_NAME, __version__, app_title
 from ..core.auto_enhance import DUALBAND_ONLY, PRESET_NAMES, build_auto_plan, run_auto_plan, stages_left_out
 from ..core import telemetry as telemetry_mod
-from ..core.provenance import build_report
+from ..core.provenance import COMBINED_SOURCE_LABEL, build_report
 from ..core import nr_models
 from ..core.crop import (
     FREE, CropParams, detect_content_bounds, shape_label, shape_ratio,
@@ -1931,7 +1931,7 @@ class MainWindow(QMainWindow):
         it held nowhere else, so closing on a "Cancel" would destroy it."""
         if not self._confirm_save_if_dirty():
             return False
-        self._open_in_background(img, "combined narrowband",
+        self._open_in_background(img, COMBINED_SOURCE_LABEL,
                                  busy_label="Opening the combined image…",
                                  fail_label="Could not open the combined image",
                                  cancellable=False)
@@ -8666,10 +8666,11 @@ class MainWindow(QMainWindow):
     def _show_provenance(self) -> None:
         if self.project is None:
             return
-        report = build_report(self.project.entries(), self.project.current().metadata,
+        report = build_report(self.project.entries(),
+                              self.project.meta_at(self.project.position),
                               app_version=__version__, date=datetime.date.today(),
-                              settings=self.settings,
-                              saved_version=self._saved_app_version)
+                              saved_version=self._saved_app_version,
+                              source_label=self._source_label)
         ProvenanceDialog(report, self.settings, source_label=self._source_label, parent=self).exec()
 
     def _refresh(self) -> None:

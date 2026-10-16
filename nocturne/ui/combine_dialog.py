@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QPushButton, QSlider, QVBoxLayout, QWidget,
 )
 
-from ..core.combine import (OFFSET_TOLERANCE_PX, align_to, combine_gases,
+from ..core.combine import (OFFSET_TOLERANCE_PX, align_to, combine_gases, combine_record,
                             measure_offset, oiii_fit)
 from ..core.fits_io import _parse_metadata, load_mono_master
 from ..settings import start_dir
@@ -299,6 +299,8 @@ class CombineDialog(QDialog):
             # able to name its camera and filter like any other (see 535f156).
             h, w = ha.shape
             meta = _parse_metadata(fits.getheader(ha_path), h, w)
+            meta["combine"] = combine_record(ha_path, oiii_path, balance,
+                                             shift if align else None)
             return combine_gases(ha, oiii, balance, metadata=meta)
 
         run_async(self._pool, work, self._on_done,

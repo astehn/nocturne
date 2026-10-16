@@ -1552,7 +1552,8 @@ _t("upscale", "Upscale Crop",
        "image. The upscaled picture arrives as though you had just opened a file: the stepper "
        "returns to Import &amp; assess, the log is cleared, and <b>your edit history is gone</b> "
        "— you cannot undo back across it, and the Provenance report of the new project starts "
-       "here, with no record of the processing that produced it.</p>"
+       "here: it records the upscale itself (engine, scale, region and star tightening), but "
+       "not the processing that produced the picture you upscaled.</p>"
        "<p>If the project you are replacing has unsaved edits, Nocturne asks first and offers "
        "to save it — but a project you already saved is swapped out without a prompt, so "
        "<b>save first</b> if there is any chance you will want to go back and adjust "
@@ -1714,11 +1715,20 @@ _t("upscale", "Upscale Crop",
        "editable. Saving runs in the background, so the app stays responsive.</p>"),
 
     _t("provenance", "Provenance report",
-       "Export a readable record of everything you did.",
+       "Export a readable record of the steps you applied.",
        "<h4>What it does</h4>"
-       "<p>Writes a plain, readable <b>Markdown</b> record of your whole edit — every step and its "
-       "settings, plus the capture details and the app version — so you, or anyone, can see "
-       "exactly how the image was made.</p>"
+       "<p>Writes a plain, readable <b>Markdown</b> record of this project's edit — every step "
+       "in order with the settings it recorded, the capture details, and which tool ran each "
+       "step that has a choice — so you, or anyone, can see how the picture was processed in "
+       "Nocturne.</p>"
+       "<h4>What it does not include</h4>"
+       "<p>It covers this project's history and nothing outside it. Export settings (format, "
+       "bit depth, colour space) are not part of it. An <b>Upscale Crop</b> copy or a "
+       "<b>Combine</b> result starts a new project: its report says what it was made from, "
+       "but not the processing of the picture before that. Where a step did not record which "
+       "tool ran it — most star steps, Deconvolution, and Noise Reduction applied before "
+       "Nocturne recorded its engine — the report says <i>not recorded</i> rather than "
+       "guessing from the tools set up today.</p>"
        "<h4>How to use it</h4>"
        "<p>Open the <b>Project</b> menu ▸ <b>Provenance report…</b>, then <b>Save…</b> the report "
        "or <b>Copy to clipboard</b>.</p>"

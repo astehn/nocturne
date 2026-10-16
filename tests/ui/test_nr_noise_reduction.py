@@ -141,7 +141,7 @@ def test_review_focus_4_a_project_outlives_its_model(qtbot, tmp_path, monkeypatc
     assert win.project.entries() == entries
     report = build_report(win.project.entries(), {}, app_version="x",
                           date=datetime.date(2026, 10, 6), settings=win.settings)
-    assert "Noise Reduction — Nocturne NR — v20.0" in report
+    assert "Noise Reduction — strong, Nocturne NR — v20.0" in report
     # The model is no longer offered, and the step does not pretend it is.
     win._go_to_id("noise_sharpen")
     assert _items(win) is None or "Nocturne NR — Odin" not in _items(win)

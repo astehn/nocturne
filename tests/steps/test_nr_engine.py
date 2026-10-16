@@ -101,12 +101,14 @@ def test_the_report_names_the_model(tray):
                ("Noise Reduction", {"engine": "nr:v20.0", "level": "medium"})]
     rep = build_report(entries, {}, app_version="x", date=datetime.date(2026, 10, 6),
                        settings=Settings())
-    assert "2. Noise Reduction — Nocturne NR — Odin (v20.0)" in rep
+    assert "2. Noise Reduction — medium, Nocturne NR — Odin (v20.0)" in rep
     assert "- Noise Reduction: **Nocturne NR — Odin (v20.0)**" in rep
     assert "NoiseXTerminator" not in rep and "built-in denoise" not in rep
-    assert "- engine: nr:v20.0" in rep, "the parameters keep the stored id"
+    # The model by name with its stable id in brackets — never the raw option.
+    assert "- engine: Nocturne NR — Odin (v20.0)" in rep
+    assert "nr:v20.0" not in rep
     (tray / "v20.0.onnx").unlink()
     rep = build_report(entries, {}, app_version="x", date=datetime.date(2026, 10, 6),
                        settings=Settings())
-    assert "2. Noise Reduction — Nocturne NR — v20.0" in rep
+    assert "2. Noise Reduction — medium, Nocturne NR — v20.0" in rep
     assert "- Noise Reduction: **Nocturne NR — v20.0**" in rep

@@ -155,14 +155,20 @@ def test_noise_reduction_names_the_tool_that_is_actually_there(tmp_path):
 
 
 def test_the_report_names_the_recorded_noise_engine(tmp_path):
+    """What RAN (recorded since 2026-10-16), not what was requested: here
+    GraXpert was asked for and NoiseXTerminator ran."""
     import datetime
     from nocturne.core.provenance import build_report
     s = _configured(tmp_path, rcastro_path=1, graxpert_path=1)
-    r = build_report([("Noise Reduction", {"engine": "graxpert", "level": "medium"})],
+    r = build_report([("Noise Reduction", {"engine": "graxpert", "level": "medium",
+                                           "ran": "rcastro"})],
                      {}, app_version="1", date=datetime.date(2026, 10, 5), settings=s)
     engines = r.split("## Engines")[1]
-    assert "Noise Reduction: **GraXpert**" in engines
-    assert "NoiseXTerminator" not in engines
+    assert "Noise Reduction: **NoiseXTerminator**" in engines
+    # An older record names only the request, and is worded as one.
+    r = build_report([("Noise Reduction", {"engine": "graxpert", "level": "medium"})],
+                     {}, app_version="1", date=datetime.date(2026, 10, 5), settings=s)
+    assert "- Noise Reduction: not recorded — GraXpert was requested" in r
 
 
 def test_preflight_names_graxpert_when_it_is_the_default(tmp_path):

@@ -106,7 +106,8 @@ def test_the_provenance_report_has_no_engine_row_for_a_saturation_without_boost(
     from nocturne.core.provenance import build_report
     rep = build_report([("Saturation", (0.5, 0.0))], {}, app_version="x",
                        date=datetime.date(2026, 10, 16), settings=Settings())
-    assert "free star split" not in rep, rep
+    assert "## Engines" not in rep, rep
     rep = build_report([("Saturation", (0.5, 0.3))], {}, app_version="x",
                        date=datetime.date(2026, 10, 16), settings=Settings())
-    assert "Saturation: **Nocturne (free star split)**" in rep, rep
+    # It split, and which splitter did is not recorded: said, not guessed.
+    assert "- Saturation: not recorded" in rep, rep
