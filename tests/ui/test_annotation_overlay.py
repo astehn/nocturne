@@ -131,3 +131,17 @@ def test_a_labels_box_covers_its_widest_halo_and_the_antialias_fringe(qtbot):
     reach = R.HALO_STROKES[0][0] / 2 + 1.0
     assert ink.left() - box.left() >= reach and box.right() - ink.right() >= reach
     assert ink.top() - box.top() >= reach and box.bottom() - ink.bottom() >= reach
+
+
+def test_an_lbn_point_is_one_screen_fixed_soft_dot_on_the_canvas(qtbot):
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor
+    from PySide6.QtWidgets import QGraphicsItem
+    from nocturne.ui import annotation_render as R
+    g = build_annotation_group([Marker(50, 60, "point", "#80eef1f6", "point")], (600, 800))
+    (dot,) = g.childItems()
+    assert dot.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+    assert dot.pos().x() == 50 and dot.pos().y() == 60
+    assert dot.rect().width() == pytest.approx(2 * R.POINT_RADIUS)
+    assert dot.brush().color() == QColor("#80eef1f6")
+    assert dot.pen().style() == Qt.PenStyle.NoPen

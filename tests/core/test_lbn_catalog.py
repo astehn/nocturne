@@ -203,16 +203,74 @@ def test_an_lbn_label_never_takes_the_spot_of_another_catalogues():
     assert (both["LDN 931"].x, both["LDN 931"].y) == (alone.x, alone.y)
 
 
-def test_ngc7000_at_all_keeps_every_label_it_had_before_lbn():
+@pytest.mark.parametrize("ra, dec", [(314.7, 44.3), (300.9, 45.81), (38.2, 61.45)])
+def test_lbn_moves_no_other_label_at_all(ra, dec):
+    """Review 2026-10-16: placed with the object labels, LBN took named stars'
+    spots (57 Cyg moved ~195 px; 30 Cyg vanished at 300.9/+45.81). Every
+    non-LBN label must sit exactly where it sat without LBN."""
     from nocturne.core.annotation_layout import build_layout_for as layout
     from nocturne.core.catalog import named_stars_in_field
-    shape, wcs = (2160, 3840), _field(314.7, 44.3)
+    shape, wcs = (2160, 3840), _field(ra, dec)
     objs = objects_in_field(wcs, shape)
+    assert any(o.name.startswith("LBN") for o in objs)
     before = [o for o in objs if not o.name.startswith("LBN")]
 
-    def texts(o):
+    def placed(o):
         prims = layout(o, named_stars_in_field(wcs, shape), wcs, shape, 3.75,
                        {"objects": True, "stars": True, "grid": True, "compass": True,
                         "scale": True}, "all", ui_scale=1.8)
-        return {p.text for p in prims if isinstance(p, Label) and not p.text.startswith("LBN")}
-    assert texts(before) - texts(objs) == set()
+        return {(p.text, round(p.x, 3), round(p.y, 3)) for p in prims
+                if isinstance(p, Label) and not p.text.startswith("LBN")}
+    assert placed(before) == placed(objs)
+
+
+def test_an_lbn_whose_centre_is_off_frame_is_not_drawn():
+    """LBN 384 floated on NGC 7000's left edge, a label for a point outside
+    the picture. The list still names it; the overlay does not."""
+    from nocturne.core.annotation_layout import Marker
+    inside, outside = _lay("LBN 437", 30.0, 800.0, 500.0), _lay("LBN 438", 60.0, -40.0, 500.0)
+    outside = outside.__class__(**{**outside.__dict__, "x": 8.0, "centered": False})
+    prims = _layout([inside, outside])
+    assert {p.text for p in prims if isinstance(p, Label)} == {"LBN 437"}
+    assert [(m.x, m.y) for m in prims if isinstance(m, Marker)] == [(800.0, 500.0)]
+
+
+def test_a_crowded_lbn_point_reaches_past_its_first_eight_spots():
+    """A bare point has 8 spots at the gap; a named star on the same point
+    takes all of them with its reticle, and the label must step outward."""
+    from nocturne.core.catalog import NamedStar
+    star = NamedStar("Test Star", 0.0, 0.0, 5.0, 800.0, 500.0)
+    prims = build_layout_for([_lay("LBN 437", 30.0, 800.0, 500.0)], [star], None, (1000, 1600),
+                             3.75, {"objects": True, "stars": True}, "all", measure=_measure)
+    assert "LBN 437" in {p.text for p in prims if isinstance(p, Label)}
+
+
+def test_a_labelled_lbn_gets_a_soft_point_and_nothing_else_does():
+    from nocturne.core.annotation_layout import LBN_POINT_COLOUR, Marker
+    lbn, ldn = _lay("LBN 437", 60.0, 500.0, 500.0), _lay("LDN 1234", 0.0, 1100.0, 500.0)
+    marks = [m for m in _layout([lbn, ldn]) if isinstance(m, Marker)]
+    assert marks == [Marker(500.0, 500.0, "point", LBN_POINT_COLOUR, "point")]
+    assert int(LBN_POINT_COLOUR[1:3], 16) <= 140            # translucent: "about here"
+    assert not [m for m in _layout([lbn, ldn], density="balanced") if isinstance(m, Marker)]
+
+
+def test_an_lbn_without_room_for_its_label_gets_no_point():
+    from nocturne.core.annotation_layout import Marker
+    tiny = (40, 60)                               # no label fits this frame at all
+    prims = _layout([_lay("LBN 437", 30.0, 30.0, 20.0)], shape=tiny)
+    assert not [p for p in prims if isinstance(p, (Label, Marker))]
+
+
+def test_the_lbn_point_blocks_no_label():
+    """The point is drawn under labels, never reserved: a label placed on it
+    is where it would be without it."""
+    from nocturne.core.annotation_layout import Marker
+    ngc = _lay("NGC 1", 0.0, 500.0, 500.0)
+    alone = next(p for p in _layout([ngc]) if isinstance(p, Label))
+    pt = (alone.x + 10.0, alone.y + 7.0)                  # inside NGC 1's own label box
+    prims = _layout([ngc, _lay("LBN 437", 30.0, *pt)])
+    lab = next(p for p in prims if isinstance(p, Label) and p.text == "NGC 1")
+    assert (lab.x, lab.y) == (alone.x, alone.y)
+    assert any(isinstance(m, Marker) and (m.x, m.y) == pt for m in prims)
+    kinds = [type(p).__name__ for p in prims]
+    assert kinds.index("Marker") < kinds.index("Label")     # painted under the text

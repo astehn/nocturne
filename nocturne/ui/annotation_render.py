@@ -62,6 +62,7 @@ RING_WIDTH = 1.1
 RING_HALO_WIDTH = 2.6
 RING_HALO_ALPHA = 60
 RETICLE_WIDTH = 1.4
+POINT_RADIUS = 2.5        # an LBN's soft "about here" dot, reference px
 LEADER_WIDTH = 1.4
 GRID_WIDTH = 1.2
 
@@ -235,6 +236,12 @@ def _paint_circle(painter: QPainter, p: Circle, scale: float) -> None:
 
 
 def _paint_marker(painter: QPainter, p: Marker, scale: float) -> None:
+    if p.kind == "point":
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(p.colour))
+        painter.drawEllipse(QPointF(p.x, p.y), POINT_RADIUS * scale, POINT_RADIUS * scale)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        return
     painter.setPen(line_pen(p.colour, RETICLE_WIDTH * scale))
     for (x1, y1), (x2, y2) in reticle_spans(p, scale):
         painter.drawLine(QPointF(p.x + x1, p.y + y1), QPointF(p.x + x2, p.y + y2))

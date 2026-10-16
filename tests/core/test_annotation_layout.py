@@ -944,6 +944,7 @@ def test_real_frames_keep_every_object_label(ra, dec, ui):
     prims = build_layout_for(objs, [], wcs, shape, 3.75, _layers(objects=True), "all", ui_scale=ui)
     got = {p.text for p in prims if isinstance(p, Label)}
     kept, _ = filter_by_density(objs, [], 3.75, "all")
+    kept = [o for o in kept if o.centered or not o.name.startswith("LBN")]  # LBN: in-frame only
     want = {" · ".join(dict.fromkeys(designation(g) for g in grp))
             for _, grp in merge_aliases(kept, 3.75)}
     assert len(want) >= 15 and want - got == set()

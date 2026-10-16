@@ -17,6 +17,11 @@ _MAX_CIRCLE_FRAMES = 0.75    # drop rings larger than this * the frame diagonal
 MAJOR_COLOUR = "#f4877c"     # soft salmon: Messier, NGC, IC, anything with a common name
 MINOR_COLOUR = "#eef1f6"     # white: LDN, Barnard, Sh2, vdB, LBN
 STAR_COLOUR = "#ffd447"      # yellow: named stars
+# An LBN's "about here": a soft white dot at half alpha, not a ring, not a
+# reticle, so it reads as approximate (B1950 whole-minute positions, median 6'
+# off). His call 2026-10-16, after the ringless render had labels pointing at
+# nothing. Never reserved as an obstacle.
+LBN_POINT_COLOUR = "#80eef1f6"
 GRID_LINE_COLOUR = "#80ebf0f8"   # white at 128/255 = 50%: 27% was lost on every real field
 GRID_TEXT_COLOUR = "#e6e6ebf2"
 FURNITURE_TEXT_COLOUR = "#dceef1f6"
@@ -60,7 +65,7 @@ class Circle(NamedTuple):
 class Marker(NamedTuple):
     x: float
     y: float
-    kind: str            # "star" (gapped crosshair, see STAR_RETICLE)
+    kind: str            # "star" (gapped crosshair, see STAR_RETICLE) | "point" (LBN dot)
     colour: str
     size: str = "star"   # "star" | "star_bright": a key of STAR_RETICLE
 
@@ -715,8 +720,19 @@ def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density,
         e = _star_reach(s, u)
         occupied.append((s.x - e, s.y - e, s.x + e, s.y + e))
 
+    points_at = len(prims)    # LBN points go here: under every label, decided at the end
     prims.extend(grid_labels)
-    prims.extend(_object_labels(groups, shape, pixscale, measure, u, occupied, rings))
+    prims.extend(_object_labels([g for g in groups if not _ringless(g[0])], shape, pixscale,
+                                measure, u, occupied, rings))
     prims.extend(_star_labels(kept_stars, shape, measure, u, occupied, rings))
+    # LBN last of all, after the star names (review 2026-10-16: placed with the
+    # objects, they took 57 Cyg's spot and dropped 30 Cyg). Only those whose
+    # point is in the frame: an off-frame LBN would be a label for nothing.
+    bare = [g for g in groups if _ringless(g[0]) and 0 <= g[0].cx < w and 0 <= g[0].cy < h]
+    bare_labels = _object_labels(bare, shape, pixscale, measure, u, occupied, rings)
+    shown = {lab.text for lab in bare_labels}
+    prims[points_at:points_at] = [Marker(o.cx, o.cy, "point", LBN_POINT_COLOUR, "point")
+                                  for o, _ in bare if designation(o) in shown]
+    prims.extend(bare_labels)
     prims.extend(furniture)
     return prims

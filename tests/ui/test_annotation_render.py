@@ -280,6 +280,7 @@ def test_canvas_and_export_draw_the_same_pixels_at_the_reference_scale(qtbot):
     assert R.scale_for(shape) == 1.0
     prims = [Circle(300, 300, 80, "#c8f4877c", False, "major"),
              Marker(700, 300, "star", "#ebffd447"),
+             Marker(900, 900, "point", "#80eef1f6", "point"),
              Leader(100, 1100, 400, 1100, "#d2eef1f6"),
              GridLine([(0.0, 600.0), (1200.0, 650.0)], "#46ebf0f8"),
              Label("IC 1805", 250, 400, "#f4877c", "major", sub="Heart Nebula",
@@ -336,3 +337,19 @@ def test_font_falls_back_through_sans_faces_not_the_system_serif():
     f = R._font("minor")
     assert f.families()[:4] == ["Helvetica Neue", "Segoe UI", "Arial", "DejaVu Sans"]
     assert f.styleHint() == QFont.StyleHint.SansSerif
+
+
+def test_an_lbn_point_is_a_small_soft_dot_in_the_export():
+    """Not a reticle (no gap, no arms): a filled dot of POINT_RADIUS ref px."""
+    import numpy as np
+    img = QImage(400, 300, QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(0xff000000)
+    shape = (1200, 1200)                                     # scale 1
+    paint_annotations(img, [Marker(200, 150, "point", "#80eef1f6", "point")], shape)
+    a = np.frombuffer(img.constBits(), np.uint8).reshape(300, 400, 4)[..., :3].astype(int)
+    lit = np.argwhere(a.max(axis=2) > 8)
+    assert len(lit), "nothing painted"
+    r = np.hypot(lit[:, 0] - 150, lit[:, 1] - 200).max()
+    assert r <= R.POINT_RADIUS + 1.0                          # a dot, no arms reaching out
+    assert a[150, 200].max() > 60                             # filled at its centre: no gap
+    assert a[150, 200].max() < 200                            # and soft, not full white

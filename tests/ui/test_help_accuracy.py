@@ -2817,10 +2817,11 @@ def test_plate_solve_help_two_tiers_are_the_ones_the_overlay_draws():
 
 
 def test_plate_solve_help_lbn_is_ringless_and_only_at_all():
-    from nocturne.core.annotation_layout import Circle, Label, build_layout_for
+    from nocturne.core.annotation_layout import Circle, Label, Marker, build_layout_for
     b = _plain(_body("plate-solve"))
     assert "LBN bright nebulae appear only when Density is All" in b
-    assert "a label with no ring" in b and "positions date from 1965 and are approximate" in b
+    assert "a label by a faint dot, with no ring" in b
+    assert "positions date from 1965 and are approximate" in b
     lbn = _solve_obj("LBN 437", 1500, 1500, arcmin=60.0)
 
     def lay(density):
@@ -2832,6 +2833,7 @@ def test_plate_solve_help_lbn_is_ringless_and_only_at_all():
     prims = lay("all")
     assert [p.text for p in prims if isinstance(p, Label)] == ["LBN 437"]
     assert not [p for p in prims if isinstance(p, Circle)]
+    assert [(m.x, m.y, m.kind) for m in prims if isinstance(m, Marker)] == [(1500, 1500, "point")]
 
 
 def test_plate_solve_help_merged_duplicates_read_as_the_overlay_writes_them():

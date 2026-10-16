@@ -19,8 +19,8 @@ from __future__ import annotations
 
 import html
 
-from PySide6.QtCore import QRectF
-from PySide6.QtGui import QFontMetricsF, QPainter, QPainterPath, QPen
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QColor, QFontMetricsF, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QToolTip, QGraphicsEllipseItem, QGraphicsItem, QGraphicsItemGroup,
                                QGraphicsLineItem, QGraphicsPathItem)
 
@@ -142,6 +142,17 @@ def _circle_items(p: Circle) -> list:
     return items
 
 
+def _point_items(p: Marker) -> list:
+    # Screen-fixed like the reticle; the same radius and fill the export paints.
+    r = R.POINT_RADIUS
+    dot = _Ellipse(-r, -r, 2 * r, 2 * r)
+    dot.setPos(p.x, p.y)
+    dot.setPen(QPen(Qt.PenStyle.NoPen))
+    dot.setBrush(QColor(p.colour))
+    dot.setFlag(_IGNORE, True)
+    return [dot]
+
+
 def _reticle_items(p: Marker) -> list:
     arms = []
     for (x1, y1), (x2, y2) in R.reticle_spans(p, 1.0):
@@ -189,7 +200,7 @@ def build_annotation_group(primitives, shape) -> QGraphicsItemGroup:
         if isinstance(p, Circle):
             items = _circle_items(p)
         elif isinstance(p, Marker):
-            items = _reticle_items(p)
+            items = _point_items(p) if p.kind == "point" else _reticle_items(p)
         elif isinstance(p, Label):
             items = [LabelItem(p)]
         elif isinstance(p, Leader):
