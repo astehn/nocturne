@@ -7060,3 +7060,38 @@ def test_restore_leaves_a_saved_target_alone_when_nothing_was_corrected(qtbot, t
     win._restore_solve_state(d)
     meta = win.project.meta_at(win.project.position)
     assert {k: meta[k] for k in saved} == saved
+
+
+def test_restore_never_touches_the_target_the_users_file_named(qtbot, tmp_path):
+    """The recompute writes only the solve's own target fields; the OBJECT header's
+    `target` is the user's record and stays exactly as it was."""
+    win = _window_solved_with(qtbot, tmp_path, list(_flame_pair()))
+    d = win._solve_state_dict()
+    win.project.set_current_metadata("target", "Horsehead")
+    for k, v in (("target_solved", "IC 434 · Flame Nebula"), ("target_designation", "IC 434"),
+                 ("target_common", "Flame Nebula")):
+        win.project.set_current_metadata(k, v)
+    win._restore_solve_state(d)
+    assert win.project.meta_at(win.project.position)["target"] == "Horsehead"
+
+
+def test_a_failing_target_refresh_keeps_the_restored_solve(qtbot, tmp_path, monkeypatch):
+    """A stale target name is cosmetic; it must not cost a valid restored solve."""
+    win = _window_solved_with(qtbot, tmp_path, list(_flame_pair()))
+    d = win._solve_state_dict()
+
+    def boom(objs):
+        raise RuntimeError("refresh failed")
+    monkeypatch.setattr(win, "_refresh_corrected_target", boom)
+    win._restore_solve_state(d)
+    assert win._solve is not None and win._solve_freshness == "cached"
+
+
+def test_an_off_frame_lbn_is_still_in_the_objects_list(qtbot, tmp_path):
+    """The overlay leaves out an LBN whose centre is outside the picture; the
+    Objects-in-field list still names it."""
+    from nocturne.core.catalog import CatalogObject
+    off = CatalogObject("LBN 384", "", 39.0, 62.5, 60.0, -500.0, 10.0, False, 0.0, 10.0, obj_type="Neb")
+    win = _window_solved_with(qtbot, tmp_path, [_ic1805(), off])
+    win._refresh_object_list(win._solve[1], win._solve[2])
+    assert win.image_view.object_panel.count() >= 2

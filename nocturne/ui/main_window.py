@@ -4270,10 +4270,14 @@ class MainWindow(QMainWindow):
             objs = [_restored_object(o, res.wcs) for o in (d.get("objects") or [])]
             self._solve = (self._solve_sig(), res, objs)
             self._solve_freshness = "cached"   # a restored solution, not a fresh solve
-            self._refresh_corrected_target(objs)
         except Exception:
             self._solve = None   # degrade to "re-solve to re-annotate" — never raise
             self._solve_freshness = None
+            return
+        try:
+            self._refresh_corrected_target(objs)
+        except Exception:
+            pass   # a stale target name is cosmetic; it must not cost a valid restored solve
 
     def _refresh_corrected_target(self, objs) -> None:
         """A saved target naming an object whose catalogue name was since
