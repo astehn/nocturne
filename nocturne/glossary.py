@@ -48,7 +48,7 @@ TERMS: tuple[Term, ...] = (
     _T("Alt-az and equatorial mounts",
        "An alt-az mount moves up and down and side to side, like a camera tripod head, "
        "and a Seestar is one. As it follows a target the field slowly turns from frame "
-       "to frame, which Stack corrects, and which leaves the ragged edges on a master. "
+       "to frame, which Stack corrects, and which can leave ragged edges on a master. "
        "An equatorial mount (or a Seestar on a wedge) tilts its axis to match the "
        "Earth's, so the field does not turn.",
        "stacking", ("alt-az", "equatorial mount", "field rotation")),
@@ -66,7 +66,7 @@ TERMS: tuple[Term, ...] = (
        "green for every red and every blue, so each pixel sees only one colour. "
        "Debayering fills in the two missing colours at each pixel from its neighbours, "
        "and Nocturne's Stack debayers every sub as it reads it.",
-       "dualband", ("debayering", "debayer", "demosaicing")),
+       "stacking", ("debayering", "debayer", "demosaicing")),
     _T("Black point",
        "The level at and below which everything shows as pure black. Raising it darkens "
        "the sky background; raise it too far and faint detail is crushed to black for "
@@ -86,9 +86,10 @@ TERMS: tuple[Term, ...] = (
     _T("Calibration frames",
        "Extra frames that record the camera's own faults so they can be taken out of the "
        "subs: darks (sensor glow and hot pixels), flats (dust shadows and dim corners) "
-       "and bias (the sensor's read-out offset). Nocturne's Stack does not apply them: "
-       "it combines the subs exactly as the Seestar saved them. If you shoot calibration "
-       "frames, stack in a program that uses them, such as Siril, and open the master here.",
+       "and bias (the sensor's read-out offset). A Seestar takes its own darks and "
+       "subtracts them from every sub before saving it, so its subs need no more dark "
+       "calibration. Nocturne's Stack applies no calibration of its own: it combines the "
+       "subs exactly as the Seestar saved them.",
        "stacking", ("darks", "flats", "bias", "dark frames", "flat frames")),
     _T("Clipping",
        "Detail lost by pushing values past either end of the range: crushed means pushed "
@@ -110,7 +111,8 @@ TERMS: tuple[Term, ...] = (
        "Undoing some of the blur the optics and the air add, to tighten stars and "
        "sharpen fine detail. It belongs on linear data, and too much puts dark rings "
        "round bright stars. Nocturne uses BlurXTerminator if you have RC-Astro, "
-       "otherwise a free built-in fallback.",
+       "otherwise a free built-in sharpening fallback, which is gentler and is not "
+       "true deconvolution.",
        "deconvolution"),
     _T("Degree",
        "Angles on the sky are measured like any other angle: 360 degrees (°) all the way "
@@ -126,7 +128,8 @@ TERMS: tuple[Term, ...] = (
     _T("Field of view",
        "How much sky one frame takes in, as a width and a height in degrees. It is set by "
        "the focal length and the size of the sensor: a Seestar S30 Pro covers about "
-       "4° × 2.2°, an S50 about 1.3° × 0.7°.",
+       "4° × 2.2° (about 4.6° corner to corner, the figure ZWO quotes), an S50 Pro about "
+       "2.5° × 1.4°, an S50 about 1.3° × 0.7°.",
        "plate-solve", ("FOV",)),
     _T("FITS",
        "The standard file format of astronomy, and the one the Seestar saves. Alongside "
@@ -144,9 +147,10 @@ TERMS: tuple[Term, ...] = (
        "are sky background, so most of the graph is one tall peak towards the left.",
        "levels"),
     _T("HOO",
-       "A two-gas palette: Hα in red, OIII in both green and blue, so hydrogen glows red "
-       "and oxygen teal. It suits dual-band data, and is one of the palettes in "
-       "Nocturne's Narrowband tool.",
+       "A two-gas palette: Hα in red and OIII in blue, with green made from the two "
+       "(classic HOO puts OIII in both green and blue). Hydrogen glows red and oxygen "
+       "teal. It suits dual-band data, and is one of the palettes in Nocturne's "
+       "Narrowband tool.",
        "narrowband"),
     _T("Hα",
        "Deep red light from hydrogen, at 656 nm, and the brightest glow of most emission "
@@ -161,12 +165,13 @@ TERMS: tuple[Term, ...] = (
     _T("Linear and stretched",
        "Linear data still holds values in proportion to the light that arrived, so "
        "straight out of stacking it looks almost black. Stretched data has had its faint "
-       "values brightened so the eye can see them. Background extraction and "
-       "deconvolution belong on linear data, tone and colour finishing on stretched.",
+       "values brightened so the eye can see them. Background extraction, colour "
+       "calibration and deconvolution belong on linear data; tone, saturation and "
+       "finishing on stretched.",
        "linear-vs-stretched", ("linear", "stretched", "linear data", "non-linear")),
     _T("Magnitude",
        "How bright a star looks, on a scale that runs backwards: a smaller number is "
-       "brighter, and each step of 1 is about 2.5 times fainter. On a dark night the eye "
+       "brighter, and each whole number higher is about 2.5 times fainter. On a dark night the eye "
        "reaches about magnitude 6. Plate Solve lists the named stars in a picture with "
        "their magnitudes.",
        "plate-solve", ("mag",)),
@@ -195,7 +200,8 @@ TERMS: tuple[Term, ...] = (
        None, ("OSC", "mono", "one-shot colour", "monochrome")),
     _T("Pixel scale",
        "How much sky one pixel covers, in arcseconds. It follows from the pixel size and "
-       "the focal length: a Seestar S30 Pro pixel covers about 3.7″, an S50 pixel about 2.4″.",
+       "the focal length: a Seestar S30 Pro pixel covers about 3.7″, an S50 Pro pixel "
+       "about 2.3″, an S50 pixel about 2.4″.",
        "stacking", ("image scale",)),
     _T("Plate solving",
        "Working out exactly where in the sky a picture points, by matching its pattern of "
@@ -218,8 +224,8 @@ TERMS: tuple[Term, ...] = (
        "plate-solve", ("RA",)),
     _T("SHO",
        "The Hubble palette: SII in red, Hα in green and OIII in blue. Real SHO needs a "
-       "sulfur filter, so Nocturne does not offer it. SHO-style (gold and blue) in the "
-       "Narrowband tool borrows only the look, made from Hα and OIII.",
+       "sulfur filter, so Nocturne does not offer it. SHO-style (gold and blue) and "
+       "Pseudo-SHO in the Narrowband tool borrow only the look, made from Hα and OIII.",
        "dualband", ("Hubble palette",)),
     _T("Sigma clipping",
        "A way of combining frames that, pixel by pixel, throws out values that disagree "
@@ -234,13 +240,15 @@ TERMS: tuple[Term, ...] = (
        "Deep red light from sulfur, at 672 nm, and the third gas of the Hubble palette. A "
        "Seestar has no filter for it, so it cannot be captured, and Nocturne never invents it.",
        "dualband", ("S II", "sulfur")),
-    _T("SPCC",
-       "Spectrophotometric colour calibration: setting the colour balance from the stars "
-       "themselves. Nocturne plate-solves the picture, looks up each star's measured colour "
-       "in the Gaia catalogue, and balances red, green and blue so the stars match. On "
-       "dual-band data it steps aside, because star colours there no longer follow the "
-       "catalogue.",
-       "color", ("photometric colour calibration", "photometric")),
+    _T("SPCC (photometric colour calibration)",
+       "Setting the colour balance from the stars themselves. Nocturne plate-solves the "
+       "picture, looks up each star's colour in the Gaia catalogue, and balances red, "
+       "green and blue so the stars match; it is a simpler cousin of the full "
+       "spectrophotometric method (SPCC) in programs such as PixInsight. When the file "
+       "says it was shot through the LP filter it steps aside, because star colours "
+       "there no longer follow the catalogue.",
+       "color", ("SPCC", "photometric colour calibration",
+                 "spectrophotometric colour calibration", "photometric")),
     _T("Stacking",
        "Aligning many subs and combining them into one master, so the random noise "
        "averages away while the real signal builds up. Nocturne's Stack grades the "
@@ -264,7 +272,7 @@ TERMS: tuple[Term, ...] = (
        "stacking", ("subs", "sub-frame", "subframe", "sub-exposure", "light frame", "lights")),
     _T("TIFF",
        "A common picture file that, at 16 bits, holds 65,536 levels per colour instead of "
-       "the 256 of a PNG or JPEG. The extra levels keep smooth sky gradients free of "
+       "the 256 of an 8-bit PNG or a JPEG. The extra levels keep smooth sky gradients free of "
        "banding when you edit further. Nocturne exports 16-bit TIFF and opens it too.",
        "export", ("16-bit TIFF", "TIF")),
     _T("White point",

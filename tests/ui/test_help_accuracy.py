@@ -451,8 +451,13 @@ def test_the_export_help_explains_the_colour_space_control():
     that a user will otherwise assume the opposite of."""
     b = _body("export")
     sp = _src("nocturne/ui/step_panels.py")
-    for label in ("sRGB", "Display P3", "Adobe RGB"):
+    from nocturne.core.colour import SPACES
+    from nocturne.ui.step_panels import _SPACE_LABELS
+    for label in ("sRGB", "Display P3", "Adobe RGB", "ProPhoto"):
         assert label in b, f"the help never mentions {label!r}"
+    for space in SPACES:                # every button Export shows, by its short label
+        short = _SPACE_LABELS.get(space, space)
+        assert f"<b>{short}</b>" in b, f"the help does not name the {short} button"
     assert "Colour space" in sp, "the panel no longer has the control"
     assert "does <i>not</i> add colour" in b or "not</i> add colour" in b, (
         "the help must say plainly that a wider space adds no colour")
@@ -2993,15 +2998,18 @@ def test_glossary_link_helper_refuses_an_unknown_term():
 
 
 def test_glossary_is_right_that_stack_takes_no_calibration_frames(qtbot):
-    """'Nocturne expects calibrated lights': nothing in Stack takes a dark, a
-    flat or a bias, so the glossary must not suggest otherwise."""
+    """The Seestar subtracts its own darks before saving a sub (not testable
+    here); what IS ours is that Stack applies no calibration of its own: nothing
+    in it takes a dark, a flat or a bias."""
     import dataclasses
     from PySide6.QtWidgets import QAbstractButton, QLabel
     from nocturne.settings import Settings
     from nocturne.stacking.stacker import StackOptions
     from nocturne.ui.stack_dialog import StackDialog
     d = _defn("calibration frames")
-    assert "does not apply" in d and "darks" in d and "flats" in d and "bias" in d
+    assert "applies no calibration of its own" in d
+    assert "darks" in d and "flats" in d and "bias" in d
+    assert "Siril" not in d, "no advice to stack elsewhere: Seestar subs are already dark-calibrated"
     bad = re.compile(r"\b(darks?|flats?|bias)\b", re.I)
     for f in dataclasses.fields(StackOptions):
         assert not bad.search(f.name.replace("_", " ")), f.name
@@ -3033,12 +3041,17 @@ def test_glossary_names_exactly_the_colour_spaces_export_offers():
 
 
 def test_glossary_pixel_scale_and_field_of_view_match_the_instruments():
-    from nocturne.core.instrument import SEESTAR_S30_PRO as pro, SEESTAR_S50 as s50
+    from nocturne.core.instrument import (SEESTAR_S30_PRO as pro, SEESTAR_S50 as s50,
+                                          SEESTAR_S50_PRO as s50p)
     ps = _defn("pixel scale")
     assert f"S30 Pro pixel covers about {pro.pixel_scale_arcsec:.1f}″" in ps
+    assert f"S50 Pro pixel about {s50p.pixel_scale_arcsec:.1f}″" in ps
     assert f"S50 pixel about {s50.pixel_scale_arcsec:.1f}″" in ps
     fov = _defn("field of view")
-    for cam, txt in ((pro, "S30 Pro covers about"), (s50, "S50 about")):
+    diag = math.hypot(pro.width, pro.height) * pro.pixel_scale_arcsec / 3600
+    assert f"about {diag:.1f}° corner to corner" in fov
+    for cam, txt in ((pro, "S30 Pro covers about"), (s50p, "S50 Pro about"),
+                     (s50, "S50 about")):
         w = cam.width * cam.pixel_scale_arcsec / 3600
         hgt = cam.height * cam.pixel_scale_arcsec / 3600
         assert f"{txt} {w:.1f}° × {hgt:.1f}°".replace(".0°", "°") in fov, (cam.name, w, hgt)
@@ -3058,6 +3071,7 @@ def test_glossary_star_split_order_matches_the_code():
 def test_glossary_palettes_are_the_ones_narrowband_offers():
     from nocturne.core.narrowband import GOLD_BLUE, OFFERED_PALETTES
     assert "HOO" in OFFERED_PALETTES and "Narrowband" in _defn("HOO")
+    assert "Pseudo-SHO" in OFFERED_PALETTES and "Pseudo-SHO" in _defn("SHO")
     sho = _defn("SHO")
     assert "SHO" not in OFFERED_PALETTES and "does not offer it" in sho
     assert GOLD_BLUE in OFFERED_PALETTES and GOLD_BLUE in sho
@@ -3067,13 +3081,17 @@ def test_glossary_palettes_are_the_ones_narrowband_offers():
 def test_glossary_names_the_engines_the_steps_really_use():
     assert "gaia" in _src("nocturne/core/spcc.py").lower() and "Gaia" in _body("color")
     spcc = _defn("SPCC")
-    assert "Gaia" in spcc and "plate-solves" in spcc and "dual-band" in spcc
+    assert "Gaia" in spcc and "plate-solves" in spcc and "LP filter it steps aside" in spcc
     assert "steps aside" in _body("color")          # the dual-band claim, from the step's own help
+    # "When the file says it was shot through the LP filter": the Color step
+    # decides from the FILTER card, not from the picture.
+    assert "detect_data_type(img.metadata" in _src("nocturne/steps/color.py")
     assert "ASTAP" in _defn("plate solving")
     assert "ASTAP" in _body("plate-solve") and "ASTAP" in _body("tools")
     assert "GraXpert" in _defn("background extraction")
     assert "from ..tools.graxpert import GraXpert" in _src("nocturne/steps/background.py")
-    assert "BlurXTerminator" in _defn("deconvolution") and "fallback" in _defn("deconvolution")
+    assert "BlurXTerminator" in _defn("deconvolution")
+    assert "not true deconvolution" in _defn("deconvolution")
 
 
 def test_glossary_dual_band_matches_the_filter_detection():
@@ -3098,3 +3116,16 @@ def test_glossary_clipping_and_histogram_match_the_readout():
     assert "from Stretch onwards" in d and "per colour" in d
     assert "From Stretch onward" in _body("readout") and "per colour channel" in _body("readout")
     assert "top right" in _defn("histogram") and "histogram (top-right)" in _body("getting-started")
+
+
+def test_glossary_hoo_green_is_made_from_both_gases():
+    """'with green made from the two': Nocturne's HOO green is synthetic_green
+    (Ha and OIII blended), not OIII copied into green as classic HOO does."""
+    from nocturne.core import narrowband as nb
+    assert "green made from the two" in _defn("HOO")
+    ha, o3 = np.full(4, 0.8, np.float32), np.full(4, 0.2, np.float32)
+    _, g, b = nb._combine(ha, o3, "HOO", 0.6, scnr=False)
+    assert np.allclose(b, o3), "blue is OIII"
+    assert not np.allclose(g, o3), "green is OIII alone — the classic HOO the glossary says we do not do"
+    _, g2, _ = nb._combine(ha * 0.5, o3, "HOO", 0.6, scnr=False)
+    assert not np.allclose(g, g2), "green does not depend on Ha"

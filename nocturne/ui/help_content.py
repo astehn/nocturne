@@ -1187,7 +1187,7 @@ _TOPIC_LIST = (
        "<p><b>Colour space.</b> Every export is tagged with the space it is in, so other "
        "programs show it exactly as you see it here. <b>sRGB</b> is the default and the right "
        "answer almost always: it is the space your screen shows and the one every browser "
-       "assumes. Choose <b>P3</b> (Display P3) or <b>Adobe RGB</b> only if the program you are "
+       "assumes. Choose <b>P3</b> (Display P3), <b>Adobe RGB</b> or <b>ProPhoto</b> only if the program you are "
        "taking the file into works in that space — the picture then arrives without being "
        "converted, and later edits such as a saturation boost have more room before they "
        "clip.</p>"
