@@ -258,7 +258,7 @@ def test_graxpert_only_auto_enhance_never_runs_the_graxpert_denoise(tmp_path, mo
     before = run.results[i - 1][2]
     np.testing.assert_array_equal(run.results[i][2].data,
                                   reduce_noise(before, _TV_LEVELS["strong"]).data)
-    assert run.results[i][1] == {"engine": "free", "level": "strong"}
+    assert run.results[i][1] == {"engine": "free", "level": "strong", "ran": "free"}
     assert run.engines[i] == "free"
 
 

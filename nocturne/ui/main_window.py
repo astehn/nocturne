@@ -54,6 +54,7 @@ from ..user_presets import PresetError, PresetLibrary, presets_dir
 from ..steps.star_split import preferred_splitter
 from ..steps.factory import make_step
 from ..steps.load import load_fits
+from ..steps.noise_sharpen import strip_ran
 from ..tools.base import run_cli, ToolError
 from ..core.metrics import rms_delta
 from ..core.update_check import DOWNLOAD_URL, SUPPORT_URL, is_newer, latest_release_version
@@ -4511,7 +4512,9 @@ class MainWindow(QMainWindow):
             return None
         for entry_name, option in reversed(self.project.entries()):
             if entry_name == name:
-                return option
+                # Noise Reduction records what RAN beside what was chosen;
+                # every reader here compares with the panel, which only chooses.
+                return strip_ran(option)
         return None
 
     def _has_pending(self) -> bool:

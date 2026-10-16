@@ -42,6 +42,22 @@ _TV_LEVELS = {"light": 0.4, "medium": 0.7, "strong": 0.9}      # free TV fallbac
 
 FREE = "free"   # engine option: the built-in denoise, chosen rather than fallen back to
 
+# The option's "engine" is a PREFERENCE: an "rcastro" request runs GraXpert on a
+# machine without RC-Astro. "ran" records the engine that did, in the same
+# vocabulary, so the provenance report can say it instead of the request
+# (2026-10-16). Added beside the two keys every build reads; an older build
+# ignores it. `strip_ran` removes it wherever an option is compared with the
+# panel's or replayed as a decision (a recipe), neither of which it belongs to.
+RAN = "ran"
+_RAN_FROM_TAG = {"NoiseX": "rcastro", "GraXpert": "graxpert", "free": FREE}
+
+
+def strip_ran(option):
+    """The option as a decision: without the record of what ran."""
+    if isinstance(option, dict) and RAN in option:
+        return {k: v for k, v in option.items() if k != RAN}
+    return option
+
 
 def parse_noise_option(option) -> tuple[str | None, str]:
     """Return (engine, level). option is {"engine","level"} (engine in
@@ -84,6 +100,18 @@ class NoiseSharpenStep(Step):
 
     def default_option(self) -> str:
         return "medium"
+
+    def recorded_option(self, option):
+        """The option plus what ran, when it is the dict and the step ran."""
+        tag = getattr(self, "last_engine", None)
+        if not isinstance(option, dict) or not tag:
+            return option
+        from ..core import nr_models
+        if tag.startswith(nr_models.LOG_PREFIX):
+            ran = nr_models.PREFIX + tag[len(nr_models.LOG_PREFIX):]
+        else:
+            ran = _RAN_FROM_TAG.get(tag)
+        return {**strip_ran(option), RAN: ran} if ran else option
 
     @staticmethod
     def engine_that_will_run(option, *, has_rcastro: bool, has_graxpert: bool) -> str:

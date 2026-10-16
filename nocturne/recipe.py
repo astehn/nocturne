@@ -296,6 +296,11 @@ def recipe_from_entries(entries, *, scope: str = "recipe") -> Recipe:
         sid = _classify(name, option, scope)
         if not sid:
             continue
+        if sid == "noise_sharpen":
+            # A recipe replays the CHOICE; which engine ran on the picture it
+            # was saved from says nothing about the next one.
+            from .steps.noise_sharpen import strip_ran
+            option = strip_ran(option)
         steps.append({"stage": "enhance", "option": name} if sid == "enhance"
                      else {"stage": sid, "option": serialize_option(sid, option)})
     return Recipe(steps=steps)
