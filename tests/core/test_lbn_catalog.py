@@ -122,8 +122,8 @@ def _field(ra, dec, w=3840, h=2160, scale_deg=3.75 / 3600):
 @pytest.mark.parametrize("ra, dec, want", [
     (38.2, 61.45, "IC 1805"),
     (314.7, 44.3, "NGC 7000"),
-    (85.25, -2.45, "IC 434"),     # Horsehead field; OpenNGC's common name for it is wrong
-])                                # ("Flame Nebula") but that predates LBN and is not this test's
+    (85.25, -2.45, "B 33"),       # the Horsehead itself, once IC 434 lost the Flame's name
+])
 def test_real_fields_keep_their_target_with_lbn_in_the_catalogue(ra, dec, want):
     shape = (2160, 3840)
     objs = objects_in_field(_field(ra, dec), shape)

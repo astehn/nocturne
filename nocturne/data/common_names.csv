@@ -49,3 +49,9 @@ NGC7380,Wizard Nebula
 NGC0281,Pacman Nebula
 M45,Pleiades
 IC1396A,Elephant's Trunk Nebula
+# --- corrections: "!designation" REPLACES the catalogue's own name (blank clears it) ---
+# Only for a catalogue name that is plainly wrong, never a matter of taste.
+# OpenNGC calls IC 434 the "Flame Nebula"; the Flame is NGC 2024. IC 434 is the
+# emission behind the Horsehead and has no settled name of its own.
+!IC0434,
+NGC2024,Flame Nebula

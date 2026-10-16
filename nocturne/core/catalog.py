@@ -73,25 +73,36 @@ def _curated_names() -> dict:
 
     Only fills a BLANK common name — a name the source catalogue supplies always
     wins, so this can never override real data."""
-    out = {}
+    return {d: c for d, c in _curated_rows() if not d.startswith("!") and c}
+
+
+@lru_cache(maxsize=1)
+def _name_corrections() -> dict:
+    """Rows written "!designation": the catalogue's own name is WRONG, and this
+    replaces it — blank clears it. The one exception to "catalogue data wins":
+    OpenNGC calls IC 434 the "Flame Nebula", which is NGC 2024, and a wrong
+    common name outranks size in identify_target, so it named Horsehead
+    frames for the Flame (found 2026-10-16)."""
+    return {d[1:]: c for d, c in _curated_rows() if d.startswith("!") and len(d) > 1}
+
+
+def _curated_rows() -> list:
     if not _NAMES.exists():
-        return out
+        return []
     with open(_NAMES, newline="", encoding="utf-8") as f:
-        for r in csv.DictReader(line for line in f if not line.startswith("#")):
-            d, c = (r.get("designation") or "").replace(" ", ""), (r.get("common") or "").strip()
-            if d and c:
-                out[d] = c
-    return out
+        return [((r.get("designation") or "").replace(" ", ""), (r.get("common") or "").strip())
+                for r in csv.DictReader(line for line in f if not line.startswith("#"))]
 
 
 def load_catalog(path: str = _DATA):
-    curated = _curated_names()
+    curated, fixes = _curated_names(), _name_corrections()
     rows = []
     with open(path, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
             try:
-                common = r.get("common", "").strip() or curated.get(
-                    r["name"].replace(" ", ""), "")
+                key = r["name"].replace(" ", "")
+                common = (fixes[key] if key in fixes
+                          else r.get("common", "").strip() or curated.get(key, ""))
                 rows.append((r["name"], common, float(r["ra_deg"]),
                              float(r["dec_deg"]), float(r.get("major_arcmin") or 0.0),
                              r.get("type", ""), float(r.get("minor_arcmin") or 0.0),

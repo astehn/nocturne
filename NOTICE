@@ -4,9 +4,17 @@ https://github.com/mattiaverga/OpenNGC
 IAU Catalog of Star Names (IAU-CSN), IAU Division C Working Group on Star
 Names (WGSN). Licensed CC BY. https://www.iau.org/public/themes/naming_stars/
 
-Lynds' Catalogue of Bright Nebulae (LBN): Lynds 1965, ApJS 12, 163, via
-VizieR VII/9 (CDS). This research has made use of the VizieR catalogue access
-tool, CDS, Strasbourg, France (DOI: 10.26093/cds/vizier).
+Nebula catalogues added to the OpenNGC data, each via VizieR (CDS):
+  Sharpless HII regions (Sh2): Sharpless 1959, ApJS 4, 257, VizieR VII/20.
+  Lynds' Catalogue of Dark Nebulae (LDN): Lynds 1962, ApJS 7, 1, VizieR VII/7A.
+  Barnard's Catalogue of 349 Dark Objects in the Sky (B): Barnard 1927,
+    VizieR VII/220A.
+  van den Bergh reflection nebulae (vdB): van den Bergh 1966, AJ 71, 990,
+    VizieR VII/21.
+  Lynds' Catalogue of Bright Nebulae (LBN): Lynds 1965, ApJS 12, 163, via
+    VizieR VII/9 (CDS).
+This research has made use of the VizieR catalogue access tool, CDS,
+Strasbourg, France (DOI: 10.26093/cds/vizier).
 
 Gaia DR3 photometry queried live via CDS/VizieR (catalogue I/355). Gaia data
 (c) ESA/Gaia/DPAC, CC BY-NC 3.0 IGO. Service: https://vizier.cds.unistra.fr

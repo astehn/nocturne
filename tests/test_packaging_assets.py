@@ -86,3 +86,15 @@ def test_onnxruntime_stays_excluded():
     excludes = src[src.index("excludes=["):]
     excludes = excludes[:excludes.index("]")]
     assert '"onnxruntime"' in excludes
+
+
+def test_every_data_file_ships():
+    """nocturne/data/ is listed file by file, not swept, so a new data file has
+    to be added by hand — and common_names.csv never was: every build since it
+    appeared (v0.10.0) shipped without the Heart, the Soul, the Horsehead or any
+    other curated name, while every local test passed off the working tree."""
+    src = SPEC.read_text(encoding="utf-8")
+    listed = set(re.findall(r'"nocturne", "data", "([^"]+)"', src))
+    present = {p.name for p in (ROOT / "nocturne" / "data").iterdir()
+               if p.is_file() and not p.name.startswith(".")}
+    assert present - listed == set(), f"data files the bundle leaves out: {present - listed}"
