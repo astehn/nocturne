@@ -2164,7 +2164,12 @@ class MainWindow(QMainWindow):
             return
         from . import color_balance_dialog as _cbd
         base = self.project.current()
-        starless, stars = self._cached_split(base)
+        # Only a split the configured TOOL would make. With no tool the step
+        # (presets, recipes, batch) adjusts the whole image, so the dialog must
+        # too — a free split Saturation left in the cache would otherwise make
+        # the hand-applied result differ from a replay of the same options.
+        hit = self._cached_layers(base) if preferred_splitter(self.settings) is not None else None
+        starless, stars = (hit[0], hit[1]) if hit and hit[2] != "free" else (None, None)
         _cbd.ColorBalanceDialog(self.settings, base, parent=self,
                                 on_apply=self._apply_color_balance,
                                 starless=starless, stars=stars,
@@ -5489,9 +5494,9 @@ class MainWindow(QMainWindow):
         Narrowband said "(StarNet2)" where the hand-applied one said
         "(HOO (StarNet2))" (2026-10-14). Takes the live option or the recorded
         (serialized) one: a run records what was serialized."""
-        if stage_id == "narrowband" and engine_tag == "free":
-            # Without a splitter Narrowband renders the whole image: nothing
-            # was separated, so no engine is named (the manual line never did).
+        if stage_id in ("narrowband", "color_balance") and engine_tag == "free":
+            # Without a splitter Narrowband and Colour Balance work on the
+            # whole image: nothing was separated, so no engine is named.
             engine_tag = None
         elif stage_id == "green_fringe" and engine_tag in ("free", "mask"):
             # Without a splitter De-green Stars always works inside a star

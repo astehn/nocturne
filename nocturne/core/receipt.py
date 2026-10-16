@@ -63,7 +63,7 @@ _PREFERS: dict[str, tuple[str, str, str]] = {
 # RC-Astro was missing — written before StarNet2 existed, so a summary told
 # StarNet2 users the free split had run under log lines saying StarNet2
 # (2026-10-14). `engine_for` asks the resolver; only the last rung,
-# `_FALLBACKS`, is a fallback — and for two steps it is not a split at all.
+# `_FALLBACKS`, is a fallback — and for three steps it is not a split at all.
 SPLIT_STAGES = frozenset({"star_reduction", "saturation", "green_fringe",
                           "narrowband", "color_balance", "starless_levels"})
 _FREE_SPLIT = "Nocturne (free star split)"
@@ -73,12 +73,13 @@ _FALLBACKS: dict[str, str] = {
     "noise_sharpen": "Nocturne (built-in denoise)",
     "star_reduction": _FREE_SPLIT,
     "saturation": _FREE_SPLIT,
-    "color_balance": _FREE_SPLIT,
     "starless_levels": _FREE_SPLIT,
     # GreenFringeStep without a splitter de-greens inside a star mask, and
-    # NarrowbandStep renders the whole image: neither separates anything.
+    # NarrowbandStep and ColorBalanceStep work on the whole image: none of
+    # them separates anything.
     "green_fringe": "Nocturne (star mask)",
     "narrowband": "Nocturne (whole image, no split)",
+    "color_balance": "Nocturne (whole image, no split)",
 }
 
 # Steps with NO fallback: without the tool they cannot run at all, and the app
