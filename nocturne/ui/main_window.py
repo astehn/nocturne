@@ -6253,6 +6253,14 @@ class MainWindow(QMainWindow):
                     f"Auto stopped at {_floor_black(cached.black) / BLACK_STEPS:.3f} so no "
                     "colour is crushed past the warning limit. Drag Black point "
                     "right to go darker on purpose.")
+            if not stopped and not note.isHidden():
+                # Once shown, the note keeps its space when it goes: the user is
+                # usually mid-gesture on a slider below it (drag, wheel, double-click),
+                # and the sliders jumping up slid the handle out from under the
+                # pointer (his find, 2026-10-16). The gap goes with the next panel.
+                policy = note.sizePolicy()
+                policy.setRetainSizeWhenHidden(True)
+                note.setSizePolicy(policy)
             note.setVisible(stopped)
 
     def _levels_auto_black(self):
