@@ -9,6 +9,14 @@ from ..tools.rcastro import RCAstro
 _AMOUNT = {"light": 0.3, "medium": 0.6, "strong": 0.9}
 
 
+def parse_star_reduction_option(option) -> float:
+    """The amount: a number, a legacy recipe word, or unset (0, no change).
+    Shared with core/receipt, which must know when 0 means nothing splits."""
+    if isinstance(option, str) and option in _AMOUNT:
+        return _AMOUNT[option]                 # legacy recipe (light/medium/strong)
+    return float(option) if option not in (None, "") else 0.0
+
+
 class StarReductionStep(Step):
     name = "Star Reduction"
 
@@ -24,10 +32,7 @@ class StarReductionStep(Step):
 
     def apply(self, img: AstroImage, option) -> AstroImage:
         from .star_split import resolve_star_split, splitter_name
-        if isinstance(option, str) and option in _AMOUNT:
-            amount = _AMOUNT[option]           # legacy recipe (light/medium/strong)
-        else:
-            amount = float(option) if option not in (None, "") else 0.0
+        amount = parse_star_reduction_option(option)
         if amount == 0.0:
             # "No change", exactly, and BEFORE any separator runs: recombining
             # a split is not an identity (2.98e-8 off), and the split may launch

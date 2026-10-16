@@ -155,15 +155,50 @@ def _split_note(stage_id: str, settings) -> EngineNote:
     return EngineNote(name, _FALLBACKS[stage_id], _NOT_CONFIGURED[needs])
 
 
-def engine_for(stage_id: str, settings, engine: str | None = None) -> EngineNote | None:
+_NO_OPTION = object()
+
+
+def splits_stars(stage_id: str, option) -> bool:
+    """Does this star stage, with this option, separate stars at all?
+
+    Two of them skip the split for one option, and BEFORE any splitter runs:
+    Saturation with no nebula boost (SaturationStep: `if nebula > 0.0`) and
+    Star Reduction at 0 (StarReductionStep returns a copy). The rest split
+    whatever the option — De-green Stars even when off. Asked through the
+    steps' own parsers, so the rule cannot drift from what apply() does. An
+    option the parser cannot read is the step's problem; the receipt then
+    answers as it always did.
+    """
+    if stage_id not in SPLIT_STAGES:
+        return False
+    try:
+        if stage_id == "saturation":
+            from ..steps.saturation_step import parse_saturation_option
+            return parse_saturation_option(option)[1] > 0.0
+        if stage_id == "star_reduction":
+            from ..steps.star_reduction import parse_star_reduction_option
+            return parse_star_reduction_option(option) != 0.0
+    except (TypeError, ValueError):
+        return True
+    return True
+
+
+def engine_for(stage_id: str, settings, engine: str | None = None, *,
+               option=_NO_OPTION) -> EngineNote | None:
     """What `make_step` will use for this stage, or None if it has no choice.
 
     None is the honest answer for a step with one implementation — Stretch does
     not have an engine, and inventing "Nocturne (built-in)" for it would pad the
-    receipt with rows that carry no decision.
+    receipt with rows that carry no decision. It is also the answer for a star
+    step whose `option` splits nothing (Saturation at nebula 0, Star Reduction
+    at 0): the run summary named a splitter, and a fallback, for those
+    (2026-10-15). Without `option` the answer is the settings' alone, as before.
     """
     prefers = _PREFERS.get(stage_id)
     if prefers is None:
+        return None
+    if (option is not _NO_OPTION and stage_id in SPLIT_STAGES
+            and not splits_stars(stage_id, option)):
         return None
     if stage_id == "noise_sharpen":
         return _noise_note(settings, engine)
@@ -177,21 +212,26 @@ def engine_for(stage_id: str, settings, engine: str | None = None) -> EngineNote
     return EngineNote(name, _FALLBACKS.get(stage_id, BUILT_IN), _NOT_CONFIGURED[needs])
 
 
-def notes_for(step_names, settings, engines: dict | None = None) -> list[EngineNote]:
+def notes_for(step_names, settings, engines: dict | None = None,
+              options=None) -> list[EngineNote]:
     """Engine notes for the steps actually applied, in order, without repeats.
 
     Takes the NAMES from a history rather than stage ids, because that is what
     a project stores and what the provenance report already walks. `engines`
-    maps a step name to the engine its RECORDED option asked for.
+    maps a step name to the engine its RECORDED option asked for. `options`,
+    when given, runs alongside `step_names`: an entry whose option split
+    nothing contributes no note (see `engine_for`).
     """
     by_name = {name: sid for sid, (name, _e, _n) in _PREFERS.items()}
     out: list[EngineNote] = []
     seen: set[str] = set()
-    for name in step_names:
+    opts = list(options) if options is not None else None
+    for i, name in enumerate(step_names):
         sid = by_name.get(name)
         if sid is None or name in seen:
             continue
-        note = engine_for(sid, settings, (engines or {}).get(name))
+        kw = {} if opts is None else {"option": opts[i]}
+        note = engine_for(sid, settings, (engines or {}).get(name), **kw)
         if note is not None:
             seen.add(name)
             out.append(note)

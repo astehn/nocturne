@@ -603,7 +603,12 @@ _SPLIT_STAGES, _SPLIT_TAPS = _split_sets()
 
 
 def _uses_star_split(stage_id: str, option) -> bool:
-    return stage_id in _SPLIT_STAGES or (stage_id == "enhance" and option in _SPLIT_TAPS)
+    if stage_id in _SPLIT_STAGES:
+        # Saturation at nebula 0 and Star Reduction at 0 split nothing, so a
+        # better splitter would change nothing either.
+        from ..core.receipt import splits_stars
+        return splits_stars(stage_id, option)
+    return stage_id == "enhance" and option in _SPLIT_TAPS
 
 
 def _and_join(words: list[str]) -> str:
