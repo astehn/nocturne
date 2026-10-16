@@ -40,6 +40,7 @@ site/config.php
 /tests/test_planner_page.py
 /tests/test_planner_targets.py
 /tests/test_site_a11y.py
+/tests/test_site_analytics.py
 /tests/test_site_php_tests.py
 /tests/test_site_js_tests.py
 /tests/test_support_page.py
