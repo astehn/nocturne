@@ -231,7 +231,7 @@ def test_the_preset_summary_reports_the_built_in_split_as_a_fallback(qtbot, tmp_
     _choose(win, p); _box(win); win._apply_crop()
     out = win.output_panel.toPlainText()
     assert ("Star Reduction and Starless Levels used Nocturne (free star split): "
-            "RC-Astro is not configured in Settings.") in out, out
+            "no star tool set up (StarXTerminator or StarNet2).") in out, out
 
 
 def test_the_preset_summary_names_no_splitter_for_steps_that_split_nothing(qtbot, tmp_path):
@@ -257,5 +257,5 @@ def test_the_preset_summary_still_names_the_split_when_one_ran(qtbot, tmp_path):
     _choose(win, p); _box(win); win._apply_crop()
     out = win.output_panel.toPlainText()
     assert ("Saturation used Nocturne (free star split): "
-            "RC-Astro is not configured in Settings.") in out, out
+            "no star tool set up (StarXTerminator or StarNet2).") in out, out
     assert "cleaner stars" in out, out

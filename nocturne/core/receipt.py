@@ -88,6 +88,8 @@ _REQUIRED = {"background"}
 
 UNAVAILABLE = ""     # EngineNote.engine when the step cannot run
 
+NO_STAR_TOOL = "no star tool set up (StarXTerminator or StarNet2)"
+
 _NEEDS = {"graxpert": graxpert_valid, "rcastro": rcastro_valid, "astap": astap_valid}
 
 _NOT_CONFIGURED = {
@@ -152,7 +154,9 @@ def _split_note(stage_id: str, settings) -> EngineNote:
         # A choice, not a degradation (2026-10-15): named, but never reported
         # as a fallback — that would nag about a paid tool nobody needs.
         return EngineNote(name, "StarNet2", "")
-    return EngineNote(name, _FALLBACKS[stage_id], _NOT_CONFIGURED[needs])
+    # Either tool would do, so the reason names both — "RC-Astro is not
+    # configured" read as though only the paid one could help.
+    return EngineNote(name, _FALLBACKS[stage_id], NO_STAR_TOOL)
 
 
 _NO_OPTION = object()

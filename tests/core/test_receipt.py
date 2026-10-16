@@ -34,7 +34,8 @@ def test_an_unconfigured_tool_names_the_fallback_AND_the_reason(tmp_path):
     somebody made; "because RC-Astro is not configured" is actionable."""
     note = engine_for("star_reduction", Settings())
     assert "free star split" in note.engine
-    assert "not configured" in note.reason
+    assert note.reason == "no star tool set up (StarXTerminator or StarNet2)"
+    assert "not configured" in engine_for("deconvolution", Settings()).reason
     assert note.is_fallback is True
     assert note.unavailable is False
 
@@ -216,7 +217,7 @@ def test_split_steps_name_the_built_in_path_only_when_nothing_is_installed():
     for sid, engine in expected.items():
         note = engine_for(sid, Settings())
         assert note.engine == engine, sid
-        assert note.reason == "RC-Astro is not configured in Settings", sid
+        assert note.reason == "no star tool set up (StarXTerminator or StarNet2)", sid
         assert note.is_fallback, sid
 
 

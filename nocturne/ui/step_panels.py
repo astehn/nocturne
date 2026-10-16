@@ -1399,7 +1399,8 @@ def build_panel(
         space_box = SegmentRow([_SPACE_LABELS.get(s, s) for s in SPACES], values=list(SPACES))
         space_note = _desc_label(
             "Tagged, so other programs show it as you see it here. "
-            "Wider spaces for 16-bit TIFF only.")
+            + ("A mono picture exports in sRGB." if mono
+               else "Wider spaces for 16-bit TIFF only."))
 
         def _restrict_space(fmt: str) -> None:
             """Wide gamut only for 16-bit TIFF.

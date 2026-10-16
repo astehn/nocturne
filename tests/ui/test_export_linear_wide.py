@@ -171,3 +171,27 @@ def test_mono_srgb_still_exports_unchanged(qtbot, tmp_path, monkeypatch, linear)
     win = _window(qtbot, tmp_path, img)
     got = _export_tiff(win, monkeypatch, tmp_path / "m.tiff", "sRGB")
     assert np.array_equal(got, _old_formula(img, "sRGB", True))
+
+
+def test_mono_says_why_the_wide_spaces_are_greyed(qtbot):
+    assert "A mono picture exports in sRGB." in _panel(qtbot, mono=True).space_note.text()
+    assert "mono" not in _panel(qtbot, mono=False).space_note.text()
+
+
+def test_a_non_export_rebuild_loads_no_pixels_for_the_mono_question(qtbot, tmp_path, monkeypatch):
+    """project.current() is a full np.load (~0.3 s on a 33 MP drizzle); the
+    mono question must not pay it on every step change."""
+    img = AstroImage(_linear_rgb()[..., 0].copy(), is_linear=True, metadata={})
+    win = _window(qtbot, tmp_path, img)
+    # Levels: the panel itself reads no pixels (Crop and Stretch do, for
+    # their own reasons), so any call here is the mono question's.
+    win._go_to_id("levels", user_initiated=False)
+    calls = []
+    real = win.project.current
+    monkeypatch.setattr(win.project, "current", lambda: calls.append(1) or real())
+    win._rebuild_panel()
+    assert calls == [], f"project.current() called {len(calls)}x on a Levels rebuild"
+    win._go_to_id("export", user_initiated=False)
+    calls.clear()
+    win._rebuild_panel()
+    assert [b.isEnabled() for b in win._panel.space_box.buttons()] == [s == "sRGB" for s in SPACES]

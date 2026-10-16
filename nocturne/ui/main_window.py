@@ -8286,7 +8286,10 @@ class MainWindow(QMainWindow):
             on_reset_step=self._reset_step,
             apply_enabled=apply_enabled,
             split_enabled=split_enabled,
-            mono=loaded and self.project.current().data.ndim == 2,
+            # Only Export asks, and from the shape kept in memory: current() is a
+            # full np.load (~0.3 s on a 33 MP drizzle) on every step change.
+            mono=(loaded and stage.kind == "export"
+                  and len(self.project.shape_at(self.project.position)) == 2),
             option_default=(self._process_option_default(stage.id)
                             if stage.kind == "process" else None),
             denoise_engine_choices=denoise_choices,

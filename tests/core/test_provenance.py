@@ -12,7 +12,7 @@ def test_the_report_names_which_engine_ran(tmp_path):
                      settings=Settings())
     assert "## Engines" in r
     assert "Star Reduction" in r and "free star split" in r
-    assert "RC-Astro is not configured" in r
+    assert "no star tool set up (StarXTerminator or StarNet2)" in r
     # a step with no engine choice must not appear there
     engines = r.split("## Engines")[1]
     assert "Stretch" not in engines and "Crop" not in engines
