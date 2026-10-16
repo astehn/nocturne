@@ -6933,3 +6933,82 @@ def test_starless_stars_before_stretch_add_back_up_to_what_the_canvas_shows(qtbo
     st = tifffile.imread(out / "stars.tif").astype(np.float64) / 65535
     shown = display_data(img, linked=win._view_linked).astype(np.float64)
     assert np.abs(1 - (1 - sl) * (1 - st) - shown.reshape(sl.shape)).max() < 3e-3
+
+
+# --- saved solve state: old and new bundles interchange (restyle review) ---
+
+def _window_solved_with(qtbot, tmp_path, objs):
+    from astropy.wcs import WCS
+    from nocturne.tools.astap import SolveResult
+    win = _window(qtbot, tmp_path)
+    win.open_fits(_make_fits(tmp_path))
+    wc = WCS(naxis=2); wc.wcs.crpix = [12, 12]; wc.wcs.crval = [40.0, 61.0]
+    wc.wcs.cd = [[-0.001, 0], [0, 0.001]]; wc.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    win._solve = (win._solve_sig(), SolveResult(True, wc, 40.0, 61.0, 3.6), objs)
+    return win
+
+
+def _ic1805():
+    from nocturne.core.catalog import CatalogObject
+    return CatalogObject("IC 1805", "Heart Nebula", 38.2, 61.45, 60.0, 10.0, 10.0, True, 10.0, 10.0,
+                         obj_type="Cl+N")
+
+
+def test_saved_solve_state_does_not_carry_r_px(qtbot, tmp_path):
+    """An older Nocturne (<=0.53) builds CatalogObject(**o): an r_px key there is
+    a TypeError, and its except drops the whole solve without a word."""
+    win = _window_solved_with(qtbot, tmp_path, [_ic1805()])
+    d = win._solve_state_dict()
+    assert d["objects"] and all("r_px" not in o for o in d["objects"])
+
+
+def test_restore_refreshes_an_old_saved_common_name(qtbot, tmp_path):
+    """A bundle solved before IC 1805 had its common name carries "" for it; on
+    opening, the overlay must read today's catalogue, not the saved copy."""
+    win = _window_solved_with(qtbot, tmp_path, [_ic1805()])
+    d = win._solve_state_dict()
+    for o in d["objects"]:
+        o["common"] = ""                      # how a pre-restyle bundle saved it
+    win._restore_solve_state(d)
+    assert win._solve is not None
+    assert [o.common for o in win._solve[2]] == ["Heart Nebula"]
+
+
+def test_restore_keeps_a_saved_common_name_the_catalogue_lacks(qtbot, tmp_path):
+    from nocturne.core.catalog import CatalogObject
+    odd = CatalogObject("XYZ 1", "Own Name", 0.0, 0.0, 5.0, 5.0, 5.0, True, 5.0, 5.0)
+    win = _window_solved_with(qtbot, tmp_path, [odd])
+    win._restore_solve_state(win._solve_state_dict())
+    assert [o.common for o in win._solve[2]] == ["Own Name"]
+
+
+def test_restore_ignores_a_field_this_version_does_not_know(qtbot, tmp_path):
+    """A newer bundle may add a field; this version must still restore the solve."""
+    win = _window_solved_with(qtbot, tmp_path, [_ic1805()])
+    d = win._solve_state_dict()
+    d["objects"][0]["from_the_future"] = 7
+    win._restore_solve_state(d)
+    assert win._solve is not None and [o.name for o in win._solve[2]] == ["IC 1805"]
+
+
+def test_restore_recomputes_r_px_as_the_solve_did(qtbot, tmp_path):
+    from nocturne.core.catalog import _pixscale_arcsec
+    win = _window_solved_with(qtbot, tmp_path, [_ic1805()])
+    expect = (60.0 * 60.0 / 2.0) / _pixscale_arcsec(win._solve[1].wcs)
+    win._restore_solve_state(win._solve_state_dict())
+    assert win._solve[2][0].r_px == pytest.approx(expect)
+    assert expect > 0
+
+
+def test_restored_old_names_merge_like_a_fresh_solve(qtbot, tmp_path):
+    """An old bundle saved M 16 and IC 4703 without their shared name; refreshed
+    on restore, the overlay draws them as one label, as a fresh solve does."""
+    from nocturne.core.annotation_layout import merge_aliases
+    from nocturne.core.catalog import CatalogObject
+    m16 = CatalogObject("NGC 6611", "", 274.7, -13.8, 120.0, 400.0, 300.0, True, 400.0, 300.0,
+                        messier="16")
+    ic = CatalogObject("IC 4703", "", 274.7, -13.8, 5.05, 430.0, 280.0, True, 430.0, 280.0)
+    win = _window_solved_with(qtbot, tmp_path, [m16, ic])
+    win._restore_solve_state(win._solve_state_dict())
+    groups = merge_aliases(win._solve[2], 3.6)
+    assert len(groups) == 1 and groups[0][0].common == "Eagle Nebula"

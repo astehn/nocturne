@@ -208,7 +208,7 @@ def test_annotation_settings_default():
     s = Settings()
     assert s.annotation_layers == {
         "objects": True, "stars": True, "grid": False,
-        "compass": True, "scale": True, "by_type": False,
+        "compass": True, "scale": True,
     }
     assert s.annotation_density == "balanced"
 
@@ -236,6 +236,20 @@ def test_annotation_settings_round_trip(tmp_path):
     assert loaded.annotation_density == "all"
 
 
+def test_old_settings_with_colour_by_type_still_load(tmp_path):
+    """Colour by type was removed 2026-10-15 (the two tiers replaced it). A
+    settings.json written before then must still load, every real layer intact."""
+    import json
+    from nocturne.settings import load_settings
+    p = tmp_path / "old.json"
+    layers = {"objects": False, "stars": True, "grid": True,
+              "compass": True, "scale": False, "by_type": True}
+    p.write_text(json.dumps({"annotation_layers": layers}), encoding="utf-8")
+    loaded = load_settings(str(p))
+    assert {k: v for k, v in loaded.annotation_layers.items() if k != "by_type"} == \
+        {"objects": False, "stars": True, "grid": True, "compass": True, "scale": False}
+
+
 def test_annotation_settings_absent_in_old_file_defaults(tmp_path):
     import json
     from nocturne.settings import load_settings
@@ -244,7 +258,7 @@ def test_annotation_settings_absent_in_old_file_defaults(tmp_path):
     loaded = load_settings(str(p))
     assert loaded.annotation_layers == {
         "objects": True, "stars": True, "grid": False,
-        "compass": True, "scale": True, "by_type": False,
+        "compass": True, "scale": True,
     }
     assert loaded.annotation_density == "balanced"
 

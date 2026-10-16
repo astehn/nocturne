@@ -32,8 +32,7 @@ _LAYER_LABELS = [   # (key, checkbox label) -- order drives the checkbox layout
     ("grid", "RA/Dec grid"),
     ("compass", "Compass"),
     ("scale", "Scale bar"),
-    ("by_type", "Colour by type"),
-]
+]   # no "Colour by type" since 2026-10-15: the two tiers are the one look
 
 _DENSITY_LABELS = [   # (key, combo label)
     ("minimal", "Minimal"),
@@ -145,7 +144,9 @@ class SolvePanel(QWidget):
         layersChanged -- that signal means "the user just changed something,
         rebuild the overlay", which would be redundant/wrong immediately
         after applying the very state the overlay is about to be built from."""
-        self._layers = dict(layers)
+        # Only the layers this panel has: an old settings file still carries
+        # "by_type", and layers() must not hand it back out.
+        self._layers = {k: bool(layers.get(k, False)) for k in self.layer_checks}
         for key, box in self.layer_checks.items():
             box.blockSignals(True)
             box.setChecked(self._layers.get(key, False))

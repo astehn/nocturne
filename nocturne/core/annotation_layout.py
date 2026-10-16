@@ -9,7 +9,43 @@ from typing import NamedTuple
 
 MIN_RADIUS_PX = 6.0          # below this a true-size circle is unreadable
 _MAX_CIRCLE_FRAMES = 0.75    # drop rings larger than this * the frame diagonal
-DEFAULT_COLOUR = "#5cff5c"   # green: rare in astro images, so it never blends in
+
+# The look approved 2026-10-15 (spec 2026-10-15-solve-restyle, mockup
+# render_proposed.py), after his PixInsight-style references. Colours are
+# "#RRGGBB", or "#AARRGGBB" where the primitive is meant to be translucent —
+# the form QColor(str) reads directly, so the alpha travels with the colour.
+MAJOR_COLOUR = "#f4877c"     # soft salmon: Messier, NGC, IC, anything with a common name
+MINOR_COLOUR = "#eef1f6"     # white: LDN, Barnard, Sh2, vdB
+STAR_COLOUR = "#ffd447"      # yellow: named stars
+GRID_LINE_COLOUR = "#80ebf0f8"   # white at 128/255 = 50%: 27% was lost on every real field
+GRID_TEXT_COLOUR = "#e6e6ebf2"
+FURNITURE_TEXT_COLOUR = "#dceef1f6"
+
+
+def _alpha(colour: str, a: int) -> str:
+    return f"#{a:02x}{colour[1:]}"
+
+
+# Rings are thin and slightly see-through in their label's colour; the minor
+# tier a little fainter, as in the mockup.
+_RING_COLOUR = {"major": _alpha(MAJOR_COLOUR, 200), "minor": _alpha(MINOR_COLOUR, 170)}
+_LABEL_COLOUR = {"major": MAJOR_COLOUR, "minor": MINOR_COLOUR, "star": STAR_COLOUR}
+_STAR_MARK_COLOUR = _alpha(STAR_COLOUR, 235)
+_COMPASS_COLOUR = _alpha(MINOR_COLOUR, 200)
+_SCALE_COLOUR = _alpha(MINOR_COLOUR, 210)
+
+# Gapped crosshair of a named star, in REFERENCE px (gap from the star to where
+# an arm starts, arm length). Renderers draw it at reference px x their own
+# scale (1 on screen, scale_for(shape) in the export); the layout reserves it
+# at x ui_scale, so a name starts past the arm. Mockup: 9/11 for every star
+# (both keys kept so Marker.size stays a valid key for old callers).
+STAR_RETICLE = {"star": (9.0, 11.0), "star_bright": (9.0, 11.0)}
+
+# Text size classes, in points at the 1200 px reference (the mockup's PT).
+# The layout only ever sees them through `measure`; the renderers own the
+# fonts. Task 2's renderers and Qt measure should read this table.
+LABEL_PT = {"major": 21.0, "major_common": 16.5, "minor": 13.0, "star": 14.0,
+            "grid": 14.0, "furniture": 13.0}
 
 
 class Circle(NamedTuple):
@@ -18,41 +54,58 @@ class Circle(NamedTuple):
     r: float
     colour: str
     dashed: bool = False
+    tier: str = ""       # "major" | "minor": lets a renderer pick the stroke
 
 
 class Marker(NamedTuple):
     x: float
     y: float
-    kind: str            # "star" | "compass"
+    kind: str            # "star" (gapped crosshair, see STAR_RETICLE)
     colour: str
-    size: str = "star"
+    size: str = "star"   # "star" | "star_bright": a key of STAR_RETICLE
 
 
 class Label(NamedTuple):
+    """A placed block of text. (x, y) is the top-left of the WHOLE block and
+    (w, h) the box the layout reserved for it, both in image px.
+
+    One line: draw `text` (or `parts`) left-aligned at (x, y) in `size`.
+    Two lines (`sub` set): `text` in `size` on top, `sub` in `sub_size` under
+    it, each centred horizontally in the block's width `w`.
+    `parts`: when not empty, the line is drawn run by run, each (run, raised);
+    a raised run is set small and lifted (the h and m of 2ʰ40ᵐ). The runs
+    always join to exactly `text`, which stays the plain fallback."""
     text: str
     x: float
     y: float
     colour: str
-    size: str = "secondary"
+    size: str = "minor"
     priority: int = 0
     tip: str = ""        # plain words for the canvas tooltip; the burned export ignores it
+    sub: str = ""
+    sub_size: str = ""
+    tier: str = ""       # "major" | "minor" | "star" | "grid" | "furniture"
+    parts: tuple = ()
+    w: float = 0.0
+    h: float = 0.0
 
 
 class Leader(NamedTuple):
+    """A straight line between two image positions. Since the restyle only the
+    frame furniture uses it (compass arrow, scale bar and its end ticks):
+    object labels never get one. Every coordinate is image px already sized
+    for the consumer through ui_scale, so nothing the layout emits is
+    screen_fixed any more; the field stays for old callers."""
     x1: float
     y1: float
     x2: float
     y2: float
     colour: str
-    screen_fixed: bool = False   # True only for a cosmetic overlay line (the compass
-                                  # arrow) that must stay a constant on-screen length;
-                                  # default False -- a leader connects two REAL image
-                                  # positions (an object to its label, or the scale
-                                  # bar's true angular length) and must scale/pan with
-                                  # the image like any other measured geometry.
+    screen_fixed: bool = False
 
 
-def circle_for(obj, pixscale_arcsec: float, colour: str = DEFAULT_COLOUR) -> Circle:
+def circle_for(obj, pixscale_arcsec: float, colour: str = _RING_COLOUR["major"],
+               tier: str = "") -> Circle:
     """A ring at the object's TRUE angular half-extent, centred on its real
     projected position (obj.cx/cy) rather than the clamped label anchor — a big
     nebula whose centre is off-frame should draw the arc that crosses the frame.
@@ -61,12 +114,13 @@ def circle_for(obj, pixscale_arcsec: float, colour: str = DEFAULT_COLOUR) -> Cir
     know how big this is' must look different from 'this is small'."""
     unknown = not obj.major_arcmin or pixscale_arcsec <= 0
     r = MIN_RADIUS_PX if unknown else (obj.major_arcmin * 60.0 / 2.0) / pixscale_arcsec
-    return Circle(obj.cx, obj.cy, max(r, MIN_RADIUS_PX), colour, unknown)
+    return Circle(obj.cx, obj.cy, max(r, MIN_RADIUS_PX), colour, unknown, tier)
 
 
-def star_marker(star, colour: str = DEFAULT_COLOUR) -> Marker:
-    """A star's position. The adapter draws FLANKING ticks, never a cross through
-    the star, so the star itself stays visible. Brighter stars get a bigger mark."""
+def star_marker(star, colour: str = _STAR_MARK_COLOUR) -> Marker:
+    """A star's position. The adapter draws a GAPPED crosshair, never a cross
+    through the star, so the star itself stays visible. Brighter stars get a
+    bigger mark."""
     size = "star_bright" if star.mag <= 3.0 else "star"
     return Marker(star.x, star.y, "star", colour, size)
 
@@ -81,7 +135,6 @@ _DENSITY = {                     # (min circle radius px, max star magnitude)
     "balanced": (8.0, 6.0),
     "all": (0.0, 99.0),
 }
-_LABEL_GAP = 9.0                 # px between an object and its label
 
 
 def designation(obj) -> str:
@@ -111,38 +164,18 @@ def _is_messier(obj) -> bool:
     return bool(getattr(obj, "messier", ""))
 
 
-# Emission regions are the type most often drawn ON TOP OF red/pink H-alpha
-# nebulosity, so they keep the default green — the one hue that is rare in a
-# finished astro image and therefore never blends into it. The visually
-# distinct hues go to the rarer types, which usually sit against darker sky.
-# (Tried red-pink for emission, as Aladin uses; it disappeared into NGC 7000.)
-_TYPE_COLOURS = {
-    "messier": "#b38cff",   # violet
-    "emission": "#5cff5c",  # green: HII, EmN, RfN, Cl+N, SNR, clusters
-    "dark": "#e9edf5",      # white: dark nebulae
-    "planetary": "#5ce1ff", # cyan
-    "galaxy": "#ffab5e",    # orange
-    "star": "#ffd75e",      # yellow
-    "unknown": "#b9c2d0",   # grey
-}
-_TYPE_FAMILY = {
-    "HII": "emission", "EmN": "emission", "RfN": "emission", "Cl+N": "emission",
-    "SNR": "emission", "Neb": "emission", "OCl": "emission", "GCl": "emission",
-    "DrkN": "dark", "PN": "planetary",
-    "G": "galaxy", "GPair": "galaxy", "GTrpl": "galaxy", "GGroup": "galaxy",
-    "Star": "star", "*Ass": "star",
-}
+_MAJOR_PREFIXES = ("NGC", "IC")
 
 
-def colour_for(obj, by_type: bool = False) -> str:
-    """Default is the single green. By type, follows the palette astronomers see
-    in Aladin/Astrometry.net renders, so it reads as familiar rather than novel."""
-    if not by_type:
-        return DEFAULT_COLOUR
-    if _is_messier(obj):
-        return _TYPE_COLOURS["messier"]
-    fam = _TYPE_FAMILY.get(getattr(obj, "obj_type", "") or "", "unknown")
-    return _TYPE_COLOURS[fam]
+def tier_of(obj) -> str:
+    """Two tiers, like the reference: what people name (Messier, NGC, IC, or
+    anything with a common name) is major; the survey catalogues (LDN,
+    Barnard, Sh2, vdB) are minor. Replaces "Colour by type" (ruled 2026-10-15)."""
+    if not hasattr(obj, "major_arcmin"):
+        return "star"
+    if _is_messier(obj) or getattr(obj, "common", "") or obj.name.startswith(_MAJOR_PREFIXES):
+        return "major"
+    return "minor"
 
 
 def priority_of(obj) -> int:
@@ -168,88 +201,12 @@ def filter_by_density(objects, stars, pixscale_arcsec, density="balanced"):
     return keep, [s for s in stars if s.mag <= max_mag]
 
 
-def _rect(x, y, w, h):
-    return (x, y, x + w, y + h)
-
-
-def _overlaps(a, b) -> bool:
-    return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
-
-
-# Fallback search directions once the four primary anchors all collide: every
-# compass point, not just "further right and down" — so free space anywhere
-# around the object can be found, not only in one quadrant.
-_FALLBACK_DIRECTIONS = [(1, 0), (-1, 0), (0, -1), (0, 1),
-                         (1, -1), (-1, -1), (1, 1), (-1, 1)]
-
-
-def place_labels(items, shape, measure, colour=DEFAULT_COLOUR, ui_scale: float = 1.0):
-    """Greedy placement in priority order. Anchors are tried right, left, above,
-    then below; if all collide, the label is pushed outward — in all eight
-    compass directions at increasing distance — until it finds free space, and
-    a Leader connects it back to its object. `measure` is injected so this
-    stays Qt-free — the Qt adapter passes a real font metric.
-
-    `colour` is either a single colour string applied to every label (the
-    original behaviour, still the default), or a callable `colour(item) ->
-    str` so by-type colouring reaches the label and its leader too, not just
-    the object's ring.
-
-    `ui_scale` scales the fixed pixel spacing (`_LABEL_GAP` and the fallback
-    search step) the same way `measure`'s caller is expected to scale text
-    size -- so the gap between a label and its anchor grows/shrinks with the
-    glyphs actually being reserved for. A mismatch here is exactly the PS-07
-    class of bug: `measure` returning a box sized for text rendered BIGGER
-    than the box reserves lets that bigger text overlap its neighbour even
-    though this function found it a non-overlapping rectangle at build time."""
-    resolve_colour = colour if callable(colour) else (lambda _it: colour)
-    gap = _LABEL_GAP * ui_scale
-    h, w = shape
-    placed, labels, leaders = [], [], []
-    for it in sorted(items, key=priority_of, reverse=True):
-        name = designation(it)      # shared: see designation() above
-        text = f"{name}  {it.common}".strip() if getattr(it, "common", "") else name
-        size = "primary" if priority_of(it) >= 40 else "secondary"
-        tw, th = measure(text, size)
-        # NOT `getattr(it, "x", it.cx)`: Python evaluates the default eagerly,
-        # so `it.cx` would raise on a NamedStar (has x/y but no cx/cy) even
-        # though "x" exists and the default is never used.
-        ax = it.x if hasattr(it, "x") else it.cx
-        ay = it.y if hasattr(it, "y") else it.cy
-        candidates = [(ax + gap, ay - th / 2), (ax - gap - tw, ay - th / 2),
-                      (ax - tw / 2, ay - gap - th), (ax - tw / 2, ay + gap)]
-        for step in range(1, 9):                     # then search outward, all directions
-            dist = gap + step * 18 * ui_scale
-            for dx, dy in _FALLBACK_DIRECTIONS:
-                candidates.append((ax - tw / 2 + dx * dist, ay - th / 2 + dy * dist))
-        chosen = None
-        for i, (lx, ly) in enumerate(candidates):
-            # Clamp into the frame; if the label is wider/taller than the frame
-            # itself, pin to 0 rather than letting the upper bound go negative
-            # — starting inside and overflowing the far edge is the intended
-            # behaviour for a label that genuinely cannot fit.
-            lx = max(0.0, min(lx, max(0.0, w - tw)))
-            ly = max(0.0, min(ly, max(0.0, h - th)))
-            r = _rect(lx, ly, tw, th)
-            if not any(_overlaps(r, p) for p in placed):
-                chosen, displaced = (lx, ly), i >= 4
-                break
-        if chosen is None:
-            continue                                  # no room: drop, never overlap
-        lx, ly = chosen
-        placed.append(_rect(lx, ly, tw, th))
-        c = resolve_colour(it)
-        labels.append(Label(text, lx, ly, c, size, priority_of(it)))
-        if displaced:
-            leaders.append(Leader(ax, ay, lx, ly + th / 2, c))
-    return labels, leaders
-
-
 class GridLine(NamedTuple):
     points: list
     colour: str
-    label: str = ""
+    label: str = ""      # grid_lines() fills it; build_layout_for emits it as a Label instead
     tip: str = ""        # what the label's coordinate is, in words (canvas tooltip only)
+    parts: tuple = ()    # RA notation runs, see ra_parts
 
 
 def _ra_tip(label: str) -> str:
@@ -266,23 +223,34 @@ def _dec_tip(label: str) -> str:
 _GRID_STEPS_DEG = [0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0]
 
 
-def _fmt_ra(ra_deg: float) -> str:
+def ra_parts(ra_deg: float) -> tuple:
+    """2ʰ40ᵐ as runs for a renderer: (text, raised). Whole hours drop the
+    minutes ("2ʰ"), as the reference charts do. The Unicode ʰᵐ were tried in
+    the mockup and are too thin to read on a nebula; a raised small h/m is not."""
     hours = (ra_deg % 360.0) / 15.0
     h = int(hours)
     m = int(round((hours - h) * 60))
     if m == 60:
         h, m = h + 1, 0
     h %= 24                          # a minute-carry at 23h60m must wrap to 0h, not 24h
-    return f"{h}h{m:02d}m"
+    parts = ((str(h), False), ("h", True))
+    return parts + ((f"{m:02d}", False), ("m", True)) if m else parts
+
+
+def _fmt_ra(ra_deg: float) -> str:
+    """Plain form of ra_parts ("2h40m", "2h"): the tip's wording and the fallback."""
+    return "".join(t for t, _ in ra_parts(ra_deg))
 
 
 def _fmt_dec(dec_deg: float) -> str:
-    sign = "-" if dec_deg < 0 else "+"
+    sign = "−" if dec_deg < 0 else "+"   # U+2212: a real minus, as typeset
     d = abs(dec_deg)
     deg = int(d)
     minutes = int(round((d - deg) * 60))
     if minutes == 60:
         deg, minutes = deg + 1, 0
+    if deg == 0 and minutes == 0:
+        sign = "+"
     return f"{sign}{deg}°{minutes:02d}′" if minutes else f"{sign}{deg}°"
 
 
@@ -327,19 +295,279 @@ def grid_lines(wcs, shape, colour: str) -> list:
         pts = [(float(a), float(b)) for a, b in zip(xs, ys)
                if -1 <= a <= w and -1 <= b <= h]
         if len(pts) >= 2:
-            out.append(GridLine(pts, colour, _fmt_ra(float(ra)), _ra_tip(_fmt_ra(float(ra)))))
+            out.append(GridLine(pts, colour, _fmt_ra(float(ra)), _ra_tip(_fmt_ra(float(ra))),
+                               ra_parts(float(ra))))
     return out
 
 
-# Colours for the frame furniture (grid/compass/scale) are fixed, independent
-# of `by_type` -- that toggle is about telling catalogue object TYPES apart,
-# not the reference overlay drawn on top of them.
-_GRID_COLOUR = "#6a7688"      # muted slate: visible without competing with object colours
-_COMPASS_COLOUR = "#6aa8f2"   # bright blue, matches the pre-existing compass accent
-_SCALE_COLOUR = "#e7ecf4"     # near-white, reads on both light and dark frame content
+def _rect(x, y, w, h):
+    return (x, y, x + w, y + h)
 
-_MEASURE_PT = {"primary": 22.0, "secondary": 18.0, "star": 15.0, "star_bright": 17.0,
-               "grid": 13.0, "compass": 20.0}
+
+def _overlaps(a, b) -> bool:
+    return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
+
+
+def _free(r, occupied) -> bool:
+    return not any(_overlaps(r, o) for o in occupied)
+
+
+# All offsets below are reference px at ui_scale 1, from the approved mockup
+# (render_proposed.py), judged by eye against his PixInsight examples.
+_MARGIN = 14.0          # labels keep half of this from the frame edge
+_GAP = 6.0              # between a ring and the label set against it
+_BIG_CIRCLE_FRAC = 0.12 # a ring wider than this * the short side takes its label inside
+_INNER_OFFSET = 30.0    # the inside-a-big-ring fallbacks, above / below the centre
+_INNER_RIM_R = 40.0     # rings larger than this also try their inner rim
+_OBSTACLE_R = 30.0      # in-frame rings smaller than this block other labels
+_PAD = 2.0              # breathing room kept round every placed label
+
+
+def _measure_block(measure, text, size, sub="", sub_size=""):
+    """(w, h) of a one- or two-line label through the injected one-line
+    measure — the measure contract stays measure(text, size) -> (w, h)."""
+    w1, h1 = measure(text, size)
+    if not sub:
+        return w1, h1
+    w2, h2 = measure(sub, sub_size)
+    return max(w1, w2), h1 + h2
+
+
+def _clamp_into(x, y, tw, th, shape, inset):
+    h, w = shape
+    x = min(max(x, inset), w - inset - tw)
+    y = min(max(y, inset), h - inset - th)
+    return x, y
+
+
+def _fits(tw, th, shape, inset) -> bool:
+    h, w = shape
+    return tw <= w - 2 * inset and th <= h - 2 * inset
+
+
+def merge_aliases(objects, pixscale_arcsec):
+    """One label per physical object: catalogue entries that share a common
+    name and overlap on the sky (centres within the larger ring) collapse
+    into the most significant entry — M 16 and IC 4703 are both "Eagle
+    Nebula". Returns [(representative, [representative, *aliases])]. Entries
+    without a common name are never merged: two anonymous neighbours are two
+    objects. At equal priority an NGC/IC name leads a survey one, whatever the
+    sizes: the Soul is "IC 1848 · Sh 2-199", the name people use first."""
+    order = sorted(objects, key=lambda o: (priority_of(o), o.name.startswith(_MAJOR_PREFIXES),
+                                           o.major_arcmin), reverse=True)
+    used, out = set(), []
+    for o in order:
+        if id(o) in used:
+            continue
+        used.add(id(o))
+        group = [o]
+        if o.common:
+            r_o = circle_for(o, pixscale_arcsec).r
+            for p in order:
+                if id(p) in used or p.common != o.common:
+                    continue
+                if math.hypot(p.cx - o.cx, p.cy - o.cy) <= max(r_o, circle_for(p, pixscale_arcsec).r):
+                    group.append(p)
+                    used.add(id(p))
+        out.append((o, group))
+    return out
+
+
+def _rim_candidates(ax, ay, rr, tw, th):
+    """Around a ring at radius rr: right, left, the four diagonals, top, bottom.
+    Each box touches the rim at its own near edge, so the text sits against
+    the circle rather than on it."""
+    out = []
+    for ang in (0, 180, -40, 40, -140, 140, -90, 90):
+        a = math.radians(ang)
+        ex, ey = ax + rr * math.cos(a), ay + rr * math.sin(a)
+        if ang in (0, -40, 40):
+            out.append((ex, ey - th / 2))
+        elif ang in (180, -140, 140):
+            out.append((ex - tw, ey - th / 2))
+        elif ang == -90:
+            out.append((ex - tw / 2, ey - th))
+        else:
+            out.append((ex - tw / 2, ey))
+    return out
+
+
+def _inner_rim_candidates(ax, ay, rr, tw, th):
+    return [(ax - tw / 2, ay - rr), (ax - tw / 2, ay + rr - th),
+            (ax + rr - tw, ay - th / 2), (ax - rr, ay - th / 2)]
+
+
+def _contains(box, x, y) -> bool:
+    return box[0] <= x <= box[2] and box[1] <= y <= box[3]
+
+
+def _rings_blocking(rings, x, y) -> list:
+    """Small-ring obstacle boxes that block a label anchored at (x, y): every
+    one except those the anchor itself sits in. An object inside another's
+    ring (LDN 1359 in NGC 896's, vdB 88 in Sh 2-293's) would otherwise find
+    every candidate "taken" and lose its label; two coincident rings would
+    drop both."""
+    return [b for b in rings if not _contains(b, x, y)]
+
+
+def _covers_disc(r, disc) -> bool:
+    """Does box r reach inside the disc (cx, cy, radius)? Its closest point to
+    the centre decides."""
+    cx, cy, rad = disc
+    nx, ny = min(max(cx, r[0]), r[2]), min(max(cy, r[1]), r[3])
+    return math.hypot(nx - cx, ny - cy) < rad
+
+
+def _place_block(cands, tw, th, shape, inset, occupied, pad, blockers=(), own_disc=None,
+                 alias_discs=()):
+    """First candidate that is free once clamped into the frame, or None — the
+    dropped-label rule: never a leader, never an overlap. `own_disc`: the
+    label's own small ring, which the clamp at a frame edge can push it onto
+    (B 349 and LDN 931 by NGC 7000's right edge). `alias_discs`: the small
+    rings of the label's merged aliases, which the anchor-sits-in-it
+    exemption would otherwise let it cover (M 16 · IC 4703 on IC 4703's)."""
+    if not _fits(tw, th, shape, inset):
+        return None
+    for lx, ly in cands:
+        lx, ly = _clamp_into(lx, ly, tw, th, shape, inset)
+        r = _rect(lx, ly, tw, th)
+        if own_disc is not None and _covers_disc(r, own_disc):
+            continue
+        if any(_covers_disc(r, d) for d in alias_discs):
+            continue
+        if _free(r, occupied) and _free(r, blockers):
+            occupied.append((lx - pad, ly - pad, lx + tw + pad, ly + th + pad))
+            return lx, ly
+    return None
+
+
+def _object_labels(groups, shape, pixscale, measure, u, occupied, rings=()):
+    h, w = shape
+    inset, gap, pad = _MARGIN * u / 2, _GAP * u, _PAD * u
+    max_r = _MAX_CIRCLE_FRAMES * math.hypot(h, w)
+    order = sorted(groups, key=lambda g: (tier_of(g[0]) == "major", priority_of(g[0]),
+                                          g[0].major_arcmin), reverse=True)
+    labels = []
+    for o, grp in order:
+        tier = tier_of(o)
+        text = " · ".join(dict.fromkeys(designation(g) for g in grp))
+        size = tier
+        sub = o.common or ""
+        sub_size = "major_common" if sub and tier == "major" else (size if sub else "")
+        tw, th = _measure_block(measure, text, size, sub, sub_size)
+        c = circle_for(o, pixscale)
+        r = c.r if c.r <= max_r else 0.0
+        big = c.r > _BIG_CIRCLE_FRAC * min(h, w)
+        if not (0 <= o.cx < w and 0 <= o.cy < h):
+            r, big = 0.0, False              # off-frame centre: label by the clamped anchor
+        ax, ay = o.x, o.y
+        cands = []
+        if big:
+            cands += [(ax - tw / 2, ay - th / 2), (ax - tw / 2, ay - th - _INNER_OFFSET * u),
+                      (ax - tw / 2, ay + _INNER_OFFSET * u)]
+        cands += _rim_candidates(ax, ay, r + gap, tw, th)
+        blockers = _rings_blocking(rings, ax, ay)
+        # Outside the rim the label must stay off its own ring, which the frame
+        # clamp can push it onto; the inner rim is inside it on purpose.
+        own = (c.x, c.y, r) if r > 0 and not big else None
+        # The aliases' rings, unless big enough to take labels inside them.
+        aliases = [(a.cx, a.cy, ac.r) for a in grp if a is not o
+                   for ac in (circle_for(a, pixscale),)
+                   if ac.r <= _BIG_CIRCLE_FRAC * min(h, w) and 0 <= a.cx < w and 0 <= a.cy < h]
+        spot = _place_block(cands, tw, th, shape, inset, occupied, pad, blockers, own, aliases)
+        if spot is None and r > _INNER_RIM_R * u:
+            spot = _place_block(_inner_rim_candidates(ax, ay, r - gap, tw, th), tw, th, shape,
+                                inset, occupied, pad, blockers, alias_discs=aliases)
+        if spot is None:
+            continue
+        labels.append(Label(text, spot[0], spot[1], _LABEL_COLOUR[tier], size, priority_of(o),
+                            sub=sub, sub_size=sub_size, tier=tier, w=tw, h=th))
+    return labels
+
+
+def _star_reach(star, u) -> float:
+    gap, arm = STAR_RETICLE[star_marker(star).size]
+    return (gap + arm) * u
+
+
+def _star_labels(stars, shape, measure, u, occupied, rings=()):
+    inset, pad = _MARGIN * u / 2, _PAD * u
+    labels = []
+    for st in sorted(stars, key=lambda s: s.mag):
+        tw, th = measure(st.name, "star")
+        # Past the arm by the same gap a label keeps from a ring (the mockup's).
+        cands = _rim_candidates(st.x, st.y, _star_reach(st, u) + (_PAD + _GAP) * u, tw, th)
+        spot = _place_block(cands, tw, th, shape, inset, occupied, pad,
+                            _rings_blocking(rings, st.x, st.y))
+        if spot is not None:
+            labels.append(Label(st.name, spot[0], spot[1], STAR_COLOUR, "star", priority_of(st),
+                                tier="star", w=tw, h=th))
+    return labels
+
+
+def _point_along(pts, from_end: int, dist: float):
+    seq = pts if from_end == 0 else pts[::-1]
+    acc = 0.0
+    for (x0, y0), (x1, y1) in zip(seq, seq[1:]):
+        seg = math.hypot(x1 - x0, y1 - y0)
+        if acc + seg >= dist:
+            t = (dist - acc) / seg if seg else 0.0
+            return x0 + t * (x1 - x0), y0 + t * (y1 - y0)
+        acc += seg
+    return seq[-1]
+
+
+def _nearest_edge(x, y, shape) -> str:
+    h, w = shape
+    d = {"left": x, "right": w - x, "top": y, "bottom": h - y}
+    return min(d, key=d.get)
+
+
+# RA lines run roughly up-down, so their labels read best on the bottom/top
+# edge; Dec lines on the left/right — the reference charts' convention.
+_EDGE_PREF = {True: ["bottom", "top", "left", "right"], False: ["left", "right", "top", "bottom"]}
+
+
+def _dist_to_polyline(px, py, pts) -> float:
+    best = math.inf
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        dx, dy = x1 - x0, y1 - y0
+        ll = dx * dx + dy * dy
+        t = 0.0 if ll == 0 else max(0.0, min(1.0, ((px - x0) * dx + (py - y0) * dy) / ll))
+        best = min(best, math.hypot(px - x0 - t * dx, py - y0 - t * dy))
+    return best
+
+
+def _place_grid_labels(lines, shape, measure, u, occupied, rings=()):
+    """Each line's label ON the line just inside the frame, centred on the
+    point a short way in from the end that meets the preferred edge; if that
+    spot is taken the other end is tried, then the label is dropped. Clamped
+    so it is never clipped by the frame edge — and an end where the clamp
+    drags the label more than half its height off its line counts as taken
+    (4% of labels sat up to 100 px off their line in a random sweep)."""
+    inset, pad, margin = _MARGIN * u / 2, _PAD * u, _MARGIN * u
+    labels = []
+    for gl in lines:
+        if not gl.label or len(gl.points) < 2:
+            continue
+        is_ra = bool(gl.parts)
+        tw, th = measure(gl.label, "grid")
+        pref = _EDGE_PREF[is_ra]
+        ends = sorted((0, 1), key=lambda e: pref.index(
+            _nearest_edge(*(gl.points[0] if e == 0 else gl.points[-1]), shape)))
+        cands = []
+        for end in ends:
+            px, py = _point_along(gl.points, end, margin + 0.6 * max(tw, th))
+            if not _fits(tw, th, shape, inset):
+                break
+            lx, ly = _clamp_into(px - tw / 2, py - th / 2, tw, th, shape, inset)
+            if _dist_to_polyline(lx + tw / 2, ly + th / 2, gl.points) <= th / 2:
+                cands.append((lx, ly))
+        spot = _place_block(cands, tw, th, shape, inset, occupied, pad, rings)
+        if spot is not None:
+            labels.append(Label(gl.label, spot[0], spot[1], GRID_TEXT_COLOUR, "grid",
+                                tip=gl.tip, tier="grid", parts=gl.parts, w=tw, h=th))
+    return labels
 
 
 def _default_measure(text: str, size: str, ui_scale: float = 1.0) -> tuple[float, float]:
@@ -348,96 +576,80 @@ def _default_measure(text: str, size: str, ui_scale: float = 1.0) -> tuple[float
     caller should pass actual font metrics for pixel-exact label placement.
 
     `ui_scale` must match the scale the CONSUMING adapter actually renders
-    text at -- `place_labels` reserves non-overlap rectangles from this
-    return value, so if the export adapter later draws text bigger than what
-    was reserved here, labels overlap in the export even though the live
-    preview (which renders at the unscaled size this defaults to) looks
-    clean. See `build_layout_for`'s `ui_scale` param."""
-    pt = _MEASURE_PT.get(size, _MEASURE_PT["secondary"]) * ui_scale
+    text at -- the layout reserves non-overlap rectangles from this return
+    value, so text drawn bigger than what was reserved overlaps in the
+    export even though the live preview looks clean (PS-07)."""
+    pt = LABEL_PT.get(size, LABEL_PT["minor"]) * ui_scale
     return len(text) * pt * 0.62, pt * 1.3
 
 
-def _compass_primitives(wcs, shape, ui_scale: float = 1.0) -> list:
+_N_TIP = ("North on the sky. In a normal (not mirrored) view with north up, east "
+          "is to the left — the reverse of a map, because you look up at the sky "
+          "rather than down at the ground.")
+
+
+def _compass_primitives(wcs, shape, measure, u, occupied) -> list:
+    """A thin arrow and an N in the top-right corner, which it owns."""
     from .annotate import compass_angles
     north, _east = compass_angles(wcs, shape)
     h, w = shape
-    ax, ay = w - 120.0 * ui_scale, 120.0 * ui_scale
+    cx, cy, length = w - 70.0 * u, 70.0 * u, 38.0 * u
     rad = math.radians(north)
-    tx, ty = ax + 60.0 * ui_scale * math.cos(rad), ay + 60.0 * ui_scale * math.sin(rad)
-    lx = ax + 74.0 * ui_scale * math.cos(rad) - 6.0 * ui_scale
-    ly = ay + 74.0 * ui_scale * math.sin(rad) - 7.0 * ui_scale
-    return [
-        Marker(ax, ay, "compass", _COMPASS_COLOUR, "grid"),
-        Leader(ax, ay, tx, ty, _COMPASS_COLOUR, screen_fixed=True),   # cosmetic HUD arrow
-        Label("N", lx, ly, _COMPASS_COLOUR, "compass",
-              tip="North on the sky. In a normal (not mirrored) view with north up, east "
-                  "is to the left — the reverse of a map, because you look up at the sky "
-                  "rather than down at the ground."),
-    ]
+    tw, th = measure("N", "furniture")
+    nx = cx + (length + 12.0 * u) * math.cos(rad) - tw / 2
+    ny = cy + (length + 12.0 * u) * math.sin(rad) - th / 2
+    occupied.append((cx - 60.0 * u, cy - 60.0 * u, cx + 60.0 * u, cy + 60.0 * u))
+    return [Leader(cx, cy, cx + length * math.cos(rad), cy + length * math.sin(rad), _COMPASS_COLOUR),
+            Label("N", nx, ny, FURNITURE_TEXT_COLOUR, "furniture", tip=_N_TIP,
+                  tier="furniture", w=tw, h=th)]
 
 
-def _scale_bar_primitives(pixscale_arcsec: float, shape, ui_scale: float = 1.0) -> list:
+def _scale_bar_primitives(pixscale_arcsec, shape, measure, u, occupied) -> list:
+    """A thin bar with end ticks in the bottom-left corner, its length
+    centred above it. The bar's length is TRUE (measured), never scaled."""
     from .annotate import scale_bar, scale_bar_arcsec, scale_bar_tip
     h, w = shape
-    length_px, text = scale_bar(pixscale_arcsec, w)   # a TRUE measured length -- never scaled
-    if length_px <= 0:
+    length, text = scale_bar(pixscale_arcsec, w)
+    if length <= 0:
         return []
-    bx, by = 90.0 * ui_scale, h - 90.0 * ui_scale
-    return [
-        Leader(bx, by, bx + length_px, by, _SCALE_COLOUR),
-        Label(text, bx, by - 24.0 * ui_scale, _SCALE_COLOUR, "secondary",
-              tip=scale_bar_tip(scale_bar_arcsec(pixscale_arcsec, w))),
-    ]
+    bx, by, tick = 40.0 * u, h - 40.0 * u, 5.0 * u
+    tw, th = measure(text, "furniture")
+    tx, ty = bx + length / 2 - tw / 2, by - 10.0 * u - th
+    occupied.append((bx - 10.0 * u, ty - 4.0 * u, bx + length + 10.0 * u, by + 10.0 * u))
+    return [Leader(bx, by, bx + length, by, _SCALE_COLOUR),
+            Leader(bx, by - tick, bx, by + tick, _SCALE_COLOUR),
+            Leader(bx + length, by - tick, bx + length, by + tick, _SCALE_COLOUR),
+            Label(text, tx, ty, FURNITURE_TEXT_COLOUR, "furniture",
+                  tip=scale_bar_tip(scale_bar_arcsec(pixscale_arcsec, w)),
+                  tier="furniture", w=tw, h=th)]
 
 
 def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density,
-                      measure=None, ui_scale: float = 1.0) -> list:
-    """Assembles the FULL primitive list the overlay draws: circles + labels +
-    leaders for catalogue objects, flanking-tick markers for named stars, grid
-    lines, and the compass/scale bar -- all as plain Circle/Marker/Label/
-    Leader/GridLine values in image-pixel coordinates. Pure: no Qt.
+                     measure=None, ui_scale: float = 1.0) -> list:
+    """The FULL primitive list the overlay draws, in image-pixel coordinates:
+    Circle, Marker, Label, Leader (furniture only) and GridLine. Pure: no Qt.
 
-    Both the live Qt canvas and the burned export consume this SAME function,
-    so they draw identical CONTENT by construction rather than by remembering
-    to pass the same arguments twice. Their PLACEMENT can legitimately
-    differ, via `ui_scale` -- see below -- and that is by design, not a gap:
-    once two adapters render text at different physical sizes, identical
-    pixel positions were never achievable; content parity is the guarantee
-    that matters and is preserved regardless of `ui_scale`.
+    The live canvas and the burned export both consume this SAME function,
+    so they draw identical content by construction. `ui_scale` is the factor
+    the consumer renders text and glyphs at, relative to the reference sizes
+    (1/zoom on the live canvas, annotation_render.scale_for in the export);
+    every fixed offset scales with it, every TRUE size (a ring's radius, the
+    scale bar's length, a grid line) does not. `measure(text, size)` must
+    return the image-px box the consumer will paint at that scale.
 
-    `layers` is a dict of booleans keyed "objects", "stars", "grid", "compass",
-    "scale", "by_type" -- missing keys default to off. `measure` is forwarded
-    to `place_labels`; pass real font metrics for pixel-exact placement, or
-    leave it as the pure fallback for headless/test use.
+    `layers`: booleans "objects", "stars", "grid", "compass", "scale";
+    missing keys are off. A "by_type" key from old settings is accepted and
+    ignored — the two tiers replaced colour by type (ruled 2026-10-15).
 
-    `ui_scale` is the factor the CONSUMING adapter will render text/glyph
-    sizes at, relative to the live adapter's constant on-screen point sizes
-    (the live adapter always passes the default, 1.0). It scales BOTH the
-    default measure's text-box estimate AND every fixed pixel offset that
-    `place_labels`/`_compass_primitives`/`_scale_bar_primitives` use to
-    position things relative to those boxes (`_LABEL_GAP`, the fallback
-    search step, the compass anchor/arrow/label offsets, the scale bar's
-    anchor and label gap -- never a TRUE measured quantity like a Circle's
-    radius or the scale bar's own length, which stay in real image pixels).
-    Skipping this was PS-07 recurring one level up: an export that renders
-    text bigger than what was RESERVED for it at layout time can overlap
-    labels that the (unscaled) live preview shows cleanly separated, even
-    though both consumed the identical primitive list.
-
-    Each object's colour is resolved individually via `colour_for(obj,
-    by_type=...)` and carried through to its circle, label AND leader -- a
-    single shared colour would make by-type colouring invisible on the labels.
-    Named stars get the type palette's `"star"` (yellow) colour under the same
-    toggle, on their marker AND their name label; both fall back to the plain
-    default colour when `by_type` is off.
-
-    Object and star labels are placed through a SINGLE `place_labels` call so
-    a star's name competes for space (and gets a leader when displaced) in
-    the same collision-avoidance pass as every DSO label, rather than being
-    positioned independently and risking an overlap."""
+    Space is claimed in the mockup's order, so what matters most is never
+    the one dropped: frame furniture owns its corners, then small in-frame
+    rings, grid labels, star reticles, object labels (majors first) and last
+    star names. A label with no free spot is dropped — the Objects-in-field
+    list still names it."""
     if measure is None:
         measure = lambda text, size: _default_measure(text, size, ui_scale)
-    by_type = layers.get("by_type", False)
+    u = ui_scale
+    h, w = shape
 
     kept_objs, kept_stars = filter_by_density(objects, stars, pixscale, density)
     if not layers.get("objects", False):
@@ -446,37 +658,44 @@ def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density,
         kept_stars = []
 
     prims: list = []
+    occupied: list = []
+    rings: list = []          # small in-frame rings, kept apart: see _rings_blocking
 
-    obj_colour = {id(o): colour_for(o, by_type=by_type) for o in kept_objs}
+    furniture = []
+    if layers.get("compass", False) and wcs is not None:
+        furniture += _compass_primitives(wcs, shape, measure, u, occupied)
+    if layers.get("scale", False) and pixscale > 0:
+        furniture += _scale_bar_primitives(pixscale, shape, measure, u, occupied)
+
     # A circle far larger than the frame marks nothing useful — Sh2-109's
     # catalogued 18 degrees on a 3-degree field is an arc across the whole
     # image. Keep the object's LABEL (it is genuinely in the field) and drop
     # the ring beyond this multiple of the frame diagonal.
-    h_, w_ = shape
-    max_r = _MAX_CIRCLE_FRAMES * (h_ ** 2 + w_ ** 2) ** 0.5
-    for o in kept_objs:
-        c = circle_for(o, pixscale, obj_colour[id(o)])
-        if c.r <= max_r:
-            prims.append(c)
+    max_r = _MAX_CIRCLE_FRAMES * math.hypot(h, w)
+    groups = merge_aliases(kept_objs, pixscale)
+    for rep, grp in groups:
+        tier = tier_of(rep)
+        for o in grp:
+            c = circle_for(o, pixscale, _RING_COLOUR[tier], tier)
+            if c.r <= max_r:
+                prims.append(c)
+            if c.r < _OBSTACLE_R * u and 0 <= o.cx < w and 0 <= o.cy < h:
+                e = c.r + 3.0 * u
+                rings.append((c.x - e, c.y - e, c.x + e, c.y + e))
 
-    star_colour = _TYPE_COLOURS["star"] if by_type else DEFAULT_COLOUR
-    for s in kept_stars:
-        prims.append(star_marker(s, star_colour))
-
-    item_colour = dict(obj_colour)
-    item_colour.update({id(s): star_colour for s in kept_stars})
-    labels, leaders = place_labels(kept_objs + kept_stars, shape, measure,
-                                    colour=lambda it: item_colour[id(it)], ui_scale=ui_scale)
-    prims.extend(labels)
-    prims.extend(leaders)
-
+    grid_labels = []
     if layers.get("grid", False):
-        prims.extend(grid_lines(wcs, shape, _GRID_COLOUR))
+        lines = grid_lines(wcs, shape, GRID_LINE_COLOUR)
+        grid_labels = _place_grid_labels(lines, shape, measure, u, occupied, rings)
+        prims.extend(gl._replace(label="", tip="", parts=()) for gl in lines)
 
-    if layers.get("compass", False) and wcs is not None:
-        prims.extend(_compass_primitives(wcs, shape, ui_scale))
+    for s in kept_stars:
+        prims.append(star_marker(s))
+        e = _star_reach(s, u)
+        occupied.append((s.x - e, s.y - e, s.x + e, s.y + e))
 
-    if layers.get("scale", False) and pixscale > 0:
-        prims.extend(_scale_bar_primitives(pixscale, shape, ui_scale))
-
+    prims.extend(grid_labels)
+    prims.extend(_object_labels(groups, shape, pixscale, measure, u, occupied, rings))
+    prims.extend(_star_labels(kept_stars, shape, measure, u, occupied, rings))
+    prims.extend(furniture)
     return prims

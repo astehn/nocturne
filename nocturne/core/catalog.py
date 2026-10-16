@@ -40,6 +40,7 @@ class CatalogObject:
     minor_arcmin: float = 0.0   # angular minor axis; 0.0 if unknown
     pos_angle: float = 0.0      # position angle in degrees; 0.0 if unknown
     messier: str = ""           # Messier number as a string ("31"), empty if none
+    r_px: float = 0.0           # TRUE ring radius in px (half the major axis); 0.0 if unknown
 
 
 @dataclass
@@ -144,8 +145,23 @@ def objects_in_field(wcs, shape, rows=None) -> list[CatalogObject]:
         out.append(CatalogObject(_pretty_name(name), common, ra, dec, major,
                                  lx, ly, centered, x, y,
                                  obj_type=obj_type, minor_arcmin=minor,
-                                 pos_angle=pos_angle, messier=messier))
+                                 pos_angle=pos_angle, messier=messier, r_px=r_px))
     return out
+
+
+_GLUED_BAYER = re.compile(r"^(\S+) (\d+)([A-Z][A-Za-z]{2})$")   # UMa, CrB, CMa too
+_SUPERSCRIPT = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+
+
+def format_star_name(name: str) -> str:
+    """'π 2Ori' -> 'π² Ori'. named_stars.csv glues a Bayer letter's index to
+    the constellation (60 rows); the index is a superscript in print. Fixed
+    here at load rather than in the CSV, which is regenerated from its source."""
+    m = _GLUED_BAYER.match(name)
+    if not m:
+        return name
+    letter, index, constellation = m.groups()
+    return f"{letter}{index.translate(_SUPERSCRIPT)} {constellation}"
 
 
 @lru_cache(maxsize=1)
@@ -154,7 +170,7 @@ def load_named_stars(path: str = _STARS):
     with open(path, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
             try:
-                rows.append((r["name"], float(r["ra_deg"]), float(r["dec_deg"]),
+                rows.append((format_star_name(r["name"]), float(r["ra_deg"]), float(r["dec_deg"]),
                              float(r.get("mag") or 99.0)))
             except (ValueError, KeyError):
                 continue
@@ -190,18 +206,25 @@ def identify_target_parts(objects: list[CatalogObject], shape) -> tuple[str, str
     Sharpless and Lynds entries joined the catalogue an NGC 7000 frame reported
     'Sh 2109' — an 18-degree diffuse complex that merely overlaps the field. A
     Messier or common-named object beats an anonymous survey designation, and
-    only then does size and centrality decide."""
+    only then does position decide: an object whose TRUE centre is in the
+    frame (not its clamped label anchor — that made a Heart frame "the Soul"),
+    then one whose ring covers the frame centre (a Fish Head frame also holds
+    the Heart's centre), then an NGC/IC name over a survey alias, as the
+    overlay leads with it; then size and nearness."""
     if not objects:
         return ("", "")
     h, w = shape
     cx, cy = w / 2, h / 2
 
     def rank(o):
-        centred = 0 <= o.x < w and 0 <= o.y < h
+        centred = bool(getattr(o, "centered", True))
+        r_px = getattr(o, "r_px", 0.0)
+        covers = r_px > 0 and (o.cx - cx) ** 2 + (o.cy - cy) ** 2 <= r_px ** 2
         # An object far larger than the frame says little about what was imaged.
         sane_size = o.major_arcmin if o.major_arcmin <= 3.0 * (h * w) ** 0.5 else 0.0
-        return (bool(getattr(o, "messier", "")), bool(o.common), centred,
-                sane_size, -((o.x - cx) ** 2 + (o.y - cy) ** 2))
+        return (bool(getattr(o, "messier", "")), bool(o.common), centred, covers,
+                o.name.startswith(("NGC", "IC")), sane_size,
+                -((o.x - cx) ** 2 + (o.y - cy) ** 2))
 
     from .annotation_layout import designation
     best = max(objects, key=rank)

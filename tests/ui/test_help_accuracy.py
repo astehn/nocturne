@@ -9,6 +9,7 @@ These tests are deliberately shallow — they check that a claim in the help has
 counterpart in the code, not that the prose is good. A shallow check that runs is
 worth more than a thorough one nobody performs.
 """
+import math
 import sys
 import pathlib
 import re
@@ -2738,3 +2739,165 @@ def test_presets_help_puts_the_saved_label_where_it_is_shown():
         assert "Presets window" in s, s
         assert "dialog" not in s.split("Presets window")[1], s
     assert "in the dialog is how" in b
+
+
+# --- the plate-solve overlay's look (restyle 2026-10-15) -----------------
+# Each claim the topic makes about how the overlay looks is checked against a
+# layout built by the same function the canvas and the export both draw from.
+
+def _solve_layout(objs, starlist=(), shape=(3000, 3000), **layers):
+    from nocturne.core.annotation_layout import build_layout_for
+    base = {"objects": False, "stars": False, "grid": False, "compass": False, "scale": False}
+    base.update(layers)
+    return build_layout_for(list(objs), list(starlist), None, shape, 2.0, base, "all",
+                            measure=lambda t, s: (7.0 * len(t), 14.0))
+
+
+def _solve_obj(name, cx, cy, common="", messier="", arcmin=2.0):
+    from nocturne.core.catalog import CatalogObject
+    return CatalogObject(name, common, 0.0, 0.0, arcmin, cx, cy, True, cx, cy, messier=messier)
+
+
+def _rgb(colour):
+    """'#rrggbb' or '#aarrggbb' -> (r, g, b)."""
+    c = colour.lstrip("#")[-6:]
+    return tuple(int(c[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _is_salmon(colour):
+    r, g, b = _rgb(colour)
+    return r >= 0xe0 and r - g >= 0x40 and r - b >= 0x40 and g >= 0x60
+
+
+def _is_white(colour):
+    r, g, b = _rgb(colour)
+    return min(r, g, b) >= 0xd0 and max(r, g, b) - min(r, g, b) <= 0x20
+
+
+def _is_yellow(colour):
+    r, g, b = _rgb(colour)
+    return r >= 0xe0 and g >= 0xb0 and r - b >= 0x80
+
+
+def test_no_help_topic_mentions_colour_by_type():
+    """The toggle was removed 2026-10-15 — the two tiers are the one look."""
+    for t in h._TOPIC_LIST:
+        for text in (t.title, t.summary, t.body):
+            low = _plain(text).lower()
+            assert "colour by type" not in low and "color by type" not in low, t.id
+    from nocturne.ui.solve_panel import _LAYER_LABELS
+    assert "Colour by type" not in [label for _k, label in _LAYER_LABELS]
+    assert "colour by" not in _src("README.md").lower()
+
+
+def test_plate_solve_help_two_tiers_are_the_ones_the_overlay_draws():
+    from nocturne.core.annotation_layout import LABEL_PT, Label
+    b = _plain(_body("plate-solve"))
+    assert "Messier, NGC and IC objects, and anything with a common name" in b
+    assert "soft salmon" in b and "IC 1805 over Heart Nebula" in b
+    assert "LDN and Barnard (B) dark nebulae, Sh 2 and vdB" in b and "smaller and white" in b
+    majors = [_solve_obj("IC 1805", 300, 300, common="Heart Nebula"),
+              _solve_obj("NGC 7822", 900, 300), _solve_obj("NGC 6611", 1500, 300, messier="16"),
+              _solve_obj("Sh 2-112", 2100, 2100, common="A Named Survey One")]
+    minors = [_solve_obj("LDN 1251", 300, 2100), _solve_obj("B 349", 900, 2100),
+              _solve_obj("Sh 2-199", 1500, 2100), _solve_obj("vdB 141", 2100, 1500)]
+    labels = {l.text: l for l in _solve_layout(majors + minors, objects=True)
+              if isinstance(l, Label)}
+    for name in ("IC 1805", "NGC 7822", "M 16", "Sh 2-112"):
+        assert _is_salmon(labels[name].colour), name
+        assert LABEL_PT[labels[name].size] > LABEL_PT["minor"], f"{name} is not larger"
+    for name in ("LDN 1251", "B 349", "Sh 2-199", "vdB 141"):
+        assert _is_white(labels[name].colour), name
+        assert labels[name].size == "minor", name
+    heart = labels["IC 1805"]
+    assert heart.sub == "Heart Nebula" and LABEL_PT[heart.sub_size] < LABEL_PT[heart.size], \
+        "the common name goes on a smaller line under the designation"
+
+
+def test_plate_solve_help_merged_duplicates_read_as_the_overlay_writes_them():
+    from nocturne.core.annotation_layout import Label
+    b = _plain(_body("plate-solve"))
+    assert "M 16 · IC 4703" in b and "Eagle Nebula underneath" in b
+    m16 = _solve_obj("NGC 6611", 400, 300, common="Eagle Nebula", messier="16", arcmin=120.0)
+    ic = _solve_obj("IC 4703", 430, 280, common="Eagle Nebula", arcmin=5.05)
+    labels = [p for p in _solve_layout([ic, m16], objects=True) if isinstance(p, Label)]
+    assert [(l.text, l.sub) for l in labels] == [("M 16 · IC 4703", "Eagle Nebula")]
+
+
+def test_plate_solve_help_no_lines_to_labels_and_crowded_ones_are_left_off():
+    from nocturne.core.annotation_layout import Label, Leader
+    b = _plain(_body("plate-solve"))
+    assert "no line runs from a label to its object" in b
+    assert "left off the picture" in b and "Objects in field list still has it" in b
+    from nocturne.core.catalog import NamedStar
+    objs = [_solve_obj(f"LDN {i}", 150 + 3 * i, 150, arcmin=0.5) for i in range(40)]
+    prims = _solve_layout(objs, [NamedStar("Deneb", 0, 0, 1.2, 100, 100)], shape=(300, 300),
+                          objects=True, stars=True)
+    assert not [p for p in prims if isinstance(p, Leader)], "only the compass and scale bar draw lines"
+    assert 0 < len([p for p in prims if isinstance(p, Label) and p.tier == "minor"]) < len(objs)
+
+
+def test_plate_solve_help_stars_are_yellow_with_a_gapped_crosshair():
+    from nocturne.core.annotation_layout import STAR_RETICLE, Label, Marker
+    from nocturne.core.catalog import NamedStar
+    b = _plain(_body("plate-solve"))
+    assert "Named stars are yellow" in b and "crosshair with a gap in the middle" in b
+    prims = _solve_layout([], [NamedStar("Deneb", 0, 0, 1.2, 1500, 1500)], stars=True)
+    marks = [p for p in prims if isinstance(p, Marker)]
+    names = [p for p in prims if isinstance(p, Label)]
+    assert [m.kind for m in marks] == ["star"] and _is_yellow(marks[0].colour)
+    assert [n.text for n in names] == ["Deneb"] and _is_yellow(names[0].colour)
+    gap, arm = STAR_RETICLE[marks[0].size]
+    assert gap > 0 and arm > 0, "the crosshair's arms stop short of the star"
+
+
+def test_plate_solve_help_grid_labels_sit_on_their_line_inside_the_picture():
+    from astropy.wcs import WCS
+    from nocturne.core.annotation_layout import GridLine, Label, build_layout_for, grid_lines
+    b = _plain(_body("plate-solve"))
+    assert "Grid labels sit on their own line, just inside the edge of the picture" in b
+    assert "the h and m set small and raised" in b
+    w, hgt = 1600, 1200
+    k = WCS(naxis=2)
+    k.wcs.crpix, k.wcs.crval = [w / 2, hgt / 2], [40.0, 61.0]
+    k.wcs.cdelt, k.wcs.ctype = [-0.0012, 0.0012], ["RA---TAN", "DEC--TAN"]
+    prims = build_layout_for([], [], k, (hgt, w), 4.3, {"grid": True}, "all",
+                             measure=lambda t, s: (7.0 * len(t), 14.0))
+    # Each label against ITS OWN line (the layout strips the text off the drawn
+    # GridLine; grid_lines() still pairs them), not the nearest of any line.
+    all_lines = grid_lines(k, (hgt, w), "#ffffff")
+    own = {gl.label: gl.points for gl in all_lines}
+    assert len(own) == len(all_lines), "two lines share a label; pairing by text is ambiguous"
+    grid = [p for p in prims if isinstance(p, Label) and p.tier == "grid"]
+    assert grid and own and [p for p in prims if isinstance(p, GridLine)]
+
+    def dist(px, py, pts):
+        best = math.inf
+        for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+            dx, dy = x2 - x1, y2 - y1
+            t = max(0.0, min(1.0, ((px - x1) * dx + (py - y1) * dy) / ((dx * dx + dy * dy) or 1)))
+            best = min(best, math.hypot(px - x1 - t * dx, py - y1 - t * dy))
+        return best
+
+    for l in grid:
+        assert 0 <= l.x and l.x + l.w <= w and 0 <= l.y and l.y + l.h <= hgt, l.text
+        cx, cy = l.x + l.w / 2, l.y + l.h / 2
+        assert dist(cx, cy, own[l.text]) <= l.h / 2 + 1, f"{l.text} is off its own line"
+    ra = [l for l in grid if l.parts]
+    assert ra and all(("h", True) in l.parts for l in ra), "RA's h is raised"
+
+
+def test_plate_solve_help_tips_still_ride_on_the_new_labels():
+    from astropy.wcs import WCS
+    from nocturne.core.annotation_layout import Label, build_layout_for
+    assert "Rest the pointer on it" in _body("plate-solve")
+    k = WCS(naxis=2)
+    k.wcs.crpix, k.wcs.crval = [800, 600], [40.0, 61.0]
+    k.wcs.cdelt, k.wcs.ctype = [-0.0012, 0.0012], ["RA---TAN", "DEC--TAN"]
+    prims = build_layout_for([], [], k, (1200, 1600), 4.3,
+                             {"grid": True, "compass": True, "scale": True}, "all",
+                             measure=lambda t, s: (7.0 * len(t), 14.0))
+    texts = [p for p in prims if isinstance(p, Label) and p.tier in ("furniture", "grid")]
+    assert "N" in {p.text for p in texts} and any(p.tier == "grid" for p in texts)
+    assert len([p for p in texts if p.tier == "furniture"]) == 2
+    assert all(p.tip for p in texts), "the N, the scale bar and the grid keep their tips"
