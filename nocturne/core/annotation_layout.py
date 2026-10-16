@@ -166,6 +166,16 @@ def _is_messier(obj) -> bool:
 
 _MAJOR_PREFIXES = ("NGC", "IC")
 
+# Lynds' 1965 bright nebulae: B1950 whole-minute positions and photographic-
+# fringe sizes. Drawn true-size, a dozen 40'-120' rings webbed the NGC 7000
+# frame, several round empty sky (render 2026-10-16); his call: labels only,
+# and only at density "all". The CSV keeps the size for the list's tooltip.
+_RINGLESS_PREFIXES = ("LBN",)
+
+
+def _ringless(obj) -> bool:
+    return getattr(obj, "name", "").startswith(_RINGLESS_PREFIXES)
+
 
 def tier_of(obj) -> str:
     """Two tiers, like the reference: what people name (Messier, NGC, IC, or
@@ -183,6 +193,8 @@ def priority_of(obj) -> int:
     most significant labels down before the crowded ones fight for space."""
     if getattr(obj, "mag", None) is not None and not hasattr(obj, "major_arcmin"):
         return 10                                   # a NamedStar
+    if _ringless(obj):
+        return 15                # under every other catalogue: placed last, never taking a spot
     if _is_messier(obj):
         return 40
     return 30 if obj.common else 20
@@ -192,6 +204,8 @@ def filter_by_density(objects, stars, pixscale_arcsec, density="balanced"):
     """Drop the least significant content first, so what survives at a lower
     density is always the most meaningful subset rather than an arbitrary one."""
     min_r, max_mag = _DENSITY.get(density, _DENSITY["balanced"])
+    if density != "all":
+        objects = [o for o in objects if not _ringless(o)]
     if min_r is None:
         keep = [o for o in objects if _is_messier(o) or o.common]
     else:
@@ -458,7 +472,7 @@ def _object_labels(groups, shape, pixscale, measure, u, occupied, rings=()):
         c = circle_for(o, pixscale)
         r = c.r if c.r <= max_r else 0.0
         big = c.r > _BIG_CIRCLE_FRAC * min(h, w)
-        if not (0 <= o.cx < w and 0 <= o.cy < h):
+        if not (0 <= o.cx < w and 0 <= o.cy < h) or _ringless(o):
             r, big = 0.0, False              # off-frame centre: label by the clamped anchor
         ax, ay = o.x, o.y
         cands = []
@@ -466,6 +480,11 @@ def _object_labels(groups, shape, pixscale, measure, u, occupied, rings=()):
             cands += [(ax - tw / 2, ay - th / 2), (ax - tw / 2, ay - th - _INNER_OFFSET * u),
                       (ax - tw / 2, ay + _INNER_OFFSET * u)]
         cands += _rim_candidates(ax, ay, r + gap, tw, th)
+        if _ringless(o):
+            # A bare point has no rim to slide round, only these 8 spots: try
+            # a few steps further out, still near enough to read as its own.
+            for k in (1, 2, 3):
+                cands += _rim_candidates(ax, ay, gap + k * th, tw, th)
         blockers = _rings_blocking(rings, ax, ay)
         # Outside the rim the label must stay off its own ring, which the frame
         # clamp can push it onto; the inner rim is inside it on purpose.
@@ -676,6 +695,8 @@ def build_layout_for(objects, stars, wcs, shape, pixscale, layers, density,
     for rep, grp in groups:
         tier = tier_of(rep)
         for o in grp:
+            if _ringless(o):
+                continue                     # no ring drawn, so none to keep labels off
             c = circle_for(o, pixscale, _RING_COLOUR[tier], tier)
             if c.r <= max_r:
                 prims.append(c)

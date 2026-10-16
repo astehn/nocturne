@@ -2816,6 +2816,24 @@ def test_plate_solve_help_two_tiers_are_the_ones_the_overlay_draws():
         "the common name goes on a smaller line under the designation"
 
 
+def test_plate_solve_help_lbn_is_ringless_and_only_at_all():
+    from nocturne.core.annotation_layout import Circle, Label, build_layout_for
+    b = _plain(_body("plate-solve"))
+    assert "LBN bright nebulae appear only when Density is All" in b
+    assert "a label with no ring" in b and "positions date from 1965 and are approximate" in b
+    lbn = _solve_obj("LBN 437", 1500, 1500, arcmin=60.0)
+
+    def lay(density):
+        base = {"objects": True}
+        return build_layout_for([lbn], [], None, (3000, 3000), 2.0, base, density,
+                                measure=lambda t, s: (7.0 * len(t), 14.0))
+    for d in ("minimal", "balanced"):
+        assert not [p for p in lay(d) if isinstance(p, Label)], d
+    prims = lay("all")
+    assert [p.text for p in prims if isinstance(p, Label)] == ["LBN 437"]
+    assert not [p for p in prims if isinstance(p, Circle)]
+
+
 def test_plate_solve_help_merged_duplicates_read_as_the_overlay_writes_them():
     from nocturne.core.annotation_layout import Label
     b = _plain(_body("plate-solve"))

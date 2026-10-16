@@ -129,3 +129,90 @@ def test_real_fields_keep_their_target_with_lbn_in_the_catalogue(ra, dec, want):
     objs = objects_in_field(_field(ra, dec), shape)
     assert any(o.name.startswith("LBN ") for o in objs)      # the field does hold LBN
     assert identify_target_parts(objs, shape)[0] == want
+
+
+# --- the overlay: LBN only at "all", a label with no ring (his call 2026-10-16) ----
+
+from nocturne.core.annotation_layout import (Circle, Label, build_layout_for,  # noqa: E402
+                                             filter_by_density)
+
+
+def _lay(name, major, cx, cy, common=""):
+    return CatalogObject(name, common, 0.0, 0.0, major, cx, cy, True, cx, cy)
+
+
+def _measure(text, size):
+    return (7.0 * len(text), 14.0)
+
+
+def _layout(objs, pixscale=3.75, density="all", shape=(1000, 1600)):
+    return build_layout_for(objs, [], None, shape, pixscale, {"objects": True}, density,
+                            measure=_measure)
+
+
+@pytest.mark.parametrize("density, kept", [("minimal", False), ("balanced", False), ("all", True)])
+def test_lbn_is_shown_only_at_density_all(density, kept):
+    lbn = _lay("LBN 437", 60.0, 500.0, 500.0)
+    control = _lay("LDN 1234", 60.0, 900.0, 500.0, common="Named" if density == "minimal" else "")
+    objs, _ = filter_by_density([lbn, control], [], 3.75, density)
+    assert (lbn in objs) is kept
+    assert control in objs                      # same size, other catalogue: the gate is LBN's
+
+
+def test_a_named_lbn_still_waits_for_all():
+    lbn = _lay("LBN 437", 60.0, 500.0, 500.0, common="Some Name")
+    assert filter_by_density([lbn], [], 3.75, "balanced")[0] == []
+
+
+def test_lbn_gets_a_label_but_no_ring():
+    lbn, ldn = _lay("LBN 437", 60.0, 500.0, 500.0), _lay("LDN 1234", 60.0, 1100.0, 500.0)
+    prims = _layout([lbn, ldn])
+    circles = [p for p in prims if isinstance(p, Circle)]
+    assert [(c.x, c.y) for c in circles] == [(1100.0, 500.0)]
+    assert {p.text for p in prims if isinstance(p, Label)} == {"LBN 437", "LDN 1234"}
+
+
+def test_an_lbn_label_sits_by_its_point_not_out_on_its_ring():
+    """14' at 3.75"/px is a 112 px radius: small enough to take its label
+    outside the rim. With no ring drawn, a label out there names empty sky."""
+    prims = _layout([_lay("LBN 437", 14.0, 800.0, 500.0)])
+    lab = next(p for p in prims if isinstance(p, Label))
+    assert math.hypot(lab.x + lab.w / 2 - 800.0, lab.y + lab.h / 2 - 500.0) < 60.0
+
+
+def test_an_lbn_claims_no_invisible_obstacle():
+    """At a wide-field scale a 10' LBN would be a small in-frame ring, and small
+    rings block other labels. Nothing is drawn there, so nothing may block."""
+    shape, ps = (1000, 1600), 30.0               # 10' -> r = 10 px
+    ngc = _lay("NGC 1", 0.0, 500.0, 500.0)
+    alone = next(p for p in _layout([ngc], ps, shape=shape) if isinstance(p, Label))
+    with_lbn = _layout([ngc, _lay("LBN 437", 10.0, alone.x + 20.0, alone.y + 7.0)], ps,
+                       shape=shape)
+    lab = next(p for p in with_lbn if isinstance(p, Label) and p.text == "NGC 1")
+    assert (lab.x, lab.y) == (alone.x, alone.y)
+
+
+def test_an_lbn_label_never_takes_the_spot_of_another_catalogues():
+    """NGC 7000 at "all" lost LDN 931 to an LBN: equal priority, and the LBN's
+    bigger catalogued size put it down first. An LBN is placed last."""
+    from nocturne.core.annotation_layout import priority_of
+    lbn, ldn = _lay("LBN 437", 120.0, 800.0, 500.0), _lay("LDN 931", 0.0, 800.0, 500.0)
+    assert priority_of(lbn) < priority_of(ldn)
+    alone = next(p for p in _layout([ldn]) if isinstance(p, Label))
+    both = {p.text: p for p in _layout([lbn, ldn]) if isinstance(p, Label)}
+    assert (both["LDN 931"].x, both["LDN 931"].y) == (alone.x, alone.y)
+
+
+def test_ngc7000_at_all_keeps_every_label_it_had_before_lbn():
+    from nocturne.core.annotation_layout import build_layout_for as layout
+    from nocturne.core.catalog import named_stars_in_field
+    shape, wcs = (2160, 3840), _field(314.7, 44.3)
+    objs = objects_in_field(wcs, shape)
+    before = [o for o in objs if not o.name.startswith("LBN")]
+
+    def texts(o):
+        prims = layout(o, named_stars_in_field(wcs, shape), wcs, shape, 3.75,
+                       {"objects": True, "stars": True, "grid": True, "compass": True,
+                        "scale": True}, "all", ui_scale=1.8)
+        return {p.text for p in prims if isinstance(p, Label) and not p.text.startswith("LBN")}
+    assert texts(before) - texts(objs) == set()
