@@ -63,7 +63,6 @@ def _pretty_name(name: str) -> str:
 
 
 @lru_cache(maxsize=1)
-@lru_cache(maxsize=1)
 def _curated_names() -> dict:
     """Colloquial names for objects whose catalogues carry none.
 
@@ -89,7 +88,9 @@ def _name_corrections() -> dict:
 def _curated_rows() -> list:
     if not _NAMES.exists():
         return []
-    with open(_NAMES, newline="", encoding="utf-8") as f:
+    # utf-8-sig: a BOM would make the header "\ufeffdesignation", and every
+    # row's designation None — all curated names gone, without a word.
+    with open(_NAMES, newline="", encoding="utf-8-sig") as f:
         return [((r.get("designation") or "").replace(" ", ""), (r.get("common") or "").strip())
                 for r in csv.DictReader(line for line in f if not line.startswith("#"))]
 
@@ -256,6 +257,18 @@ def identify_target(objects: list[CatalogObject], shape) -> str:
     FITS export), so the join stays here rather than moving to the callers."""
     name, common = identify_target_parts(objects, shape)
     return f"{name} · {common}" if common else name
+
+
+def name_correction(designation_str: str):
+    """The corrected common name for a designation ("" = the catalogue's name
+    was wrong and there is none), or None when the catalogue's name stands.
+    For callers holding a name from before the correction, e.g. a saved
+    bundle: `common_name_for(x) or saved` would bring a cleared name back."""
+    want = _lookup_key(designation_str)
+    for d, common in _name_corrections().items():
+        if _lookup_key(d) == want:
+            return common
+    return None
 
 
 def _lookup_key(designation_str: str) -> str:

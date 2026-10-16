@@ -490,3 +490,20 @@ def test_the_horsehead_field_is_no_longer_named_for_the_flame():
     from nocturne.core.catalog import identify_target, objects_in_field
     shape = (2160, 3840)
     assert "Flame" not in identify_target(objects_in_field(_field(85.25, -2.45), shape), shape)
+
+
+def test_a_byte_order_mark_does_not_silently_drop_every_curated_name(tmp_path, monkeypatch):
+    """Saved from an editor that writes a BOM, the header read "\\ufeffdesignation":
+    every row's designation came back None, and every curated name vanished."""
+    import nocturne.core.catalog as cat
+    f = tmp_path / "common_names.csv"
+    f.write_text("designation,common\nB33,Horsehead Nebula\n!IC0434,\n", encoding="utf-8-sig")
+    assert f.read_bytes().startswith(b"\xef\xbb\xbf")
+    monkeypatch.setattr(cat, "_NAMES", f)
+    cat._curated_names.cache_clear(); cat._name_corrections.cache_clear()
+    try:
+        assert cat._curated_names() == {"B33": "Horsehead Nebula"}
+        assert cat._name_corrections() == {"IC0434": ""}
+    finally:
+        monkeypatch.undo()
+        cat._curated_names.cache_clear(); cat._name_corrections.cache_clear()

@@ -7012,3 +7012,51 @@ def test_restored_old_names_merge_like_a_fresh_solve(qtbot, tmp_path):
     win._restore_solve_state(win._solve_state_dict())
     groups = merge_aliases(win._solve[2], 3.6)
     assert len(groups) == 1 and groups[0][0].common == "Eagle Nebula"
+
+
+# --- a bundle saved before the IC 434 correction (LBN review 2026-10-16) -------
+
+def _flame_pair():
+    """IC 434 and NGC 2024 as a bundle saved before the correction stored them."""
+    from nocturne.core.catalog import CatalogObject
+    ic434 = CatalogObject("IC 434", "Flame Nebula", 85.25, -2.45, 90.0, 8.0, 12.0, True, 8.0, 12.0)
+    ngc2024 = CatalogObject("NGC 2024", "", 85.43, -1.86, 30.0, 16.0, 12.0, True, 16.0, 12.0)
+    return ic434, ngc2024
+
+
+def test_restore_applies_a_name_correction_over_the_saved_name(qtbot, tmp_path):
+    """common_name_for("IC 434") is "" after the correction, and `"" or saved`
+    fell back to the saved "Flame Nebula": two Flames, one of them wrong."""
+    win = _window_solved_with(qtbot, tmp_path, list(_flame_pair()))
+    win._restore_solve_state(win._solve_state_dict())
+    assert {o.name: o.common for o in win._solve[2]} == {"IC 434": "", "NGC 2024": "Flame Nebula"}
+
+
+def test_restore_recomputes_a_saved_target_that_names_a_corrected_object(qtbot, tmp_path):
+    from nocturne.core.catalog import identify_target, identify_target_parts
+    win = _window_solved_with(qtbot, tmp_path, list(_flame_pair()))
+    d = win._solve_state_dict()
+    for k, v in (("target_solved", "IC 434 · Flame Nebula"), ("target_designation", "IC 434"),
+                 ("target_common", "Flame Nebula")):
+        win.project.set_current_metadata(k, v)
+    win._restore_solve_state(d)
+    meta = win.project.meta_at(win.project.position)
+    shape = win.project.shape_at(win.project.position)[:2]
+    desig, common = identify_target_parts(win._solve[2], shape)
+    assert (meta["target_designation"], meta["target_common"]) == (desig, common)
+    assert meta["target_solved"] == identify_target(win._solve[2], shape)
+    assert meta["target_solved"] != "IC 434 · Flame Nebula"
+
+
+def test_restore_leaves_a_saved_target_alone_when_nothing_was_corrected(qtbot, tmp_path):
+    win = _window_solved_with(qtbot, tmp_path, [_ic1805()] + list(_flame_pair()))
+    d = win._solve_state_dict()
+    # Not what a recompute would give (no NGC 7000 among the objects): only a
+    # target naming a CORRECTED designation may be rewritten.
+    saved = {"target_solved": "NGC 7000 · North America Nebula", "target_designation": "NGC 7000",
+             "target_common": "North America Nebula"}
+    for k, v in saved.items():
+        win.project.set_current_metadata(k, v)
+    win._restore_solve_state(d)
+    meta = win.project.meta_at(win.project.position)
+    assert {k: meta[k] for k in saved} == saved
