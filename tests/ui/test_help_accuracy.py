@@ -451,8 +451,13 @@ def test_the_export_help_explains_the_colour_space_control():
     that a user will otherwise assume the opposite of."""
     b = _body("export")
     sp = _src("nocturne/ui/step_panels.py")
-    for label in ("sRGB", "Display P3", "Adobe RGB"):
+    from nocturne.core.colour import SPACES
+    from nocturne.ui.step_panels import _SPACE_LABELS
+    for label in ("sRGB", "Display P3", "Adobe RGB", "ProPhoto"):
         assert label in b, f"the help never mentions {label!r}"
+    for space in SPACES:                # every button Export shows, by its short label
+        short = _SPACE_LABELS.get(space, space)
+        assert f"<b>{short}</b>" in b, f"the help does not name the {short} button"
     assert "Colour space" in sp, "the panel no longer has the control"
     assert "does <i>not</i> add colour" in b or "not</i> add colour" in b, (
         "the help must say plainly that a wider space adds no colour")
@@ -2923,3 +2928,204 @@ def test_plate_solve_help_tips_still_ride_on_the_new_labels():
     assert "N" in {p.text for p in texts} and any(p.tier == "grid" for p in texts)
     assert len([p for p in texts if p.tier == "furniture"]) == 2
     assert all(p.tip for p in texts), "the N, the scale bar and the grid keep their tips"
+
+
+# ---- Glossary (2026-10-16) ---------------------------------------------------
+# One list (nocturne/glossary.py) renders both the help topic and the website
+# page. The structure is checked here; the Nocturne-specific claims each have a
+# test that ties the sentence to the code it describes.
+
+from nocturne import glossary as gl  # noqa: E402
+
+# The topics that link a term into the glossary where it first appears. Kept
+# short on purpose: a link on every word is noise.
+GLOSSARY_LINKERS = ("getting-started", "dualband", "stretch", "levels", "color",
+                    "plate-solve", "stacking", "export")
+
+
+def _defn(name):
+    t = gl.lookup(name)
+    assert t is not None, f"no glossary entry {name!r}"
+    return t.definition
+
+
+def test_glossary_topic_is_reachable_and_lists_every_term_in_order():
+    concepts = next(s for s in h.SECTIONS if s.title == "Concepts")
+    assert "glossary" in concepts.topic_ids
+    body = _body("glossary")
+    pos = [body.find(f"<b>{t.term}</b>") for t in gl.sorted_terms()]
+    missing = [t.term for t, p in zip(gl.sorted_terms(), pos) if p < 0]
+    assert not missing, f"the Glossary topic leaves out {missing}"
+    assert pos == sorted(pos), "the Glossary topic is not in alphabetical order"
+
+
+def test_every_glossary_see_names_a_real_topic():
+    for t in gl.TERMS:
+        if t.see is not None:
+            assert t.see in h.TOPICS, f"{t.term} points at missing topic {t.see!r}"
+            assert f'href="help:{t.see}"' in _body("glossary"), t.term
+
+
+def test_every_link_in_the_help_resolves():
+    """A help: link to a missing topic or anchor is a click that does nothing."""
+    def anchors(body):
+        return set(re.findall(r'<a name="([^"]+)"', body))
+    for t in h._TOPIC_LIST:
+        for href in re.findall(r'href="([^"]+)"', t.body):
+            if href.startswith("#"):
+                assert href[1:] in anchors(t.body), f"{t.id}: {href}"
+                continue
+            assert href.startswith("help:"), f"{t.id}: unexpected link {href}"
+            tid, _, frag = href[5:].partition("#")
+            assert tid in h.TOPICS, f"{t.id}: link to missing topic {tid}"
+            if frag:
+                assert frag in anchors(h.TOPICS[tid].body), f"{t.id}: {href}"
+
+
+def test_the_glossary_is_linked_from_a_few_topics_and_sparingly():
+    total = 0
+    for tid in GLOSSARY_LINKERS:
+        n = _body(tid).count('href="help:glossary#')
+        assert 1 <= n <= 3, f"{tid} links {n} glossary terms"
+        total += n
+    everywhere = sum(t.body.count('href="help:glossary#') for t in h._TOPIC_LIST)
+    assert everywhere == total, "a topic outside the agreed list links the glossary"
+
+
+def test_glossary_link_helper_refuses_an_unknown_term():
+    with pytest.raises(KeyError):
+        h.gloss("nonsense", "no such term")
+
+
+def test_glossary_is_right_that_stack_takes_no_calibration_frames(qtbot):
+    """The Seestar subtracts its own darks before saving a sub (not testable
+    here); what IS ours is that Stack applies no calibration of its own: nothing
+    in it takes a dark, a flat or a bias."""
+    import dataclasses
+    from PySide6.QtWidgets import QAbstractButton, QLabel
+    from nocturne.settings import Settings
+    from nocturne.stacking.stacker import StackOptions
+    from nocturne.ui.stack_dialog import StackDialog
+    d = _defn("calibration frames")
+    assert "applies no calibration of its own" in d
+    assert "darks" in d and "flats" in d and "bias" in d
+    assert "Siril" not in d, "no advice to stack elsewhere: Seestar subs are already dark-calibrated"
+    bad = re.compile(r"\b(darks?|flats?|bias)\b", re.I)
+    for f in dataclasses.fields(StackOptions):
+        assert not bad.search(f.name.replace("_", " ")), f.name
+    dlg = StackDialog(Settings())
+    qtbot.addWidget(dlg)
+    shown = [w.text() for w in dlg.findChildren(QLabel)]
+    shown += [w.text() for w in dlg.findChildren(QAbstractButton)]
+    for s in shown:
+        assert not bad.search(_plain(s)), f"Stack shows {s!r}"
+
+
+def test_glossary_drizzle_factor_is_the_one_stack_offers():
+    from nocturne.stacking.drizzle_stack import DRIZZLE_SCALE
+    d = _defn("drizzle")
+    assert f"×{DRIZZLE_SCALE} only" in d
+    assert "four times the pixels" in d and DRIZZLE_SCALE ** 2 == 4
+    assert f"Drizzle ×{DRIZZLE_SCALE}" in _src("nocturne/ui/stack_dialog.py")
+
+
+def test_glossary_names_exactly_the_colour_spaces_export_offers():
+    from nocturne.core.colour import EIGHT_BIT_SPACES, SPACES
+    d = _defn("colour space")
+    for space in SPACES:
+        assert space in d, f"the glossary leaves out {space!r}"
+    named = re.findall(r"sRGB|Display P3|Adobe RGB|ProPhoto RGB|Rec\.? ?2020|DCI-P3", d)
+    assert set(named) == set(SPACES), f"names a space Export lacks: {set(named) - set(SPACES)}"
+    assert EIGHT_BIT_SPACES == ("sRGB",) and "for 16-bit TIFF" in d
+    assert "does not add colour" in d
+
+
+def test_glossary_pixel_scale_and_field_of_view_match_the_instruments():
+    from nocturne.core.instrument import (SEESTAR_S30_PRO as pro, SEESTAR_S50 as s50,
+                                          SEESTAR_S50_PRO as s50p)
+    ps = _defn("pixel scale")
+    assert f"S30 Pro pixel covers about {pro.pixel_scale_arcsec:.1f}″" in ps
+    assert f"S50 Pro pixel about {s50p.pixel_scale_arcsec:.1f}″" in ps
+    assert f"S50 pixel about {s50.pixel_scale_arcsec:.1f}″" in ps
+    fov = _defn("field of view")
+    diag = math.hypot(pro.width, pro.height) * pro.pixel_scale_arcsec / 3600
+    assert f"about {diag:.1f}° corner to corner" in fov
+    for cam, txt in ((pro, "S30 Pro covers about"), (s50p, "S50 Pro about"),
+                     (s50, "S50 about")):
+        w = cam.width * cam.pixel_scale_arcsec / 3600
+        hgt = cam.height * cam.pixel_scale_arcsec / 3600
+        assert f"{txt} {w:.1f}° × {hgt:.1f}°".replace(".0°", "°") in fov, (cam.name, w, hgt)
+    deg = _defn("degree")
+    assert f"about {pro.width * pro.pixel_scale_arcsec / 3600:.0f}° wide" in deg
+
+
+def test_glossary_star_split_order_matches_the_code():
+    import inspect
+    from nocturne.steps import star_split
+    src = inspect.getsource(star_split.preferred_splitter)
+    assert src.index("rcastro_valid(settings)") < src.index("starnet_valid(settings)")
+    d = _defn("star separation")
+    assert d.index("StarXTerminator") < d.index("StarNet2") < d.index("built-in")
+
+
+def test_glossary_palettes_are_the_ones_narrowband_offers():
+    from nocturne.core.narrowband import GOLD_BLUE, OFFERED_PALETTES
+    assert "HOO" in OFFERED_PALETTES and "Narrowband" in _defn("HOO")
+    assert "Pseudo-SHO" in OFFERED_PALETTES and "Pseudo-SHO" in _defn("SHO")
+    sho = _defn("SHO")
+    assert "SHO" not in OFFERED_PALETTES and "does not offer it" in sho
+    assert GOLD_BLUE in OFFERED_PALETTES and GOLD_BLUE in sho
+    assert "cannot be captured" in _defn("SII")
+
+
+def test_glossary_names_the_engines_the_steps_really_use():
+    assert "gaia" in _src("nocturne/core/spcc.py").lower() and "Gaia" in _body("color")
+    spcc = _defn("SPCC")
+    assert "Gaia" in spcc and "plate-solves" in spcc and "LP filter it steps aside" in spcc
+    assert "steps aside" in _body("color")          # the dual-band claim, from the step's own help
+    # "When the file says it was shot through the LP filter": the Color step
+    # decides from the FILTER card, not from the picture.
+    assert "detect_data_type(img.metadata" in _src("nocturne/steps/color.py")
+    assert "ASTAP" in _defn("plate solving")
+    assert "ASTAP" in _body("plate-solve") and "ASTAP" in _body("tools")
+    assert "GraXpert" in _defn("background extraction")
+    assert "from ..tools.graxpert import GraXpert" in _src("nocturne/steps/background.py")
+    assert "BlurXTerminator" in _defn("deconvolution")
+    assert "not true deconvolution" in _defn("deconvolution")
+
+
+def test_glossary_dual_band_matches_the_filter_detection():
+    from nocturne.core.filter_type import detect_data_type
+    assert detect_data_type({"filter": "LP"}) == "dualband"
+    assert detect_data_type({"filter": "IRCUT"}) == "broadband"
+    d = _defn("dual-band")
+    assert "LP filter is dual-band" in d and "IRCUT" in d
+    # Which gas lands on which pixels, as the Dualband topic (itself guarded) says.
+    assert "red pixels" in _defn("Hα") and "Ha on the red ones" in _body("dualband")
+    assert "green and blue pixels" in _defn("OIII") and "OIII on the green and blue" in _body("dualband")
+
+
+def test_glossary_recipe_and_preset_match_their_topics():
+    assert ".json" in _defn("recipe") and "<b>.json</b>" in _body("recipes")
+    assert "Batch" in _defn("recipe")
+    assert "picture you have open" in _defn("preset") and "picture you have open" in _body("presets")
+
+
+def test_glossary_clipping_and_histogram_match_the_readout():
+    d = _defn("clipping")
+    assert "from Stretch onwards" in d and "per colour" in d
+    assert "From Stretch onward" in _body("readout") and "per colour channel" in _body("readout")
+    assert "top right" in _defn("histogram") and "histogram (top-right)" in _body("getting-started")
+
+
+def test_glossary_hoo_green_is_made_from_both_gases():
+    """'with green made from the two': Nocturne's HOO green is synthetic_green
+    (Ha and OIII blended), not OIII copied into green as classic HOO does."""
+    from nocturne.core import narrowband as nb
+    assert "green made from the two" in _defn("HOO")
+    ha, o3 = np.full(4, 0.8, np.float32), np.full(4, 0.2, np.float32)
+    _, g, b = nb._combine(ha, o3, "HOO", 0.6, scnr=False)
+    assert np.allclose(b, o3), "blue is OIII"
+    assert not np.allclose(g, o3), "green is OIII alone — the classic HOO the glossary says we do not do"
+    _, g2, _ = nb._combine(ha * 0.5, o3, "HOO", 0.6, scnr=False)
+    assert not np.allclose(g, g2), "green does not depend on Ha"

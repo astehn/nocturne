@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QListWidget, QListWidgetItem, QPushButton,
     QTextBrowser, QVBoxLayout,
@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 
 from .. import APP_NAME
 from . import help_content as hc
+from .theme import ACCENT
 
 _TOPIC_ROLE = Qt.ItemDataRole.UserRole
 
@@ -39,6 +40,13 @@ class HelpDialog(QDialog):
         self.viewer = QTextBrowser()
         self.viewer.setObjectName("helpBody")
         self.viewer.setOpenExternalLinks(False)
+        # Links are ours to follow: "help:<topic>#<anchor>" crosses topics (the
+        # Glossary), "#<anchor>" stays on the page. Left to itself QTextBrowser
+        # would try to load "help:glossary" as a file and show a blank page.
+        self.viewer.setOpenLinks(False)
+        self.viewer.anchorClicked.connect(self._follow)
+        self.viewer.document().setDefaultStyleSheet(
+            f"a {{ color: {ACCENT}; text-decoration: none; }}")
 
         close_btn = QPushButton("Close")
         close_btn.clicked.connect(self.accept)
@@ -76,6 +84,19 @@ class HelpDialog(QDialog):
                 self.nav.blockSignals(False)
                 break
         self._render(t)
+
+    def _follow(self, url: QUrl) -> None:
+        if url.scheme() == "help":
+            if hc.topic(url.path()) is None:
+                return
+            self.show_topic(url.path())
+        elif url.scheme() or url.path():
+            return                        # nothing in the help links outside it
+        if url.fragment():
+            self._scroll_to(url.fragment())
+
+    def _scroll_to(self, anchor: str) -> None:
+        self.viewer.scrollToAnchor(anchor)
 
     def _render(self, t) -> None:
         if t is None:
