@@ -104,6 +104,11 @@ _FORBIDDEN = [
     (re.compile(r"\b[a-z]+_[a-z_]+\b"), "a snake_case key"),
     (re.compile(r"\b(rcastro|graxpert|nr:|free)\b"), "an internal engine id"),
     (re.compile(r"\d\.\d{6,}"), "an unrounded float"),
+    # 2026-10-17: Curves printed "(0.25, 0.3)" point tuples and its slot keys.
+    (re.compile(r"\(\s*-?\d+(\.\d+)?\s*,\s*-?\d"), "a tuple repr"),
+    (re.compile(r"\b(rgb|[rgbs])/[a-z]+\b"), "a curve slot key"),
+    # A value the panel shows as "−0.10" printed with a hyphen ("-0.1").
+    (re.compile(r"(?<![\w.])-\d"), "an ASCII minus"),
 ]
 
 

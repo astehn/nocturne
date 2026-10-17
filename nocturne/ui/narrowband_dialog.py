@@ -11,8 +11,8 @@ from PySide6.QtWidgets import (
 from ..core.image import AstroImage
 from ..core.narrowband import TAME_SPAN
 from ..core.narrowband import (
-    GOLD_BLUE, PALETTE_DESCRIPTIONS, OFFERED_PALETTES as _CORE_PALETTES, PALETTES_USING_BLEND,
-    NarrowbandParams, gold_blue_stats, palette_defaults, render, screen,
+    GOLD_BLUE, PALETTE_DESCRIPTIONS, OFFERED_PALETTES as _CORE_PALETTES,
+    NarrowbandParams, gold_blue_stats, palette_controls, palette_defaults, render, screen,
 )
 from ..settings import resolve_binary
 from ..steps.star_split import preferred_splitter, splitter_name
@@ -429,7 +429,8 @@ class NarrowbandDialog(QDialog):
         is REPLACED there by Gold and Blue, so those rows are swapped, not
         greyed (see the form layout).
         """
-        active = palette in PALETTES_USING_BLEND
+        used = palette_controls(palette)
+        active = "blend_amount" in used
         self.blend_slider.setEnabled(active)
         self.blend_val.setEnabled(active)
         if active:
@@ -442,13 +443,12 @@ class NarrowbandDialog(QDialog):
             tip = (f"{palette} builds its green directly from one channel, so the "
                    f"blend has no effect here. Switch to HOO to use it.")
         self.blend_slider.setToolTip(tip)
-        lightness = palette != GOLD_BLUE
+        lightness = "lightness_preserve" in used
         self.lightness_check.setEnabled(lightness)
         self.lightness_check.setToolTip("" if lightness else _LIGHTNESS_INERT_TIP)
-        gb = palette == GOLD_BLUE
-        self._controls.setRowVisible(self._sat_row, not gb)
-        self._controls.setRowVisible(self._gold_row, gb)
-        self._controls.setRowVisible(self._blue_row, gb)
+        self._controls.setRowVisible(self._sat_row, "saturation" in used)
+        self._controls.setRowVisible(self._gold_row, "gold_strength" in used)
+        self._controls.setRowVisible(self._blue_row, "blue_strength" in used)
 
     def _on_mode_changed(self, index: int) -> None:
         self.preview.set_mode(MODE_CHOICES[index][1])

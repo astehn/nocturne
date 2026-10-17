@@ -192,85 +192,183 @@ def _stretch_params(ser: dict) -> list[str]:
 
 
 _CURVE_CHANNEL = {"rgb": "RGB", "r": "Red", "g": "Green", "b": "Blue", "s": "Saturation"}
+# What raising / lowering a channel's curve does, in a reader's words.
+_CURVE_VERBS = {"rgb": ("brightens", "darkens"), "r": ("adds red to", "takes red from"),
+                "g": ("adds green to", "takes green from"),
+                "b": ("adds blue to", "takes blue from")}
+_TONES = ("the shadows", "the midtones", "the highlights")
+_CURVE_STILL = 0.004        # about one 8-bit level: below it a region is untouched
+
+
+def _and_list(words: list[str]) -> str:
+    """"the shadows, midtones and highlights": the article said once."""
+    if not words:
+        return ""
+    bare = [words[0]] + [w.removeprefix("the ") for w in words[1:]]
+    return bare[0] if len(bare) == 1 else f"{', '.join(bare[:-1])} and {bare[-1]}"
+
+
+def _curve_words(channel: str, pts) -> str:
+    """What one curve does, from the curve itself: which thirds of the range it
+    raises or lowers (or, on Saturation, whether it raises or lowers), and any
+    moved black or white point."""
+    import numpy as np
+    from .curves import build_lut
+    lut = build_lut(pts)
+    diff = lut - np.linspace(0.0, 1.0, lut.size)
+    # A third is raised only when the curve sits above the diagonal across it,
+    # lowered only when below: an S-curve's crossing third is neither.
+    thirds = np.array_split(diff, 3)
+    up_at = [i for i, t in enumerate(thirds)
+             if float(t.mean()) > _CURVE_STILL and float(t.min()) > -_CURVE_STILL]
+    down_at = [i for i, t in enumerate(thirds)
+               if float(t.mean()) < -_CURVE_STILL and float(t.max()) < _CURVE_STILL]
+    parts = []
+    if channel == "s":
+        parts.append("raises and lowers saturation" if up_at and down_at else
+                     "raises saturation" if up_at else "lowers saturation" if down_at
+                     else "")
+    else:
+        raise_, lower = _CURVE_VERBS.get(channel, _CURVE_VERBS["rgb"])
+        up = [_TONES[i] for i in up_at]
+        down = [_TONES[i] for i in down_at]
+        # In tonal order, so an S-curve reads "darkens the shadows, brightens
+        # the highlights".
+        groups = sorted([(down, lower), (up, raise_)], key=lambda g: _TONES.index(g[0][0])
+                        if g[0] else 9)
+        parts += [f"{verb} {_and_list(where)}" for where, verb in groups if where]
+    (x0, y0), (x1, y1) = pts[0], pts[-1]
+    if x0 > 0.001 and y0 < 0.001:
+        parts.append(f"black point at {x0:.2f}")
+    elif y0 > 0.001:
+        parts.append(f"black lifted to {y0:.2f}")
+    if x1 < 0.999 and y1 > 0.999:
+        parts.append(f"white point at {x1:.2f}")
+    elif y1 < 0.999:
+        parts.append(f"white lowered to {y1:.2f}")
+    return ", ".join(p for p in parts if p) or "no visible change"
 
 
 def _curves_params(ser) -> list[str]:
-    from .curves import normalize_curves
+    """Per curve: its channel and colour range as the dialog's selectors name
+    them, how many points it has, what it does, and its inner points in the
+    editor's own readout ("in 0.25 → out 0.30") — never the stored tuples."""
+    from .curves import CURVE_CHANNELS, normalize_curves
     lines = []
-    for key, pts in normalize_curves(ser).items():
+    curves = normalize_curves(ser)
+    order = sorted(curves, key=lambda k: (CURVE_CHANNELS.index(k.split("/")[0])
+                                          if k.split("/")[0] in CURVE_CHANNELS else 99, k))
+    for key in order:
+        pts = sorted(curves[key])
         channel, _, target = key.partition("/")
-        label = _CURVE_CHANNEL.get(channel, channel)
+        label = f"{_CURVE_CHANNEL.get(channel, channel)} curve"
         if target and target != "all":
-            label += f", {target} only"
-        path = " → ".join(f"({_num(float(x))}, {_num(float(y))})" for x, y in pts)
-        lines.append(f"- {label} curve: {path}")
+            label += f", {target.capitalize()} only"
+        inner = [(x, y) for x, y in pts[1:-1]]
+        where = (" (" + ", ".join(f"in {x:.2f} → out {y:.2f}" for x, y in inner) + ")"
+                 if inner else "")
+        lines.append(f"- {label}: {len(pts)} points — {_curve_words(channel, pts)}{where}")
     return lines or ["- no curve set"]
 
 
 # ---- Tools with dialogs ----------------------------------------------------
 def _narrowband_params(ser: dict) -> list[str]:
-    """The dialog's controls by the labels beside them, in its order, in the
+    """The controls the chosen palette USES (core.narrowband.palette_controls,
+    the dialog's own greying and hiding), by the labels beside them, in the
     units its value labels show (narrowband_dialog._update_value_labels).
     Fields with no control (black point, SCNR…) are fixed and not listed."""
-    from .narrowband import GOLD_BLUE, PALETTES_USING_BLEND
-    gold_blue = ser.get("palette") == GOLD_BLUE
-    lines = [f"- palette: {ser.get('palette', '')}"]
-    if "oxygen_strength" in ser:
-        oxy = float(ser["oxygen_strength"])
-        lines.append(f"- oxygen strength: {round(oxy * 100)}%" if gold_blue
-                     else f"- oxygen strength: ×{oxy:.2f}")
-    elif "oiii_boost" in ser:
-        # The control before 2026-09-09; it has no equivalent today.
-        lines.append(f"- OIII boost (an earlier control): ×{float(ser['oiii_boost']):.2f}")
-    # Greyed in the dialog where they do nothing (narrowband_dialog
-    # ._update_palette_controls): not listed as though they had an effect.
-    if "blend_amount" in ser and ser.get("palette") in PALETTES_USING_BLEND:
-        lines.append(f"- green blend: {float(ser['blend_amount']):.2f}")
-    if "protect_background" in ser:
-        lines.append(f"- protect background: {round(float(ser['protect_background']) * 100)}%")
-    if gold_blue:
-        for key, label in (("gold_strength", "gold"), ("blue_strength", "blue")):
-            if key in ser:
-                lines.append(f"- {label}: {round(float(ser[key]) * 100)}%")
-    elif "saturation" in ser:
-        lines.append(f"- saturation: {float(ser['saturation']):.2f}")
-    if "highlight_reduction" in ser:
-        from .narrowband import TAME_SPAN as span
-        tame = round((float(ser["highlight_reduction"]) - 1.0) / span * 100)
-        lines.append(f"- tame core: {'off' if tame <= 0 else f'{tame}%'}")
-    if "brightness" in ser:
-        lines.append(f"- brightness: ×{float(ser['brightness']):.2f}")
-    if "lightness_preserve" in ser and not gold_blue:
-        lines.append(f"- preserve lightness: {_num(bool(ser['lightness_preserve']))}")
+    from .narrowband import GOLD_BLUE, TAME_SPAN, palette_controls
+    palette = ser.get("palette", "")
+    gold_blue = palette == GOLD_BLUE
+    pct = lambda v: f"{round(float(v) * 100)}%"            # noqa: E731
+    fmt = {
+        # Gold and blue: where the gold/blue line sits; else a gain on OIII.
+        "oxygen_strength": ("oxygen strength", pct if gold_blue
+                            else lambda v: f"×{float(v):.2f}"),
+        "blend_amount": ("green blend", lambda v: f"{float(v):.2f}"),
+        "protect_background": ("protect background", pct),
+        "saturation": ("saturation", lambda v: f"{float(v):.2f}"),
+        "gold_strength": ("gold", pct),
+        "blue_strength": ("blue", pct),
+        "highlight_reduction": ("tame core", lambda v: (
+            "off" if (t := round((float(v) - 1.0) / TAME_SPAN * 100)) <= 0 else f"{t}%")),
+        "brightness": ("brightness", lambda v: f"×{float(v):.2f}"),
+        "lightness_preserve": ("preserve lightness", lambda v: "on" if v else "off"),
+    }
+    lines = [f"- palette: {palette}"]
+    for field in palette_controls(palette):
+        if field in ser:
+            label, show = fmt[field]
+            lines.append(f"- {label}: {show(ser[field])}")
+        elif field == "oxygen_strength" and "oiii_boost" in ser:
+            # The control before 2026-09-09; it has no equivalent today.
+            lines.append(f"- OIII boost (an earlier control): ×{float(ser['oiii_boost']):.2f}")
     return lines
 
 
-# Colour Balance's three sliders run Cyan—Red, Magenta—Green, Yellow—Blue from
-# −100 to +100 (color_balance_dialog._AXES); the option stores them / 100.
-_CB_AXES = ("red", "green", "blue")
+# Colour Balance's three sliders, as the dialog labels them
+# (color_balance_dialog._AXES), from −100 to +100; the option stores them / 100.
+_CB_AXES = ("Cyan — Red", "Magenta — Green", "Yellow — Blue")
+
+
+def _signed(v: float, fmt: str) -> str:
+    """"+2", "−1": the sign a slider's value label shows, with a real minus."""
+    return format(v, fmt).replace("-", "−")
 
 
 def _colour_balance_params(ser: dict) -> list[str]:
+    """In the dialog's words: each tonal range by its Tone name, each slider by
+    both its ends, then the switches and the Limit-to rows."""
     from .color_balance import TONES
     lines = []
     for tone in TONES:
         v = ser.get(tone) or (0, 0, 0)
-        if not any(float(x) for x in v):
-            continue
-        moved = ", ".join(f"{axis} {round(float(x) * 100):+d}".replace("-", "−")
-                          for axis, x in zip(_CB_AXES, v) if round(float(x) * 100))
-        lines.append(f"- {tone}: {moved}")
+        moved = [f"{axis} {_signed(round(float(x) * 100), '+d')}"
+                 for axis, x in zip(_CB_AXES, v) if round(float(x) * 100)]
+        if moved:
+            lines.append(f"- {tone.capitalize()}: {', '.join(moved)}")
     if not lines:
         lines.append("- no tonal range moved")
-    lines.append(f"- preserve luminosity: {_num(bool(ser.get('preserve_lum', True)))}")
-    lines.append(f"- strength: {round(float(ser.get('strength', 1.0)) * 100)}%")
+    lines.append(f"- Preserve luminosity: {'on' if ser.get('preserve_lum', True) else 'off'}")
+    lines.append(f"- Strength: {round(float(ser.get('strength', 1.0)) * 100)}%")
     lo, hi = float(ser.get("lo", 0.0)), float(ser.get("hi", 1.0))
     if (lo, hi) != (0.0, 1.0):
-        lines.append(f"- limited to the brightness range {lo:.2f}–{hi:.2f}, "
-                     f"feather {float(ser.get('feather', 0.08)):.2f}")
+        lines.append(f"- Range: brightness {lo:.2f} to {hi:.2f}, "
+                     f"Feather {float(ser.get('feather', 0.08)):.2f}")
     if ser.get("invert"):
-        lines.append("- range inverted: yes (everything outside it was adjusted)")
+        lines.append("- Invert the range: on")
     return lines
+
+
+def _tint_values(ser) -> tuple[float, float] | None:
+    try:
+        t, w = (float(v) for v in ser)
+    except (TypeError, ValueError):
+        return None
+    return t, w
+
+
+# The panel's two sliders (step_panels: "Green ←→ Magenta", "Cool ←→ Warm"),
+# −1…+1, shown "+0.25" as the panel's value labels do.
+_TINT_SLIDERS = (("tint", "Green ←→ Magenta", ("green", "magenta")),
+                 ("temperature", "Cool ←→ Warm", ("cool", "warm")))
+
+
+def _tint_headline(ser) -> str:
+    if (v := _tint_values(ser)) is None:
+        return ""
+    return ", ".join(f"{name} {_signed(x, '+.2f')}"
+                     for (name, _l, _e), x in zip(_TINT_SLIDERS, v))
+
+
+def _tint_params(ser) -> list[str]:
+    if (v := _tint_values(ser)) is None:
+        return [f"- values: {', '.join(_num(x) for x in ser)}"]
+    out = []
+    for (name, label, (lo, hi)), x in zip(_TINT_SLIDERS, v):
+        where = "centred" if round(x, 2) == 0 else f"towards {hi if x > 0 else lo}"
+        out.append(f"- {name} ({label}): {_signed(x, '+.2f') if round(x, 2) else '0.00'}, {where}")
+    return out
 
 
 def _spikes_params(ser: dict) -> list[str]:
@@ -314,6 +412,8 @@ def _headline(name: str, ser) -> str:
         return str(ser)
     if isinstance(ser, (int, float, str)):
         return f"{ser}"
+    if isinstance(ser, list) and name == "Colour Tint":
+        return _tint_headline(ser)
     if isinstance(ser, dict):
         if name == "Levels":
             return _levels_headline(ser)
@@ -349,8 +449,6 @@ _POSITIONAL_FIELDS = {
     "Levels": ("black point", "midtones", "white point"),
     "Saturation": ("saturation", "nebula boost"),
     "Starless Levels": ("black point", "white point"),
-    # step_panels' Colour Tint sliders: "Green ←→ Magenta", "Cool ←→ Warm".
-    "Colour Tint": ("green ←→ magenta", "cool ←→ warm"),
 }
 
 
@@ -400,6 +498,8 @@ def _render_params(ser, name: str = "") -> list[str]:
         return _DICT_PARAMS[name](ser)
     if isinstance(ser, list) and name == "Curves":
         return _curves_params(ser)      # a bare list is the pre-matrix RGB curve
+    if isinstance(ser, list) and name == "Colour Tint":
+        return _tint_params(ser)
     if isinstance(ser, dict):
         # A step with no renderer yet: readable keys and values rather than
         # Python, so a new tool degrades to plain words (the every-step test

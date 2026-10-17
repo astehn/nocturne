@@ -225,6 +225,28 @@ OFFERED_PALETTES = tuple(p for p in PALETTES if p not in RETIRED_PALETTES)
 # this so the constant cannot drift away from what _combine actually does.
 PALETTES_USING_BLEND = frozenset({"HOO"})
 
+# The Narrowband dialog's controls, as the NarrowbandParams fields they set, in
+# the dialog's order. The rest (black point, SCNR, highlight recover) are fixed.
+DIALOG_CONTROLS = ("oxygen_strength", "blend_amount", "protect_background", "saturation",
+                   "gold_strength", "blue_strength", "highlight_reduction", "brightness",
+                   "lightness_preserve")
+
+
+def palette_controls(palette: str) -> tuple[str, ...]:
+    """The dialog controls that reach the picture in `palette`, in its order.
+
+    ONE answer for what the dialog greys or hides and what the provenance
+    report lists, so the two cannot drift; test_which_controls_a_palette_uses_
+    is_measured_not_asserted re-measures it against render(). Gold and blue
+    keeps the picture's own lightness and takes Gold and Blue IN PLACE of
+    Saturation (the dialog holds that at the palette default)."""
+    unused = set() if palette in PALETTES_USING_BLEND else {"blend_amount"}
+    if palette == GOLD_BLUE:
+        unused |= {"saturation", "lightness_preserve"}
+    else:
+        unused |= {"gold_strength", "blue_strength"}
+    return tuple(c for c in DIALOG_CONTROLS if c not in unused)
+
 # What each palette does, in the user's terms rather than the formula's. The
 # palette names alone (HOO / Pseudo-SHO / ...) tell a newcomer
 # nothing about what they are about to get. Colour words are MEASURED: rendering
