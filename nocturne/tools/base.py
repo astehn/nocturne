@@ -13,12 +13,24 @@ from ..core import sessionlog
 
 class ToolError(Exception):
     def __init__(self, command, returncode: int, stdout: str, stderr: str, elapsed: float) -> None:
-        super().__init__(f"CLI failed ({returncode}): {stderr}")
+        # A tool that streams (StarNet2, GraXpert) has its stderr folded into
+        # stdout, so stderr is empty and the message used to end at the colon.
+        # Its own first complaint is the useful line: StarNet2 opens with
+        # "Image size is too small for the window!" before any routine output.
+        said = (stderr or "").strip() or _first_line(stdout)
+        super().__init__(f"CLI failed ({returncode}): {said}")
         self.command = list(command)
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
         self.elapsed = elapsed
+
+
+def _first_line(text: str) -> str:
+    for line in (text or "").splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
 
 
 def write_temp_fits(img: AstroImage, path: str) -> None:

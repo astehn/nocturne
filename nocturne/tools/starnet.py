@@ -63,6 +63,10 @@ def parse_progress(line: str):
     return float(m.group(1)) if m else None
 
 
+# StarNet2's tile: it will not take a picture smaller than this on either side.
+_WINDOW = 512
+
+
 def _write_tiff(img: AstroImage, path: str) -> None:
     data = np.clip(np.asarray(img.data, np.float32), 0.0, 1.0)
     if data.ndim == 2:
@@ -108,8 +112,22 @@ class StarNet:
             if pct is not None:
                 report_progress(int(round(pct)), 100)
 
+        # StarNet2 refuses an image under its 512 px window on either side
+        # ("Image size is too small for the window!", exit 255) -- measured
+        # 2026-10-17: 511x800 fails, 512x512 runs. An Upscale Crop of the
+        # Lagoon's core (501x501) hit it. Mirror the picture out to the
+        # window and crop both layers back, so a small crop splits like a big
+        # one; the mirrored border is never seen.
+        h, w = img.data.shape[:2]
+        pad_h, pad_w = max(0, _WINDOW - h), max(0, _WINDOW - w)
+        sent = img
+        if pad_h or pad_w:
+            widths = ((0, pad_h), (0, pad_w)) + ((0, 0),) * (img.data.ndim - 2)
+            sent = AstroImage(np.pad(np.asarray(img.data), widths, mode="symmetric"),
+                              is_linear=img.is_linear, metadata=dict(img.metadata))
+
         try:
-            _write_tiff(img, src)
+            _write_tiff(sent, src)
             # NO --quiet. It was here from the first version, and it is the
             # whole reason a split showed nothing: measured 2026-09-19, with
             # --quiet StarNet2 prints a single newline and NOTHING else, so
@@ -126,7 +144,11 @@ class StarNet:
                     "StarNet2 finished without writing both outputs — the "
                     f"binary at {self.binary_path} may be an incomplete copy "
                     "(its weights package must sit beside it)")
-            return _read_tiff(starless, img), _read_tiff(stars, img)
+            starless_img, stars_img = _read_tiff(starless, img), _read_tiff(stars, img)
+            if pad_h or pad_w:
+                starless_img.data = np.ascontiguousarray(starless_img.data[:h, :w])
+                stars_img.data = np.ascontiguousarray(stars_img.data[:h, :w])
+            return starless_img, stars_img
         finally:
             for f in (src, starless, stars):
                 try:
