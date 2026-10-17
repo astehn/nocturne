@@ -47,10 +47,10 @@ function Invoke-Selftest {
     # Returns @{ Code = <exit code>; Output = <lines> }. See the header for why
     # the redirect is the whole mechanism.
     #
-    # Under a throwaway USERPROFILE: every launch of the app, a self test
-    # included, opens ~\.nocturne\session.log and rotates the previous one
-    # away, and the build machine may be somebody's own -- a build must not cost
-    # them the log a support report would carry. Tool detection is unaffected:
+    # Under a throwaway USERPROFILE: a self test no longer opens the session log
+    # (since 2026-10-17), but it still writes ~\.nocturne\nocturne.log, and the
+    # build machine may be somebody's own -- a build must not add to the log a
+    # support report would carry. Tool detection is unaffected:
     # the installs it looks for live under LOCALAPPDATA and ProgramFiles.
     param([string]$Exe, [string]$Flag)
     $out = [IO.Path]::GetTempFileName()
