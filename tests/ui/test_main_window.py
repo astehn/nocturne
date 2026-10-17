@@ -4377,15 +4377,28 @@ def test_trim_appends_and_keeps_every_processing_step(qtbot, tmp_path, monkeypat
 
 
 def test_a_trim_records_the_region_it_kept(qtbot, tmp_path, monkeypatch):
-    """The report says what a Trim cut, not only its shape (2026-10-17)."""
-    win = _trimmable(qtbot, tmp_path)
+    """The report says what a Trim cut, not only its shape (2026-10-17). A wide
+    picture and uneven margins, so a width/height or top/left swap cannot pass."""
+    arr = (np.random.default_rng(8).random((3, 30, 50)) * 1000).astype(np.uint16)
+    path = tmp_path / "wide.fits"
+    fits.PrimaryHDU(arr).writeto(str(path))
+    win = _window(qtbot, tmp_path)
+    win.open_fits(str(path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
     import nocturne.ui.main_window as mw
+    from nocturne.core.provenance import build_report
     h, w = win.project.current().data.shape[:2]
-    monkeypatch.setattr(mw, "TrimDialog", lambda img, parent=None: _FakeTrim((2, h - 2, 3, w - 3)))
+    assert (w, h) == (50, 30)
+    monkeypatch.setattr(mw, "TrimDialog", lambda img, parent=None: _FakeTrim((2, 25, 7, 49)))
     win._trim()
     name, option = win.project.entries()[-1]
     assert name == "Trim"
-    assert option == {"aspect": "Free", "bounds": [2, h - 2, 3, w - 3], "source_size": [w, h]}
+    assert option == {"aspect": "Free", "bounds": [2, 25, 7, 49], "source_size": [50, 30]}
+    assert win.project.current().data.shape[:2] == (23, 42)
+    report = build_report(win.project.entries(), {}, app_version="x",
+                          date=__import__("datetime").date(2026, 10, 17))
+    assert "- kept: 42 × 23 px of 50 × 30, left 7, top 2" in report
 
 
 class _FakeTrim:
