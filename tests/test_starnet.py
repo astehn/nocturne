@@ -246,3 +246,57 @@ def test_collecting_imagecodecs_actually_brings_the_lzw_module():
         assert len(binaries) >= len(dlls), "imagecodecs ships DLLs collect_all leaves behind"
         return
     assert binaries, "collect_all brought no shared libraries for imagecodecs"
+
+
+# What the real StarNet2 2.5.2 prints on a 300x300 picture, stdout and stderr
+# merged as run_cli streams them: the complaint comes LAST.
+_REAL_TOO_SMALL = ("Reading input from /tmp/starnet_x/in.tif...\nColor image is detected!\n"
+                   "Image size: 300x300\nImage size is too small for the window!\n")
+
+
+def _echo_runner(seen):
+    """A StarNet2 stand-in that, like the real binary, refuses a picture
+    under its 512 px window, and otherwise echoes the input as 'starless'."""
+    import tifffile
+    from nocturne.tools.base import ToolError
+
+    def runner(args, **kw):
+        src = tifffile.imread(args[args.index("--input") + 1])
+        seen.append(src.shape)
+        if min(src.shape[:2]) < 512:
+            raise ToolError(args, 255, _REAL_TOO_SMALL, "", 0.1)
+        tifffile.imwrite(args[args.index("--output") + 1], src)
+        tifffile.imwrite(args[args.index("--unscreen") + 1], np.zeros_like(src))
+    return runner
+
+
+@pytest.mark.parametrize("h,w", [(501, 501), (300, 900), (900, 300), (16, 16)])
+def test_a_crop_smaller_than_the_window_still_splits_at_its_own_size(h, w):
+    """StarNet2 exits 255 on anything under 512 px a side (measured
+    2026-10-17: 511x800 fails, 512x512 runs); an Upscale Crop of the Lagoon's
+    core at 501x501 hit it. The picture is mirrored out to the window and
+    both layers come back at the size that went in, pixels untouched."""
+    seen = []
+    rng = np.random.default_rng(1)
+    src = AstroImage(rng.random((h, w, 3)).astype(np.float32), is_linear=False)
+    starless, stars = StarNet("/fake").remove_stars(src, runner=_echo_runner(seen))
+    assert min(seen[0][:2]) >= 512
+    assert starless.data.shape == (h, w, 3) and stars.data.shape == (h, w, 3)
+    # the echo returns the input through a 16-bit round trip: same pixels
+    assert np.abs(starless.data - src.data).max() <= 1.0 / 65535 + 1e-6
+
+
+def test_a_picture_at_the_window_is_sent_as_it_is():
+    seen = []
+    src = AstroImage(np.full((512, 700, 3), 0.3, np.float32), is_linear=False)
+    StarNet("/fake").remove_stars(src, runner=_echo_runner(seen))
+    assert seen[0][:2] == (512, 700)
+
+
+def test_a_failing_tool_says_why_even_when_it_wrote_to_stdout():
+    """Streaming tools have stderr folded into stdout, so the message used to
+    end at the colon: "CLI failed (255): " with nothing after it."""
+    from nocturne.tools.base import ToolError
+    e = ToolError(["starnet2"], 255, _REAL_TOO_SMALL, "", 0.1)
+    assert str(e) == "CLI failed (255): Image size is too small for the window!"
+    assert str(ToolError(["x"], 1, "out", "real stderr", 0.1)) == "CLI failed (1): real stderr"

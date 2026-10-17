@@ -13,12 +13,27 @@ from ..core import sessionlog
 
 class ToolError(Exception):
     def __init__(self, command, returncode: int, stdout: str, stderr: str, elapsed: float) -> None:
-        super().__init__(f"CLI failed ({returncode}): {stderr}")
+        # A tool that streams (StarNet2, GraXpert, RC-Astro --json) has its
+        # stderr folded into stdout, so stderr is empty and the message used to
+        # end at the colon. The complaint is the LAST line there, after the
+        # routine output -- checked on the real binaries: StarNet2 prints
+        # "Reading input from ..." and the image size first, then "Image size
+        # is too small for the window!"; RC-Astro's last JSON line is its
+        # {"event":"error"}; GraXpert's is the exception.
+        said = (stderr or "").strip() or _last_line(stdout)
+        super().__init__(f"CLI failed ({returncode}): {said}")
         self.command = list(command)
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
         self.elapsed = elapsed
+
+
+def _last_line(text: str) -> str:
+    for line in reversed((text or "").splitlines()):
+        if line.strip():
+            return line.strip()
+    return ""
 
 
 def write_temp_fits(img: AstroImage, path: str) -> None:
