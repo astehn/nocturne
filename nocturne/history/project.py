@@ -17,6 +17,11 @@ class Project:
         self._dir = cache_dir
         self._paths: list[str] = []
         self._records: list[tuple[str, str]] = []
+        # Aligned with _records: what applied each step when it was not the
+        # person by hand — {"by": "auto_enhance" | "preset", "name": …} — or
+        # None. Beside the option, never in it: an option is compared with
+        # panels and replayed by recipes, and which run applied it is neither.
+        self._origins: list[dict | None] = []
         self._meta: list[dict] = []
         self._linear: list[bool] = []
         self._shapes: list[tuple] = []   # kept so a readout never reloads the pixels
@@ -110,10 +115,11 @@ class Project:
         granularity is the file system's."""
         return (id(self), index, self._writes[index])
 
-    def run_step(self, step: Step, option: str) -> AstroImage:
+    def run_step(self, step: Step, option: str, *, origin: dict | None = None) -> AstroImage:
         # Truncate any forward (redo) history.
         del self._paths[self._position + 1:]
         del self._records[self._position:]
+        del self._origins[self._position:]
         del self._meta[self._position + 1:]
         del self._linear[self._position + 1:]
         del self._shapes[self._position + 1:]
@@ -122,10 +128,12 @@ class Project:
         index = self._position + 1
         self._save(index, result)
         self._records.append((step.name, option))
+        self._origins.append(origin)
         self._position = index
         return result
 
-    def record_precomputed(self, name: str, option: str, img: AstroImage) -> None:
+    def record_precomputed(self, name: str, option: str, img: AstroImage, *,
+                           origin: dict | None = None) -> None:
         """Append an already-computed image as a new editable history state,
         without re-running the step that produced it (mirrors the tail of
         run_step, minus the step.apply call). Used to fold a pre-run chain
@@ -134,6 +142,7 @@ class Project:
         tools."""
         del self._paths[self._position + 1:]
         del self._records[self._position:]
+        del self._origins[self._position:]
         del self._meta[self._position + 1:]
         del self._linear[self._position + 1:]
         del self._shapes[self._position + 1:]
@@ -141,6 +150,7 @@ class Project:
         index = self._position + 1
         self._save(index, img)
         self._records.append((name, option))
+        self._origins.append(origin)
         self._position = index
 
     def can_undo(self) -> bool:
@@ -167,6 +177,7 @@ class Project:
         self._position = index
         del self._paths[index + 1:]
         del self._records[index:]
+        del self._origins[index:]
         del self._meta[index + 1:]
         del self._linear[index + 1:]
         del self._shapes[index + 1:]
@@ -174,6 +185,10 @@ class Project:
 
     def entries(self) -> list[tuple[str, str]]:
         return list(self._records[: self._position])
+
+    def origins(self) -> list[dict | None]:
+        """Aligned with entries(): what applied each step (see _origins)."""
+        return list(self._origins[: self._position])
 
     def entries_through(self, index: int) -> list[tuple[str, str]]:
         """The steps that made state `index`, which may lie ahead of the

@@ -747,9 +747,51 @@ def _engine_lines(ser_entries, saved_version) -> list[str]:
     return lines
 
 
+# ---- Who applied a step ----------------------------------------------------
+# The two runs that apply several steps at once (MainWindow._record_auto_run).
+AUTO_ENHANCE = "auto_enhance"
+PRESET = "preset"
+
+
+def run_origin(by: str, name: str) -> dict:
+    """The record a run leaves beside each step it applied."""
+    return {"by": by, "name": name}
+
+
+def _origin_words(origin) -> str:
+    if not isinstance(origin, dict):
+        return ""
+    name = _md_escape(origin.get("name") or "")
+    if origin.get("by") == AUTO_ENHANCE:
+        return "applied by Auto Enhance" + (f" ({name})" if name else "")
+    if origin.get("by") == PRESET:
+        return f"from preset \u2018{name}\u2019" if name else "from a preset"
+    return ""
+
+
+def _origin_notes(origins, n: int) -> dict[int, str]:
+    """{index of a run's first step: its note}. A run's steps are consecutive
+    and share one record; the note names its range, so the steps after it
+    need no closing line."""
+    origins = list(origins or [])[:n] + [None] * max(0, n - len(origins or []))
+    notes, i = {}, 0
+    while i < n:
+        words = _origin_words(origins[i])
+        if not words:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and origins[j + 1] == origins[i]:
+            j += 1
+        span = f"Step {i + 1}" if i == j else f"Steps {i + 1}\u2013{j + 1}"
+        notes[i] = f"_{span} \u2014 {words}_"
+        i = j + 1
+    return notes
+
+
 def build_report(entries, metadata, *, app_version: str, date: datetime.date,
                  settings=None, saved_version: str | None = None,
-                 source_label: str | None = None) -> str:
+                 source_label: str | None = None, origins=None) -> str:
     """The Engines section comes from the RECORD — what each step stored about
     the engine that ran — never from today's tool setup, which said "ASTAP +
     Gaia" or "sky balance" according to what is installed now and contradicted
@@ -783,7 +825,14 @@ def build_report(entries, metadata, *, app_version: str, date: datetime.date,
         lines.append("_No steps applied since it was made._" if origin
                      else "_No processing steps applied._")
     else:
+        # `origins` (aligned with entries): which Auto Enhance run or preset
+        # applied a step, said once above the steps it applied.
+        notes = _origin_notes(origins, len(ser_entries))
         for i, (name, ser) in enumerate(ser_entries, 1):
+            if i - 1 in notes:
+                if i > 1:
+                    lines.append("")
+                lines += [notes[i - 1], ""]
             h = _headline(name, ser)
             lines.append(f"{i}. {name}" + (f" — {h}" if h else ""))
     lines.append("")
