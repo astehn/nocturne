@@ -139,3 +139,16 @@ def test_a_hand_step_after_undoing_into_a_run_is_not_the_runs(tmp_path):
     steps = _report(p).split("## Processing steps\n\n")[1].split("\n\n## ")[0]
     assert "_Steps 1–2 — from preset ‘Lagoon HOO’_" in steps
     assert "1–3" not in steps
+
+
+def test_two_different_runs_side_by_side_are_two_notes():
+    """The grouping compares the records, not merely that there is one."""
+    entries = [("Background", "strong"), ("Local Contrast", 0.2), ("Star Reduction", 0.3)]
+    r = build_report(entries, {}, app_version="x", date=datetime.date(2026, 10, 17),
+                     origins=[VIVID, LAGOON, LAGOON])
+    steps = r.split("## Processing steps\n\n")[1].split("\n\n## ")[0]
+    assert steps.splitlines() == [
+        "_Step 1 — applied by Auto Enhance (Vivid)_", "",
+        "1. Background — strong", "",
+        "_Steps 2–3 — from preset ‘Lagoon HOO’_", "",
+        "2. Local Contrast — 0.2", "3. Star Reduction — 0.3"]
