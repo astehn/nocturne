@@ -198,6 +198,7 @@ _CURVE_VERBS = {"rgb": ("brightens", "darkens"), "r": ("adds red to", "takes red
                 "b": ("adds blue to", "takes blue from")}
 _TONES = ("the shadows", "the midtones", "the highlights")
 _CURVE_STILL = 0.004        # about one 8-bit level: below it a region is untouched
+_CURVE_AGAINST = 1 / 3      # share of a third allowed the other way and still count
 
 
 def _and_list(words: list[str]) -> str:
@@ -215,14 +216,30 @@ def _curve_words(channel: str, pts) -> str:
     import numpy as np
     from .curves import build_lut
     lut = build_lut(pts)
-    diff = lut - np.linspace(0.0, 1.0, lut.size)
-    # A third is raised only when the curve sits above the diagonal across it,
-    # lowered only when below: an S-curve's crossing third is neither.
-    thirds = np.array_split(diff, 3)
-    up_at = [i for i, t in enumerate(thirds)
-             if float(t.mean()) > _CURVE_STILL and float(t.min()) > -_CURVE_STILL]
-    down_at = [i for i, t in enumerate(thirds)
-               if float(t.mean()) < -_CURVE_STILL and float(t.max()) < _CURVE_STILL]
+    grid = np.linspace(0.0, 1.0, lut.size)
+    # Black and white points from the points themselves, wherever the curve
+    # first leaves 0 or reaches 1 — an inner point at (0.08, 0) clips as
+    # surely as a moved end point does.
+    zero = [x for x, y in pts if y < 0.001]
+    one = [x for x, y in pts if y > 0.999]
+    black = max(zero) if zero and min(zero) < pts[0][0] + 0.001 else 0.0
+    white = min(one) if one and max(one) > pts[-1][0] - 0.001 else 1.0
+    # A third is raised when the curve sits mostly above the diagonal across
+    # it, lowered when mostly below: an S-curve's crossing third (half each
+    # way) is neither. The clipped ends are said as black and white points,
+    # so they do not count against the third they fall in.
+    diff = lut - grid
+    inside = (grid > black) & (grid < white)
+    up_at, down_at = [], []
+    for i, (d, keep) in enumerate(zip(np.array_split(diff, 3), np.array_split(inside, 3))):
+        t = d[keep]
+        if t.size == 0:
+            continue
+        if float(t.mean()) > _CURVE_STILL and float((t < -_CURVE_STILL).mean()) < _CURVE_AGAINST:
+            up_at.append(i)
+        elif (float(t.mean()) < -_CURVE_STILL
+              and float((t > _CURVE_STILL).mean()) < _CURVE_AGAINST):
+            down_at.append(i)
     parts = []
     if channel == "s":
         parts.append("raises and lowers saturation" if up_at and down_at else
@@ -237,15 +254,14 @@ def _curve_words(channel: str, pts) -> str:
         groups = sorted([(down, lower), (up, raise_)], key=lambda g: _TONES.index(g[0][0])
                         if g[0] else 9)
         parts += [f"{verb} {_and_list(where)}" for where, verb in groups if where]
-    (x0, y0), (x1, y1) = pts[0], pts[-1]
-    if x0 > 0.001 and y0 < 0.001:
-        parts.append(f"black point at {x0:.3f}")
-    elif y0 > 0.001:
-        parts.append(f"black lifted to {y0:.3f}")
-    if x1 < 0.999 and y1 > 0.999:
-        parts.append(f"white point at {x1:.3f}")
-    elif y1 < 0.999:
-        parts.append(f"white lowered to {y1:.3f}")
+    if black > 0.001:
+        parts.append(f"black point at {black:.3f}")
+    elif pts[0][1] > 0.001:
+        parts.append(f"black lifted to {pts[0][1]:.3f}")
+    if white < 0.999:
+        parts.append(f"white point at {white:.3f}")
+    elif pts[-1][1] < 0.999:
+        parts.append(f"white lowered to {pts[-1][1]:.3f}")
     return ", ".join(p for p in parts if p) or "no visible change"
 
 
@@ -359,7 +375,7 @@ _TINT_SLIDERS = (("tint", "Green ←→ Magenta", ("green", "magenta")),
 def _tint_headline(ser) -> str:
     if (v := _tint_values(ser)) is None:
         return ""
-    return ", ".join(f"{name} {_signed(x, '+.2f')}"
+    return ", ".join(f"{name} {_signed(x, '+.2f') if round(x, 2) else '0.00'}"
                      for (name, _l, _e), x in zip(_TINT_SLIDERS, v))
 
 

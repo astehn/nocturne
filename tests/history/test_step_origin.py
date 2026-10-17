@@ -67,6 +67,8 @@ def test_a_report_without_origins_is_unchanged(tmp_path):
     p = _project(tmp_path)
     plain = build_report(p.entries(), {}, app_version="x", date=datetime.date(2026, 10, 17))
     assert "Auto Enhance" not in plain and "preset" not in plain
+    assert ("## Processing steps\n\n1. Background — strong\n2. Stretch — 0.3 linked\n"
+            "3. Saturation\n4. Local Contrast — 0.2\n5. Star Reduction — 0.3\n\n") in plain
     assert plain == build_report(p.entries(), {}, app_version="x",
                                  date=datetime.date(2026, 10, 17), origins=[None] * 5)
 

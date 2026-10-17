@@ -74,12 +74,15 @@ def test_the_saved_option_keeps_the_keys_every_build_reads():
     assert saved == {"aspect": "4:5", "rotate": 0, "flip_h": False, "flip_v": False,
                      "bounds": [698, 2985, 175, 2005], "source_size": [2180, 3683]}
     json.dumps(saved)
-    # An older build heals a FREE crop with a rotation into "Rotate" by
-    # reading exactly three keys; the new ones must not change its answer.
+    # The geometry heal reads exactly three keys: beside the new ones it still
+    # tells a mislabelled rotation from a real Crop.
+    def name(opt):
+        return restored_entry({"name": "Crop", "stage": "crop", "option": opt,
+                               "cached": True})[0]
     free = serialize_option("crop", CropParams(bounds=(0, 4, 0, 4), aspect="Free",
                                                source_size=(8, 8)), project=True)
-    assert restored_entry({"name": "Crop", "stage": "crop", "option": free,
-                           "cached": True})[0] == "Crop"
+    assert name(free) == "Crop"
+    assert name({**free, "rotate": 90}) == "Rotate"
 
 
 class _Pre:
@@ -117,3 +120,15 @@ def test_save_and_reopen_keeps_the_region_and_still_restores_from_pixels(tmp_pat
     save_project(lp, str(tmp_path / "d.nocturne"))
     again = load_project(str(tmp_path / "d.nocturne"), str(tmp_path / "re2")).project
     assert _report(again.entries()) == live
+
+
+def test_an_auto_enhance_crop_keeps_its_region_too():
+    from nocturne.core.auto_enhance import run_auto_plan
+    data = np.zeros((40, 60, 3), np.float32)
+    data[5:35, 8:52] = np.random.default_rng(1).random((30, 44, 3)) * 0.3 + 0.1
+    run = run_auto_plan(AstroImage(data, is_linear=True, metadata={}),
+                        [("crop", CropParams())], Settings())
+    (name, option, img), = run.results
+    t, b, l, r = option["bounds"]
+    assert option["source_size"] == [60, 40]
+    assert img.data.shape[:2] == (b - t, r - l)

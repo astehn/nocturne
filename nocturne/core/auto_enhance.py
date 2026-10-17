@@ -114,7 +114,8 @@ def _auto_crop_option(img) -> CropParams:
     bounds = (top + dh, bottom - dh, left + dw, right - dw)
     if bounds[0] >= bounds[1] or bounds[2] >= bounds[3]:
         return CropParams()
-    return CropParams(bounds=bounds)
+    ih, iw = img.data.shape[:2]
+    return CropParams(bounds=bounds, source_size=(iw, ih))   # the report's "from W × H"
 
 
 def _auto_denoise_engine(settings: Settings) -> str:
@@ -319,7 +320,9 @@ def run_auto_plan(base, plan, settings: Settings, *, bg_runner=run_cli, rc_runne
             continue
         img = result
         recorded = getattr(step, "recorded_option", lambda o: o)(option)
-        results.append((name, serialize_option(stage_id, recorded), img))
+        # project=True: the results become a project's history, where a Crop
+        # keeps the region _auto_crop_option cut (the provenance report says it).
+        results.append((name, serialize_option(stage_id, recorded, project=True), img))
         engines.append(getattr(step, "last_engine", None))
         resolved.append(getattr(step, "last_resolved", None))
         stages.append(stage_id)

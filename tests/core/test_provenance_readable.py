@@ -61,6 +61,24 @@ def test_black_and_white_points_are_named():
     assert "black point at 0.100" in line and "white point at 0.900" in line
 
 
+@pytest.mark.parametrize("pts, words", [
+    # A shadow lift beside a clipped black point is still a lift (review).
+    ([(0.05, 0), (0.25, 0.35), (1, 1)], "brightens the shadows, midtones and highlights, "
+                                        "black point at 0.050"),
+    # An inner point at 0 clips as surely as a moved end point.
+    ([(0, 0), (0.08, 0), (0.3, 0.4), (1, 1)], "black point at 0.080"),
+    ([(0, 0), (0.2, 0.3), (0.4, 0.3), (1, 1)], "brightens the shadows, darkens the midtones"),
+    ([(0, 0.02), (0.5, 0.45), (1, 0.97)], "black lifted to 0.020, white lowered to 0.970"),
+])
+def test_what_a_curve_does_is_said_truly(pts, words):
+    (line,) = _params(_report("Curves", {curve_key("rgb", "all"): pts}))
+    assert words in line, line
+
+
+def test_a_tint_that_rounds_to_zero_is_not_minus_zero():
+    assert "tint 0.00, temperature 0.00" in _report("Colour Tint", (-0.001, 0.0))
+
+
 def test_colour_and_saturation_curves_use_their_own_verbs():
     r = _report("Curves", {curve_key("r", "all"): [(0, 0), (0.5, 0.55), (1, 1)],
                            curve_key("s", "reds"): [(0, 0), (0.5, 0.4), (1, 1)]})
