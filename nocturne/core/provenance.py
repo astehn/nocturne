@@ -193,82 +193,90 @@ def _stretch_params(ser: dict) -> list[str]:
 
 _CURVE_CHANNEL = {"rgb": "RGB", "r": "Red", "g": "Green", "b": "Blue", "s": "Saturation"}
 # What raising / lowering a channel's curve does, in a reader's words.
-_CURVE_VERBS = {"rgb": ("brightens", "darkens"), "r": ("adds red to", "takes red from"),
-                "g": ("adds green to", "takes green from"),
-                "b": ("adds blue to", "takes blue from")}
-_TONES = ("the shadows", "the midtones", "the highlights")
-_CURVE_STILL = 0.004        # about one 8-bit level: below it a region is untouched
-_CURVE_AGAINST = 1 / 3      # share of a third allowed the other way and still count
+# What raising / lowering a channel's curve does, in a reader's words.
+_CURVE_VERBS = {"rgb": ("brightens", "darkens"), "r": ("adds red", "takes away red"),
+                "g": ("adds green", "takes away green"),
+                "b": ("adds blue", "takes away blue"),
+                "s": ("raises saturation", "lowers saturation")}
+# How far from the diagonal (in OUTPUT units, 0-1) a stretch of curve must go
+# to be called a change: 0.01 is 2.5 levels of 8-bit output. The monotone
+# cubic between two points the user set close to the diagonal wiggles by up
+# to about that much on its own — a -0.0098 dip between such points is the
+# interpolation, not a choice, and must not read as "darkens". The M 45 blue
+# curve's -0.0165 below 0.11, where the sky sits, is a real move and is said.
+_CURVE_MEANINGFUL = 0.01
+_CURVE_ZERO = 1e-4          # on the diagonal: float noise, not a direction
 
 
-def _and_list(words: list[str]) -> str:
-    """"the shadows, midtones and highlights": the article said once."""
-    if not words:
-        return ""
-    bare = [words[0]] + [w.removeprefix("the ") for w in words[1:]]
-    return bare[0] if len(bare) == 1 else f"{', '.join(bare[:-1])} and {bare[-1]}"
+def _curve_ranges(pts) -> list[tuple[int, float, float]]:
+    """(+1 raised / -1 lowered, from, to) input ranges, from the curve the app
+    applies (core.curves.build_lut). Each range runs between crossings of the
+    diagonal; one that never strays _CURVE_MEANINGFUL from it is left out."""
+    import numpy as np
+    from .curves import build_lut
+    lut = build_lut(pts).astype(np.float64)
+    grid = np.linspace(0.0, 1.0, lut.size)
+    diff = lut - grid
+    sign = np.where(diff > _CURVE_ZERO, 1, np.where(diff < -_CURVE_ZERO, -1, 0))
+    runs, i = [], 0
+    while i < sign.size:
+        j = i
+        while j + 1 < sign.size and sign[j + 1] == sign[i]:
+            j += 1
+        if sign[i] and float(np.abs(diff[i:j + 1]).max()) >= _CURVE_MEANINGFUL:
+            # Merge with the previous range of the same direction when only
+            # an insignificant stretch separated them.
+            if runs and runs[-1][0] == sign[i]:
+                runs[-1] = (runs[-1][0], runs[-1][1], float(grid[j]))
+            else:
+                runs.append((int(sign[i]), float(grid[i]), float(grid[j])))
+        i = j + 1
+    return runs
+
+
+def _range_words(lo: float, hi: float) -> str:
+    if lo <= 0.002 and hi >= 0.998:
+        return "across the whole range"
+    if lo <= 0.002:
+        return f"below {hi:.2f}"
+    if hi >= 0.998:
+        return f"above {lo:.2f}"
+    return f"from {lo:.2f} to {hi:.2f}"
 
 
 def _curve_words(channel: str, pts) -> str:
-    """What one curve does, from the curve itself: which thirds of the range it
-    raises or lowers (or, on Saturation, whether it raises or lowers), and any
-    moved black or white point."""
-    import numpy as np
-    from .curves import build_lut
-    lut = build_lut(pts)
-    grid = np.linspace(0.0, 1.0, lut.size)
-    # Black and white points from the points themselves, wherever the curve
-    # first leaves 0 or reaches 1 — an inner point at (0.08, 0) clips as
-    # surely as a moved end point does.
-    zero = [x for x, y in pts if y < 0.001]
-    one = [x for x, y in pts if y > 0.999]
-    black = max(zero) if zero and min(zero) < pts[0][0] + 0.001 else 0.0
-    white = min(one) if one and max(one) > pts[-1][0] - 0.001 else 1.0
-    # A third is raised when the curve sits mostly above the diagonal across
-    # it, lowered when mostly below: an S-curve's crossing third (half each
-    # way) is neither. The clipped ends are said as black and white points,
-    # so they do not count against the third they fall in.
-    diff = lut - grid
-    inside = (grid > black) & (grid < white)
-    up_at, down_at = [], []
-    for i, (d, keep) in enumerate(zip(np.array_split(diff, 3), np.array_split(inside, 3))):
-        t = d[keep]
-        if t.size == 0:
-            continue
-        if float(t.mean()) > _CURVE_STILL and float((t < -_CURVE_STILL).mean()) < _CURVE_AGAINST:
-            up_at.append(i)
-        elif (float(t.mean()) < -_CURVE_STILL
-              and float((t > _CURVE_STILL).mean()) < _CURVE_AGAINST):
-            down_at.append(i)
-    parts = []
-    if channel == "s":
-        parts.append("raises and lowers saturation" if up_at and down_at else
-                     "raises saturation" if up_at else "lowers saturation" if down_at
-                     else "")
-    else:
-        raise_, lower = _CURVE_VERBS.get(channel, _CURVE_VERBS["rgb"])
-        up = [_TONES[i] for i in up_at]
-        down = [_TONES[i] for i in down_at]
-        # In tonal order, so an S-curve reads "darkens the shadows, brightens
-        # the highlights".
-        groups = sorted([(down, lower), (up, raise_)], key=lambda g: _TONES.index(g[0][0])
-                        if g[0] else 9)
-        parts += [f"{verb} {_and_list(where)}" for where, verb in groups if where]
-    if black > 0.001:
-        parts.append(f"black point at {black:.3f}")
-    elif pts[0][1] > 0.001:
-        parts.append(f"black lifted to {pts[0][1]:.3f}")
-    if white < 0.999:
-        parts.append(f"white point at {white:.3f}")
-    elif pts[-1][1] < 0.999:
-        parts.append(f"white lowered to {pts[-1][1]:.3f}")
-    return ", ".join(p for p in parts if p) or "no visible change"
+    """What one curve does, measured from the curve itself: each input range
+    it raises or lowers ("takes away blue below 0.11, adds blue above 0.11"),
+    then, on the tone and colour curves, a moved black or white end. A
+    Saturation curve has no black or white point; its moved ends are in the
+    point list beside this."""
+    up, down = _CURVE_VERBS.get(channel, _CURVE_VERBS["rgb"])
+    parts = [f"{up if d > 0 else down} {_range_words(lo, hi)}"
+             for d, lo, hi in _curve_ranges(pts)]
+    if channel != "s":
+        (x0, y0), (x1, y1) = pts[0], pts[-1]
+        # An inner point on 0 (or 1) clips as surely as a moved end does.
+        zero = [x for x, y in pts if y < 0.001]
+        one = [x for x, y in pts if y > 0.999]
+        if zero and zero[0] == x0 and max(zero) > 0.001:
+            parts.append(f"black point at {max(zero):.3f}")
+        elif x0 > 0.001 and y0 > 0.001:
+            parts.append(f"black end moved to in {x0:.3f} → out {y0:.3f}")
+        elif y0 > 0.001:
+            parts.append(f"black lifted to {y0:.3f}")
+        if one and one[-1] == x1 and min(one) < 0.999:
+            parts.append(f"white point at {min(one):.3f}")
+        elif x1 < 0.999 and y1 < 0.999:
+            parts.append(f"white end moved to in {x1:.3f} → out {y1:.3f}")
+        elif y1 < 0.999:
+            parts.append(f"white lowered to {y1:.3f}")
+    return ", ".join(parts) or "no visible change"
 
 
 def _curves_params(ser) -> list[str]:
     """Per curve: its channel and colour range as the dialog's selectors name
-    them, how many points it has, what it does, and its inner points in the
-    editor's readout words ("in 0.250 → out 0.300") — never the stored tuples.
+    them, how many points it has, what it does, and its points (all but an
+    untouched corner) in the editor's readout words ("in 0.250 → out 0.300") — never the stored tuples.
     Three decimals, as Levels prints, not the readout's two: a saved curve
     holds four, and the report is what someone reproduces it from."""
     from .curves import CURVE_CHANNELS, normalize_curves
@@ -282,9 +290,13 @@ def _curves_params(ser) -> list[str]:
         label = f"{_CURVE_CHANNEL.get(channel, channel)} curve"
         if target and target != "all":
             label += f", {target.capitalize()} only"
-        inner = [(x, y) for x, y in pts[1:-1]]
-        where = (" (" + ", ".join(f"in {x:.3f} → out {y:.3f}" for x, y in inner) + ")"
-                 if inner else "")
+        # Every point but an untouched corner: a moved end is part of what
+        # rebuilds the curve, and on Saturation it has no other words.
+        shown = [(x, y) for i, (x, y) in enumerate(pts)
+                 if not ((i == 0 and (x, y) == (0.0, 0.0))
+                         or (i == len(pts) - 1 and (x, y) == (1.0, 1.0)))]
+        where = (" (" + ", ".join(f"in {x:.3f} → out {y:.3f}" for x, y in shown) + ")"
+                 if shown else "")
         lines.append(f"- {label}: {len(pts)} points — {_curve_words(channel, pts)}{where}")
     return lines or ["- no curve set"]
 

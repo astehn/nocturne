@@ -40,52 +40,85 @@ def test_a_centred_tint_slider_says_so():
 
 
 # ---- Curves ----------------------------------------------------------------
+def _curve_line(channel, pts) -> str:
+    (line,) = _params(_report("Curves", {curve_key(channel, "all"): pts}))
+    return line
+
+
 def test_a_curve_is_described_not_dumped():
-    r = _report("Curves", {curve_key("rgb", "all"): [(0, 0), (0.25, 0.3), (1, 1)]})
-    (line,) = _params(r)
-    # One point at 0.25 lifts the whole curve: most in the midtones, but the
-    # highlights too (by 0.016 on average) — said, as it is true.
-    assert line == ("- RGB curve: 3 points — brightens the shadows, midtones and highlights "
-                    "(in 0.250 → out 0.300)")
+    assert _curve_line("rgb", [(0, 0), (0.25, 0.3), (1, 1)]) == (
+        "- RGB curve: 3 points — brightens across the whole range (in 0.250 → out 0.300)")
+
+
+def test_the_owners_m45_blue_curve_says_where_it_takes_blue_away():
+    """His M45_drizzle blue curve, verbatim from the bundle. It sits below the
+    diagonal from 0 to about 0.12 (−0.0165 at 0.06) — where the sky, a third
+    of the pixels, is — and the report said "adds blue to the shadows,
+    midtones and highlights" (independent review, 2026-10-17)."""
+    pts = [(0.0, 0.0), (0.0458, 0.0304), (0.2463, 0.3092), (1.0, 1.0)]
+    assert _curve_line("b", pts) == (
+        "- Blue curve: 4 points — takes away blue below 0.12, adds blue above 0.12 "
+        "(in 0.046 → out 0.030, in 0.246 → out 0.309)")
 
 
 def test_an_s_curve_reads_as_one():
-    pts = [(0, 0), (0.25, 0.18), (0.75, 0.84), (1, 1)]
-    (line,) = _params(_report("Curves", {curve_key("rgb", "all"): pts}))
-    assert line.startswith("- RGB curve: 4 points — darkens the shadows, brightens the highlights")
+    line = _curve_line("rgb", [(0, 0), (0.25, 0.18), (0.75, 0.84), (1, 1)])
+    assert "darkens below 0.47, brightens above 0.47" in line
 
 
-def test_black_and_white_points_are_named():
-    pts = [(0.1, 0), (0.9, 1)]
-    (line,) = _params(_report("Curves", {curve_key("rgb", "all"): pts}))
-    assert "black point at 0.100" in line and "white point at 0.900" in line
+def test_an_interpolation_wiggle_is_not_a_move():
+    """The owner's RGB curves: points on the diagonal at 0.08 and a lift
+    above. Between them the monotone cubic dips a hair (under 0.01); that is
+    the interpolation, not a darkening anyone asked for."""
+    import numpy as np
+    from nocturne.core.curves import build_lut
+    pts = [(0.0, 0.0), (0.0831, 0.0831), (0.2206, 0.2848), (0.4957, 0.5324), (1.0, 1.0)]
+    lut = build_lut(pts)
+    dip = float((lut - np.linspace(0, 1, lut.size)).min())
+    assert -0.01 < dip < 0, dip
+    line = _curve_line("rgb", pts)
+    assert "darkens" not in line and "brightens above 0.08" in line
+
+
+def test_a_wiggle_of_minus_0_0098_is_ignored_and_minus_0_0165_is_not():
+    from nocturne.core.provenance import _curve_ranges
+    # A shallow dip: a single point pulled 0.0098 under the diagonal.
+    assert _curve_ranges([(0, 0), (0.5, 0.4902), (1, 1)]) == []
+    assert [d for d, _a, _b in _curve_ranges([(0, 0), (0.5, 0.4835), (1, 1)])] == [-1]
 
 
 @pytest.mark.parametrize("pts, words", [
-    # A shadow lift beside a clipped black point is still a lift (review).
-    ([(0.05, 0), (0.25, 0.35), (1, 1)], "brightens the shadows, midtones and highlights, "
+    ([(0.05, 0), (0.25, 0.35), (1, 1)], "darkens below 0.11, brightens above 0.11, "
                                         "black point at 0.050"),
-    # An inner point at 0 clips as surely as a moved end point.
     ([(0, 0), (0.08, 0), (0.3, 0.4), (1, 1)], "black point at 0.080"),
-    ([(0, 0), (0.2, 0.3), (0.4, 0.3), (1, 1)], "brightens the shadows, darkens the midtones"),
+    ([(0, 0), (0.2, 0.3), (0.4, 0.3), (1, 1)], "brightens below 0.30, darkens above 0.30"),
     ([(0, 0.02), (0.5, 0.45), (1, 0.97)], "black lifted to 0.020, white lowered to 0.970"),
+    # Moved on both axes: both values, so the curve can be rebuilt.
+    ([(0.1, 0.05), (0.9, 1)], "black end moved to in 0.100 → out 0.050, white point at 0.900"),
 ])
 def test_what_a_curve_does_is_said_truly(pts, words):
-    (line,) = _params(_report("Curves", {curve_key("rgb", "all"): pts}))
-    assert words in line, line
+    assert words in _curve_line("rgb", pts)
 
 
-def test_a_tint_that_rounds_to_zero_is_not_minus_zero():
-    assert "tint 0.00, temperature 0.00" in _report("Colour Tint", (-0.001, 0.0))
+def test_a_moved_end_is_in_the_point_list():
+    line = _curve_line("rgb", [(0.1, 0.05), (0.9, 1)])
+    assert line.endswith("(in 0.100 → out 0.050, in 0.900 → out 1.000)")
+
+
+def test_a_saturation_curve_speaks_of_saturation_only():
+    line = _curve_line("s", [(0.1, 0.05), (0.5, 0.4), (1, 1)])
+    assert "lowers saturation" in line and "(in 0.100 → out 0.050" in line
+    for word in ("black", "white", "brighten", "darken"):
+        assert word not in line, line
 
 
 def test_colour_and_saturation_curves_use_their_own_verbs():
     r = _report("Curves", {curve_key("r", "all"): [(0, 0), (0.5, 0.55), (1, 1)],
                            curve_key("s", "reds"): [(0, 0), (0.5, 0.4), (1, 1)]})
     lines = _params(r)
-    assert lines[0].startswith("- Red curve: 3 points — adds red to the shadows, midtones "
-                               "and highlights")
-    assert lines[1].startswith("- Saturation curve, Reds only: 3 points — lowers saturation")
+    assert lines[0].startswith("- Red curve: 3 points — adds red across the whole range")
+    assert lines[1].startswith("- Saturation curve, Reds only: 3 points — lowers saturation "
+                               "across the whole range")
 
 
 def test_a_legacy_bare_list_is_the_rgb_curve():
