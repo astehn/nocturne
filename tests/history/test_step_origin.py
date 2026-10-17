@@ -122,3 +122,20 @@ def test_a_bundle_from_before_the_record_opens_with_none(tmp_path):
             zf.writestr(n, b)
     lp = load_project(path, str(tmp_path / "re")).project
     assert lp.origins() == [None] * 5
+
+
+def test_a_hand_step_after_undoing_into_a_run_is_not_the_runs(tmp_path):
+    """run_step must drop the undone steps' origins with them, or the hand
+    step inherits the preset's record at its index (independent review)."""
+    base = AstroImage(np.random.default_rng(6).random((20, 30, 3)).astype(np.float32) * 0.3,
+                      is_linear=True, metadata={})
+    p = Project(base, str(tmp_path / "live"))
+    for name, opt in (("Background", "strong"), ("Saturation", [1.3, 0.0]),
+                      ("Local Contrast", 0.2)):
+        p.record_precomputed(name, opt, _img(p, 0.99), origin=LAGOON)
+    p.undo()
+    p.run_step(make_step("stretch", Settings()), new_stretch_option(0.3))   # by hand
+    assert p.origins() == [LAGOON, LAGOON, None]
+    steps = _report(p).split("## Processing steps\n\n")[1].split("\n\n## ")[0]
+    assert "_Steps 1–2 — from preset ‘Lagoon HOO’_" in steps
+    assert "1–3" not in steps
