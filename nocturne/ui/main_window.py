@@ -56,6 +56,7 @@ from ..steps.star_split import preferred_splitter
 from ..steps.factory import make_step
 from ..steps.load import load_fits
 from ..steps.noise_sharpen import strip_ran
+from ..steps.enhance_step import tap_record
 from ..tools.base import run_cli, ToolError
 from ..core.metrics import rms_delta
 from ..core.update_check import DOWNLOAD_URL, SUPPORT_URL, is_newer, latest_release_version
@@ -6093,7 +6094,7 @@ class MainWindow(QMainWindow):
 
         def on_result(out) -> None:
             result, tag = out
-            self.project.run_step(_PrecomputedStep(op, result), "")
+            self.project.run_step(_PrecomputedStep(op, result), tap_record(op, tag))
             self._mark_dirty()
             self.log_panel.append_entry(format_log_entry(
                 op, self._step_log_label("enhance", "", tag), None))

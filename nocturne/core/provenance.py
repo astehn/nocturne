@@ -402,6 +402,9 @@ _DICT_PARAMS = {
     "Narrowband": _narrowband_params,
     "Colour Balance": _colour_balance_params,
     "Star Spikes": _spikes_params,
+    # A tap has no settings; its record names only the splitter (Engines).
+    "Star Colour": lambda ser: [],
+    "Sharpen Nebulosity": lambda ser: [],
 }
 
 
@@ -678,6 +681,11 @@ _UNRECORDED = {"Deconvolution": _DECONV_UNRECORDED,
                    "Saturation", "Star Reduction", "Starless Levels", "Star Colour",
                    "Sharpen Nebulosity")}}
 _STAGE_OF = {"Saturation": "saturation", "Star Reduction": "star_reduction"}
+# The two split taps record the splitter that ran since 2026-10-17
+# (steps/enhance_step.tap_record), in splitter_name's words.
+_SPLIT_TAPS = ("Star Colour", "Sharpen Nebulosity")
+_SPLITTER_NAMES = {"StarX": "StarXTerminator", "StarNet2": "StarNet2",
+                   "free": "Nocturne (built-in star split)"}
 
 
 def _engine_text(name: str, ser) -> str | None:
@@ -710,6 +718,8 @@ def _engine_text(name: str, ser) -> str | None:
         if ran:
             return f"not recorded — {ran} was requested"
         return "not recorded"
+    if name in _SPLIT_TAPS and isinstance(ser, dict) and ser.get("ran") in _SPLITTER_NAMES:
+        return f"**{_SPLITTER_NAMES[ser['ran']]}**"
     if name in _UNRECORDED:
         from .receipt import splits_stars
         if name in _STAGE_OF and not splits_stars(_STAGE_OF[name], ser):

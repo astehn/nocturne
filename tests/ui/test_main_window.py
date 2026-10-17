@@ -3475,6 +3475,8 @@ def test_star_colour_tap_applies_via_busy_path(qtbot, tmp_path, monkeypatch):
     before = win.project.position
     win._enhance("Star Colour")
     assert win.project.position == before + 1        # one undoable step added
+    # It records the splitter that ran, for the provenance report (2026-10-17).
+    assert win.project.entries()[-1] == ("Star Colour", {"ran": "free"})
 
 
 def test_canvas_img_tracks_the_committed_image(qtbot, tmp_path):

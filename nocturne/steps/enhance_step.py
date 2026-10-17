@@ -9,6 +9,17 @@ from .star_split import resolve_star_split, splitter_name
 _LAYERED = {"Star Colour": star_colour_layers,
             "Sharpen Nebulosity": sharpen_nebulosity_layers}
 
+# What a split tap records: the splitter that RAN ("StarX", "StarNet2" or
+# "free", splitter_name's words), under the key Noise Reduction uses for the
+# same fact (2026-10-17). The tap's name is still all a replay needs.
+RAN = "ran"
+
+
+def tap_record(op: str, engine: str | None):
+    """The option a tap is recorded with: "" — it has no settings — or, for
+    a split tap, which splitter separated the stars."""
+    return {RAN: engine} if op in _LAYERED and engine else ""
+
 
 class EnhanceTapStep(Step):
     """One Enhancements tap, replayable by a runner. The two split taps take the
@@ -23,7 +34,7 @@ class EnhanceTapStep(Step):
     def options(self): return []
     def default_option(self): return ""
     def display_name(self, option) -> str: return str(option)
-    def recorded_option(self, option): return ""
+    def recorded_option(self, option): return tap_record(str(option), self.last_engine)
 
     def apply(self, img: AstroImage, option) -> AstroImage:
         op = str(option)
