@@ -16,8 +16,6 @@ from .instrument import DEFAULT_INSTRUMENT, identify
 _HEADLINE_FIELD = {
     "Background": "engine",
     "Narrowband": "palette",
-    "Crop": "aspect",
-    "Trim": "aspect",
 }
 
 # Steps whose recorded "aspect" is a stored shape name. The report says the
@@ -35,7 +33,7 @@ def _serialize(name: str, option):
         return option
     if isinstance(option, (list, tuple)):
         return list(option)
-    return serialize_option(_NAME_TO_STAGE.get(name, name), option)
+    return serialize_option(_NAME_TO_STAGE.get(name, name), option, project=True)
 
 
 def _num(v) -> str:
@@ -143,8 +141,35 @@ def _nr_params(ser: dict) -> list[str]:
 
 
 # ---- Crop / Trim -----------------------------------------------------------
+def _region(ser: dict) -> tuple[int, int, int, int, tuple[int, int] | None] | None:
+    """(width, height, left, top, source size) of the region kept, or None for
+    a record made before Crop and Trim kept it (2026-10-17)."""
+    b = ser.get("bounds")
+    if not isinstance(b, (list, tuple)) or len(b) != 4:
+        return None
+    try:
+        t, bottom, left, right = (int(v) for v in b)
+        size = ser.get("source_size")
+        src = (int(size[0]), int(size[1])) if size and len(size) == 2 else None
+    except (TypeError, ValueError):
+        return None
+    return right - left, bottom - t, left, t, src
+
+
+def _shape_headline(ser: dict) -> str:
+    parts = [str(ser["aspect"])] if ser.get("aspect") else []
+    if (r := _region(ser)) is not None:
+        w, h, _l, _t, src = r
+        parts.append(f"{w} × {h} px" + (f" from {src[0]} × {src[1]}" if src else ""))
+    return ", ".join(parts)
+
+
 def _shape_params(ser: dict) -> list[str]:
     lines = [f"- shape: {ser.get('aspect', '')}"] if ser.get("aspect") else []
+    if (r := _region(ser)) is not None:
+        w, h, left, top, src = r
+        lines.append(f"- kept: {w} × {h} px" + (f" of {src[0]} × {src[1]}" if src else "")
+                     + f", left {left}, top {top}")
     # Only what this entry did. A Crop records rotate 0 and both flips off on
     # every entry (one params object for all geometry); printing them under
     # every Crop read as though the crop had been asked to do them.
@@ -305,6 +330,8 @@ def _headline(name: str, ser) -> str:
             return describe(ser)
         if name in ("Noise Reduction", "Linear Denoise", "AI Denoise"):
             return _nr_headline(ser)
+        if name in _SHAPE_STEPS:
+            return _shape_headline(ser)
         field = _HEADLINE_FIELD.get(name)
         if field and ser.get(field) not in (None, ""):
             return f"{ser[field]}"

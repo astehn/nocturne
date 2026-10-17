@@ -6111,8 +6111,11 @@ class MainWindow(QMainWindow):
         if not self._confirm_geometry(_GEOMETRY_LABEL.get(name, name), target):
             return False
         self.project.jump_back(target)
+        # The size the box was drawn on, for the report's "… px from W × H".
+        src_h, src_w = self.project.shape_at(self.project.position)[:2]
         result = self._step_for("crop").apply(self.project.current(), params)
-        option = "" if shape is None else dataclasses.replace(params, aspect=shape)
+        option = "" if shape is None else dataclasses.replace(
+            params, aspect=shape, source_size=(src_w, src_h))
         self.project.run_step(_PrecomputedStep(name, result), option)
         self._mark_dirty()
         self.log_panel.append_entry(format_log_entry(
@@ -7603,10 +7606,15 @@ class MainWindow(QMainWindow):
             return
         result = self._step_for("crop").apply(self.project.current(),
                                                CropParams(bounds=bounds))
-        # The shape, as a dict: Trim cannot be replayed (a recipe skips it), but
-        # the log and the provenance report should still say what it was.
+        # The shape and the region, as a dict: Trim cannot be replayed (a recipe
+        # skips it), but the log and the provenance report should still say what
+        # it was. The region in Crop's own convention (top, bottom, left, right)
+        # and the size it was drawn on; a Trim before 2026-10-17 has the shape only.
         shape = dlg.shape()
-        self.project.run_step(_PrecomputedStep("Trim", result), {"aspect": shape})
+        src_h, src_w = self.project.shape_at(self.project.position)[:2]
+        self.project.run_step(_PrecomputedStep("Trim", result),
+                              {"aspect": shape, "bounds": [int(v) for v in bounds],
+                               "source_size": [src_w, src_h]})
         self._mark_dirty()
         h, w = result.data.shape[:2]
         self.log_panel.append_entry(format_log_entry("Trim", shape_label(shape), None,

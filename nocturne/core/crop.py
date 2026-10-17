@@ -87,6 +87,9 @@ class CropParams:
     rotate: int = 0  # clockwise degrees: 0, 90, 180, 270
     flip_h: bool = False
     flip_v: bool = False
+    # (width, height) of the picture `bounds` were drawn on. A RECORD for the
+    # provenance report ("1830 × 2287 px from 2180 × 3683"); apply never reads it.
+    source_size: tuple[int, int] | None = None
 
 
 def _center_crop_to_ratio(data: np.ndarray, ratio: float) -> np.ndarray:

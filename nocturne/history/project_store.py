@@ -49,7 +49,9 @@ class LoadedProject:
 _REPRODUCIBLE_STAGES = {
     "stretch", "levels", "curves", "recover_core",
     "local_contrast", "remove_green", "rotate", "flip_h", "flip_v",
-}   # NOTE: crop excluded — serialize_option drops its bounds.
+}   # NOTE: crop excluded — restored from its cached pixels. Its saved option
+    # carries the region it cut (since 2026-10-17), but only as a record: a
+    # replay would re-derive nothing a cached snapshot does not already hold.
 
 # A cached step (anything NOT in _REPRODUCIBLE_STAGES) restores via
 # `record_precomputed(name, ...)` — the DISPLAY NAME is its only restore key,
@@ -127,7 +129,7 @@ def _ensure_serialized(stage, option):
         return option
     if isinstance(option, (list, tuple)):
         return list(option)
-    return serialize_option(stage, option)     # native object (CropParams/ColorSettings/…)
+    return serialize_option(stage, option, project=True)   # native object (CropParams/ColorSettings/…)
 
 
 def is_reproducible(stage, option) -> bool:

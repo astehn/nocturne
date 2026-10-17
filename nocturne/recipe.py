@@ -84,12 +84,37 @@ class Recipe:
 _OBJECT_OPTIONS = ("crop", "color", "narrowband")
 
 
-def serialize_option(stage_id, option):
+def _crop_region(option) -> dict:
+    """The region a Crop kept, for a PROJECT's record: bounds as CropParams
+    holds them (top, bottom, left, right) and the size they were drawn on."""
+    if isinstance(option, CropParams):
+        bounds, size = option.bounds, option.source_size
+    elif isinstance(option, dict):
+        bounds, size = option.get("bounds"), option.get("source_size")
+    else:
+        return {}
+    out = {}
+    if bounds is not None and len(bounds) == 4:
+        out["bounds"] = [int(v) for v in bounds]
+        if size is not None and len(size) == 2:
+            out["source_size"] = [int(v) for v in size]
+    return out
+
+
+def serialize_option(stage_id, option, *, project: bool = False):
+    """`project=True` for a saved project's history (and its report): a Crop
+    then keeps the region it cut. A recipe or preset never does — it applies a
+    shape to another picture, where one picture's pixel bounds mean nothing."""
+    raw = option
     if stage_id in _OBJECT_OPTIONS and isinstance(option, dict):
         option = _from_saved_dict(stage_id, option)
     if stage_id == "crop":
         c = option if isinstance(option, CropParams) else CropParams()
-        return {"aspect": c.aspect, "rotate": c.rotate, "flip_h": c.flip_h, "flip_v": c.flip_v}
+        out = {"aspect": c.aspect, "rotate": c.rotate, "flip_h": c.flip_h, "flip_v": c.flip_v}
+        # Beside the four keys every build reads, so a bundle written now still
+        # opens in an older build, which restores a Crop from its cached pixels
+        # and ignores the rest (2026-10-17).
+        return {**out, **_crop_region(raw)} if project else out
     if stage_id == "color":
         c = option if isinstance(option, ColorSettings) else ColorSettings()
         # Explicit, not a dataclass dump — so a NEW FIELD MUST BE ADDED HERE or

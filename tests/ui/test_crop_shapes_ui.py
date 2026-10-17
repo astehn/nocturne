@@ -49,9 +49,14 @@ def test_a_portrait_crop_is_tall_and_says_so_everywhere(qtbot, tmp_path):
 
     name, option = win.project.entries()[-1]
     assert name == "Crop" and option.aspect == "2:3"
+    # The region it kept, on the 100 x 60 picture the box was drawn on.
+    assert option.source_size == (100, 60)
+    t, b, l, r = option.bounds
+    assert (r - l, b - t) == (w, h)
     report = provenance.build_report(win.project.entries(), {}, app_version="t",
                                      date=datetime.date(2026, 10, 10))
-    assert "Crop — 2:3" in report and "- shape: 2:3" in report
+    assert f"Crop — 2:3, {w} × {h} px from 100 × 60" in report and "- shape: 2:3" in report
+    assert f"- kept: {w} × {h} px of 100 × 60, left {l}, top {t}" in report
 
 
 def test_the_crop_log_line_names_the_shape(qtbot, tmp_path, monkeypatch):

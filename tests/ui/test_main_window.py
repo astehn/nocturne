@@ -4374,6 +4374,18 @@ def test_trim_appends_and_keeps_every_processing_step(qtbot, tmp_path, monkeypat
     assert (nh, nw) == (h - 4, w - 6)
 
 
+def test_a_trim_records_the_region_it_kept(qtbot, tmp_path, monkeypatch):
+    """The report says what a Trim cut, not only its shape (2026-10-17)."""
+    win = _trimmable(qtbot, tmp_path)
+    import nocturne.ui.main_window as mw
+    h, w = win.project.current().data.shape[:2]
+    monkeypatch.setattr(mw, "TrimDialog", lambda img, parent=None: _FakeTrim((2, h - 2, 3, w - 3)))
+    win._trim()
+    name, option = win.project.entries()[-1]
+    assert name == "Trim"
+    assert option == {"aspect": "Free", "bounds": [2, h - 2, 3, w - 3], "source_size": [w, h]}
+
+
 class _FakeTrim:
     def __init__(self, bounds): self._b = bounds
     def exec(self): return 1
