@@ -137,6 +137,9 @@ def _parse_metadata(header, height: int, width: int) -> dict:
         "ra": ("OBJCTRA", "RA"),
         "dec": ("OBJCTDEC", "DEC"),
         "filter": ("FILTER",),
+        # Nocturne's own master: whether "Trim the ragged edges" was on
+        # (stacker.master_header). The provenance report says it.
+        "trimmed": ("TRIMMED",),
     }
     for key, candidates in mapping.items():
         for card in candidates:

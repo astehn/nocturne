@@ -23,7 +23,8 @@ from PySide6.QtWidgets import (
 from .. import APP_NAME, __version__, app_title
 from ..core.auto_enhance import DUALBAND_ONLY, PRESET_NAMES, build_auto_plan, run_auto_plan, stages_left_out
 from ..core import telemetry as telemetry_mod
-from ..core.provenance import COMBINED_SOURCE_LABEL, build_report
+from ..core.provenance import (AUTO_ENHANCE, COMBINED_SOURCE_LABEL, PRESET, build_report,
+                               run_origin)
 from ..core import nr_models
 from ..core.crop import (
     FREE, CropParams, detect_content_bounds, shape_label, shape_ratio,
@@ -55,6 +56,7 @@ from ..steps.star_split import preferred_splitter
 from ..steps.factory import make_step
 from ..steps.load import load_fits
 from ..steps.noise_sharpen import strip_ran
+from ..steps.enhance_step import tap_record
 from ..tools.base import run_cli, ToolError
 from ..core.metrics import rms_delta
 from ..core.update_check import DOWNLOAD_URL, SUPPORT_URL, is_newer, latest_release_version
@@ -2364,7 +2366,8 @@ class MainWindow(QMainWindow):
 
         def on_result(run) -> None:
             results = run.results
-            self._record_auto_run(run, f"Auto Enhance ({shown})")
+            self._record_auto_run(run, f"Auto Enhance ({shown})",
+                                  origin=run_origin(AUTO_ENHANCE, shown))
             self._rebuild_panel()
             self._refresh()
             msg = f"Auto-enhanced ({shown}) \u2014 {len(results)} steps."
@@ -2386,18 +2389,19 @@ class MainWindow(QMainWindow):
 
         self._run_busy(work, on_result, f"Auto-enhancing ({shown})\u2026", "Auto Enhance failed")
 
-    def _record_auto_run(self, run, suffix: str) -> None:
+    def _record_auto_run(self, run, suffix: str, origin: dict | None = None) -> None:
         """Fold a run_auto_plan result into history, one ordinary undoable step
         each, with a log line and a session-log line per step. Shared by Auto
         Enhance and a user preset; `suffix` names which ("Auto Enhance
-        (Natural)", "Preset (M 8)")."""
+        (Natural)", "Preset (M 8)") in the log, and `origin` (provenance.
+        run_origin) records it beside each step for the provenance report."""
         stage_of = {v: k for k, v in STEP_NAME.items()}
         resolved = run.resolved or (None,) * len(run.results)
         stages = run.stages or tuple(stage_of.get(n, "") for n, _o, _i in run.results)
         levels_at = None
         for (name, option, img), engine, res, stage in zip(run.results, run.engines,
                                                            resolved, stages):
-            self.project.record_precomputed(name, option, img)
+            self.project.record_precomputed(name, option, img, origin=origin)
             label = str(self._step_log_label(stage, option, engine) or "")
             # The manual Apply's words for the same Levels: where Auto stopped,
             # a chosen black, any colour offsets (one helper, see _log_step).
@@ -2599,7 +2603,7 @@ class MainWindow(QMainWindow):
                                  levels_auto=False)
 
         def on_result(run) -> None:
-            self._record_auto_run(run, f"Preset ({shown})")
+            self._record_auto_run(run, f"Preset ({shown})", origin=run_origin(PRESET, shown))
             if not run.results:
                 # Nothing landed: not a success. The choice stays for a retry,
                 # last_used is not stamped, and the picture stays where it was.
@@ -6090,7 +6094,7 @@ class MainWindow(QMainWindow):
 
         def on_result(out) -> None:
             result, tag = out
-            self.project.run_step(_PrecomputedStep(op, result), "")
+            self.project.run_step(_PrecomputedStep(op, result), tap_record(op, tag))
             self._mark_dirty()
             self.log_panel.append_entry(format_log_entry(
                 op, self._step_log_label("enhance", "", tag), None))
@@ -6111,8 +6115,11 @@ class MainWindow(QMainWindow):
         if not self._confirm_geometry(_GEOMETRY_LABEL.get(name, name), target):
             return False
         self.project.jump_back(target)
+        # The size the box was drawn on, for the report's "… px from W × H".
+        src_h, src_w = self.project.shape_at(self.project.position)[:2]
         result = self._step_for("crop").apply(self.project.current(), params)
-        option = "" if shape is None else dataclasses.replace(params, aspect=shape)
+        option = "" if shape is None else dataclasses.replace(
+            params, aspect=shape, source_size=(src_w, src_h))
         self.project.run_step(_PrecomputedStep(name, result), option)
         self._mark_dirty()
         self.log_panel.append_entry(format_log_entry(
@@ -7603,10 +7610,15 @@ class MainWindow(QMainWindow):
             return
         result = self._step_for("crop").apply(self.project.current(),
                                                CropParams(bounds=bounds))
-        # The shape, as a dict: Trim cannot be replayed (a recipe skips it), but
-        # the log and the provenance report should still say what it was.
+        # The shape and the region, as a dict: Trim cannot be replayed (a recipe
+        # skips it), but the log and the provenance report should still say what
+        # it was. The region in Crop's own convention (top, bottom, left, right)
+        # and the size it was drawn on; a Trim before 2026-10-17 has the shape only.
         shape = dlg.shape()
-        self.project.run_step(_PrecomputedStep("Trim", result), {"aspect": shape})
+        src_h, src_w = self.project.shape_at(self.project.position)[:2]
+        self.project.run_step(_PrecomputedStep("Trim", result),
+                              {"aspect": shape, "bounds": [int(v) for v in bounds],
+                               "source_size": [src_w, src_h]})
         self._mark_dirty()
         h, w = result.data.shape[:2]
         self.log_panel.append_entry(format_log_entry("Trim", shape_label(shape), None,
@@ -8655,7 +8667,8 @@ class MainWindow(QMainWindow):
                               self.project.meta_at(self.project.position),
                               app_version=__version__, date=datetime.date.today(),
                               saved_version=self._saved_app_version,
-                              source_label=self._source_label)
+                              source_label=self._source_label,
+                              origins=self.project.origins())
         ProvenanceDialog(report, self.settings, source_label=self._source_label, parent=self).exec()
 
     def _refresh(self) -> None:

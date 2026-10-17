@@ -2384,7 +2384,7 @@ def test_presets_help_describes_how_a_run_ends():
     assert "self._record_auto_run(run, " in run
     rec = mw.split("def _record_auto_run")[1].split("\n    def ")[0]
     loop = rec.split("for (name, option, img), engine, res, stage in zip(")[1].split("):", 1)[1]
-    assert loop.lstrip().startswith("self.project.record_precomputed(name, option, img)")
+    assert loop.lstrip().startswith("self.project.record_precomputed(name, option, img,")
     assert "its own step, so you can change or undo any of them" in b
     # Apply and continue on Crop presses the crop-only path, which never runs a preset.
     press = mw.split("def _press_apply_plan")[1].split("\n    def ")[0]

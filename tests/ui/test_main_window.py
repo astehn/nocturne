@@ -3475,6 +3475,8 @@ def test_star_colour_tap_applies_via_busy_path(qtbot, tmp_path, monkeypatch):
     before = win.project.position
     win._enhance("Star Colour")
     assert win.project.position == before + 1        # one undoable step added
+    # It records the splitter that ran, for the provenance report (2026-10-17).
+    assert win.project.entries()[-1] == ("Star Colour", {"ran": "free"})
 
 
 def test_canvas_img_tracks_the_committed_image(qtbot, tmp_path):
@@ -4372,6 +4374,31 @@ def test_trim_appends_and_keeps_every_processing_step(qtbot, tmp_path, monkeypat
     assert after[:-1] == before, "every earlier step survived"
     nh, nw = win.project.current().data.shape[:2]
     assert (nh, nw) == (h - 4, w - 6)
+
+
+def test_a_trim_records_the_region_it_kept(qtbot, tmp_path, monkeypatch):
+    """The report says what a Trim cut, not only its shape (2026-10-17). A wide
+    picture and uneven margins, so a width/height or top/left swap cannot pass."""
+    arr = (np.random.default_rng(8).random((3, 30, 50)) * 1000).astype(np.uint16)
+    path = tmp_path / "wide.fits"
+    fits.PrimaryHDU(arr).writeto(str(path))
+    win = _window(qtbot, tmp_path)
+    win.open_fits(str(path))
+    win._go_to_id("stretch")
+    win.apply_current(0.5)
+    import nocturne.ui.main_window as mw
+    from nocturne.core.provenance import build_report
+    h, w = win.project.current().data.shape[:2]
+    assert (w, h) == (50, 30)
+    monkeypatch.setattr(mw, "TrimDialog", lambda img, parent=None: _FakeTrim((2, 25, 7, 49)))
+    win._trim()
+    name, option = win.project.entries()[-1]
+    assert name == "Trim"
+    assert option == {"aspect": "Free", "bounds": [2, 25, 7, 49], "source_size": [50, 30]}
+    assert win.project.current().data.shape[:2] == (23, 42)
+    report = build_report(win.project.entries(), {}, app_version="x",
+                          date=__import__("datetime").date(2026, 10, 17))
+    assert "- kept: 42 × 23 px of 50 × 30, left 7, top 2" in report
 
 
 class _FakeTrim:

@@ -29,7 +29,7 @@ def test_capture_header_shows_present_fields():
     assert "- Target: NGC 7000" in r
     assert "- Total integration: 2h 15m (135 × 60s)" in r
     assert "- Camera: Sony IMX585 (assumed" in r   # META names no camera
-    assert "- Captured: 2026-07-20" in r
+    assert "- Captured: 20 Jul 2026" in r       # the app's one way of saying a date
 
 
 def test_narrative_uses_scalar_and_headline_field():

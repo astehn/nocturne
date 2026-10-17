@@ -49,7 +49,9 @@ class LoadedProject:
 _REPRODUCIBLE_STAGES = {
     "stretch", "levels", "curves", "recover_core",
     "local_contrast", "remove_green", "rotate", "flip_h", "flip_v",
-}   # NOTE: crop excluded — serialize_option drops its bounds.
+}   # NOTE: crop excluded — restored from its cached pixels. Its saved option
+    # carries the region it cut (since 2026-10-17), but only as a record: a
+    # replay would re-derive nothing a cached snapshot does not already hold.
 
 # A cached step (anything NOT in _REPRODUCIBLE_STAGES) restores via
 # `record_precomputed(name, ...)` — the DISPLAY NAME is its only restore key,
@@ -127,7 +129,7 @@ def _ensure_serialized(stage, option):
         return option
     if isinstance(option, (list, tuple)):
         return list(option)
-    return serialize_option(stage, option)     # native object (CropParams/ColorSettings/…)
+    return serialize_option(stage, option, project=True)   # native object (CropParams/ColorSettings/…)
 
 
 def is_reproducible(stage, option) -> bool:
@@ -216,6 +218,7 @@ def save_project(project, path, *, solve_state=None, source_label: str = "",
     at the same points — a `Cancelled` raised there aborts the write and
     cleans up the temp file, leaving any pre-existing `path` untouched."""
     entries = list(project.entries())
+    origins = project.origins() if hasattr(project, "origins") else [None] * len(entries)
     serialized = []   # [(stage, ser, cached), ...] computed once, reused for total + the write loop
     for name, option in entries:
         stage = _stage_for(name)
@@ -246,6 +249,11 @@ def save_project(project, path, *, solve_state=None, source_label: str = "",
             for i, (name, option) in enumerate(entries):
                 stage, ser, cached = serialized[i]
                 entry = {"name": name, "stage": stage, "option": ser, "cached": cached, "cache": None}
+                if origins[i]:
+                    # Only when a run applied it. A key older builds never read
+                    # (they take name/stage/option/cached/cache by name), so
+                    # the bundle still opens there; their re-save drops it.
+                    entry["applied_by"] = dict(origins[i])
                 if cached:
                     snapshot = project.state_at(i + 1)
                     cache_name = f"cache/{i:03d}.npy"
@@ -368,20 +376,22 @@ def load_project(path: str, cache_dir: str, *, on_progress=None) -> LoadedProjec
         total = len(manifest["steps"])
         for done, step in enumerate(manifest["steps"], start=1):
             name, option = restored_entry(step)
+            origin = step.get("applied_by")
+            origin = dict(origin) if isinstance(origin, dict) else None
             if step["cached"]:
                 data = _bytes_to_array(zf.read(step["cache"]))
                 img = AstroImage(data, is_linear=step["is_linear"], metadata=step["metadata"])
-                project.record_precomputed(name, option, img)
+                project.record_precomputed(name, option, img, origin=origin)
             elif step["stage"] in _GEOMETRY_STAGE_NAMES:
                 # Replayed through CropStep, recorded as the live action was:
                 # its own name and the option it was saved with.
                 native = deserialize_option(step["stage"], step["option"], project=True)
                 img = make_step(step["stage"], settings).apply(project.current(), native)
-                project.record_precomputed(name, option, img)
+                project.record_precomputed(name, option, img, origin=origin)
             else:
                 native = deserialize_option(step["stage"], step["option"], project=True)
                 step_obj = make_step(step["stage"], settings)
-                project.run_step(step_obj, native)
+                project.run_step(step_obj, native, origin=origin)
             check()
             if on_progress is not None:
                 on_progress(done, total)

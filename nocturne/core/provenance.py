@@ -9,15 +9,13 @@ import re
 
 from ..recipe import _NAME_TO_STAGE, serialize_option
 from .crop import shape_label
-from .fits_io import format_integration, resolve_integration
+from .fits_io import format_capture_span, format_integration, resolve_integration
 from .instrument import DEFAULT_INSTRUMENT, identify
 
 # dict-option steps whose headline choice is a single field of the serialized dict
 _HEADLINE_FIELD = {
     "Background": "engine",
     "Narrowband": "palette",
-    "Crop": "aspect",
-    "Trim": "aspect",
 }
 
 # Steps whose recorded "aspect" is a stored shape name. The report says the
@@ -35,7 +33,7 @@ def _serialize(name: str, option):
         return option
     if isinstance(option, (list, tuple)):
         return list(option)
-    return serialize_option(_NAME_TO_STAGE.get(name, name), option)
+    return serialize_option(_NAME_TO_STAGE.get(name, name), option, project=True)
 
 
 def _num(v) -> str:
@@ -143,8 +141,35 @@ def _nr_params(ser: dict) -> list[str]:
 
 
 # ---- Crop / Trim -----------------------------------------------------------
+def _region(ser: dict) -> tuple[int, int, int, int, tuple[int, int] | None] | None:
+    """(width, height, left, top, source size) of the region kept, or None for
+    a record made before Crop and Trim kept it (2026-10-17)."""
+    b = ser.get("bounds")
+    if not isinstance(b, (list, tuple)) or len(b) != 4:
+        return None
+    try:
+        t, bottom, left, right = (int(v) for v in b)
+        size = ser.get("source_size")
+        src = (int(size[0]), int(size[1])) if size and len(size) == 2 else None
+    except (TypeError, ValueError):
+        return None
+    return right - left, bottom - t, left, t, src
+
+
+def _shape_headline(ser: dict) -> str:
+    parts = [str(ser["aspect"])] if ser.get("aspect") else []
+    if (r := _region(ser)) is not None:
+        w, h, _l, _t, src = r
+        parts.append(f"{w} × {h} px" + (f" from {src[0]} × {src[1]}" if src else ""))
+    return ", ".join(parts)
+
+
 def _shape_params(ser: dict) -> list[str]:
     lines = [f"- shape: {ser.get('aspect', '')}"] if ser.get("aspect") else []
+    if (r := _region(ser)) is not None:
+        w, h, left, top, src = r
+        lines.append(f"- kept: {w} × {h} px" + (f" of {src[0]} × {src[1]}" if src else "")
+                     + f", left {left}, top {top}")
     # Only what this entry did. A Crop records rotate 0 and both flips off on
     # every entry (one params object for all geometry); printing them under
     # every Crop read as though the crop had been asked to do them.
@@ -167,85 +192,213 @@ def _stretch_params(ser: dict) -> list[str]:
 
 
 _CURVE_CHANNEL = {"rgb": "RGB", "r": "Red", "g": "Green", "b": "Blue", "s": "Saturation"}
+# What raising / lowering a channel's curve does, in a reader's words.
+# What raising / lowering a channel's curve does, in a reader's words.
+_CURVE_VERBS = {"rgb": ("brightens", "darkens"), "r": ("adds red", "takes away red"),
+                "g": ("adds green", "takes away green"),
+                "b": ("adds blue", "takes away blue"),
+                "s": ("raises saturation", "lowers saturation")}
+# How far from the diagonal (in OUTPUT units, 0-1) a stretch of curve must go
+# to be called a change: 0.01 is 2.5 levels of 8-bit output. The monotone
+# cubic between two points the user set close to the diagonal wiggles by up
+# to about that much on its own — a -0.0098 dip between such points is the
+# interpolation, not a choice, and must not read as "darkens". The M 45 blue
+# curve's -0.0165 below 0.11, where the sky sits, is a real move and is said.
+_CURVE_MEANINGFUL = 0.01
+_CURVE_ZERO = 1e-4          # on the diagonal: float noise, not a direction
+
+
+def _curve_ranges(pts) -> list[tuple[int, float, float]]:
+    """(+1 raised / -1 lowered, from, to) input ranges, from the curve the app
+    applies (core.curves.build_lut). Each range runs between crossings of the
+    diagonal; one that never strays _CURVE_MEANINGFUL from it is left out."""
+    import numpy as np
+    from .curves import build_lut
+    lut = build_lut(pts).astype(np.float64)
+    grid = np.linspace(0.0, 1.0, lut.size)
+    diff = lut - grid
+    sign = np.where(diff > _CURVE_ZERO, 1, np.where(diff < -_CURVE_ZERO, -1, 0))
+    runs, i = [], 0
+    while i < sign.size:
+        j = i
+        while j + 1 < sign.size and sign[j + 1] == sign[i]:
+            j += 1
+        if sign[i] and float(np.abs(diff[i:j + 1]).max()) >= _CURVE_MEANINGFUL:
+            # Merge with the previous range of the same direction when only
+            # an insignificant stretch separated them.
+            if runs and runs[-1][0] == sign[i]:
+                runs[-1] = (runs[-1][0], runs[-1][1], float(grid[j]))
+            else:
+                runs.append((int(sign[i]), float(grid[i]), float(grid[j])))
+        i = j + 1
+    return runs
+
+
+def _range_words(lo: float, hi: float) -> str:
+    if lo <= 0.002 and hi >= 0.998:
+        return "across the whole range"
+    if lo <= 0.002:
+        return f"below {hi:.2f}"
+    if hi >= 0.998:
+        return f"above {lo:.2f}"
+    return f"from {lo:.2f} to {hi:.2f}"
+
+
+def _curve_words(channel: str, pts) -> str:
+    """What one curve does, measured from the curve itself: each input range
+    it raises or lowers ("takes away blue below 0.11, adds blue above 0.11"),
+    then, on the tone and colour curves, a moved black or white end. A
+    Saturation curve has no black or white point; its moved ends are in the
+    point list beside this."""
+    up, down = _CURVE_VERBS.get(channel, _CURVE_VERBS["rgb"])
+    parts = [f"{up if d > 0 else down} {_range_words(lo, hi)}"
+             for d, lo, hi in _curve_ranges(pts)]
+    if channel != "s":
+        (x0, y0), (x1, y1) = pts[0], pts[-1]
+        # An inner point on 0 (or 1) clips as surely as a moved end does.
+        zero = [x for x, y in pts if y < 0.001]
+        one = [x for x, y in pts if y > 0.999]
+        if zero and zero[0] == x0 and max(zero) > 0.001:
+            parts.append(f"black point at {max(zero):.3f}")
+        elif x0 > 0.001 and y0 > 0.001:
+            parts.append(f"black end moved to in {x0:.3f} → out {y0:.3f}")
+        elif y0 > 0.001:
+            parts.append(f"black lifted to {y0:.3f}")
+        if one and one[-1] == x1 and min(one) < 0.999:
+            parts.append(f"white point at {min(one):.3f}")
+        elif x1 < 0.999 and y1 < 0.999:
+            parts.append(f"white end moved to in {x1:.3f} → out {y1:.3f}")
+        elif y1 < 0.999:
+            parts.append(f"white lowered to {y1:.3f}")
+    return ", ".join(parts) or "no visible change"
 
 
 def _curves_params(ser) -> list[str]:
-    from .curves import normalize_curves
+    """Per curve: its channel and colour range as the dialog's selectors name
+    them, how many points it has, what it does, and its points (all but an
+    untouched corner) in the editor's readout words ("in 0.250 → out 0.300") — never the stored tuples.
+    Three decimals, as Levels prints, not the readout's two: a saved curve
+    holds four, and the report is what someone reproduces it from."""
+    from .curves import CURVE_CHANNELS, normalize_curves
     lines = []
-    for key, pts in normalize_curves(ser).items():
+    curves = normalize_curves(ser)
+    order = sorted(curves, key=lambda k: (CURVE_CHANNELS.index(k.split("/")[0])
+                                          if k.split("/")[0] in CURVE_CHANNELS else 99, k))
+    for key in order:
+        pts = sorted(curves[key])
         channel, _, target = key.partition("/")
-        label = _CURVE_CHANNEL.get(channel, channel)
+        label = f"{_CURVE_CHANNEL.get(channel, channel)} curve"
         if target and target != "all":
-            label += f", {target} only"
-        path = " → ".join(f"({_num(float(x))}, {_num(float(y))})" for x, y in pts)
-        lines.append(f"- {label} curve: {path}")
+            label += f", {target.capitalize()} only"
+        # Every point but an untouched corner: a moved end is part of what
+        # rebuilds the curve, and on Saturation it has no other words.
+        shown = [(x, y) for i, (x, y) in enumerate(pts)
+                 if not ((i == 0 and (x, y) == (0.0, 0.0))
+                         or (i == len(pts) - 1 and (x, y) == (1.0, 1.0)))]
+        where = (" (" + ", ".join(f"in {x:.3f} → out {y:.3f}" for x, y in shown) + ")"
+                 if shown else "")
+        lines.append(f"- {label}: {len(pts)} points — {_curve_words(channel, pts)}{where}")
     return lines or ["- no curve set"]
 
 
 # ---- Tools with dialogs ----------------------------------------------------
 def _narrowband_params(ser: dict) -> list[str]:
-    """The dialog's controls by the labels beside them, in its order, in the
+    """The controls the chosen palette USES (core.narrowband.palette_controls,
+    the dialog's own greying and hiding), by the labels beside them, in the
     units its value labels show (narrowband_dialog._update_value_labels).
     Fields with no control (black point, SCNR…) are fixed and not listed."""
-    from .narrowband import GOLD_BLUE, PALETTES_USING_BLEND
-    gold_blue = ser.get("palette") == GOLD_BLUE
-    lines = [f"- palette: {ser.get('palette', '')}"]
-    if "oxygen_strength" in ser:
-        oxy = float(ser["oxygen_strength"])
-        lines.append(f"- oxygen strength: {round(oxy * 100)}%" if gold_blue
-                     else f"- oxygen strength: ×{oxy:.2f}")
-    elif "oiii_boost" in ser:
-        # The control before 2026-09-09; it has no equivalent today.
-        lines.append(f"- OIII boost (an earlier control): ×{float(ser['oiii_boost']):.2f}")
-    # Greyed in the dialog where they do nothing (narrowband_dialog
-    # ._update_palette_controls): not listed as though they had an effect.
-    if "blend_amount" in ser and ser.get("palette") in PALETTES_USING_BLEND:
-        lines.append(f"- green blend: {float(ser['blend_amount']):.2f}")
-    if "protect_background" in ser:
-        lines.append(f"- protect background: {round(float(ser['protect_background']) * 100)}%")
-    if gold_blue:
-        for key, label in (("gold_strength", "gold"), ("blue_strength", "blue")):
-            if key in ser:
-                lines.append(f"- {label}: {round(float(ser[key]) * 100)}%")
-    elif "saturation" in ser:
-        lines.append(f"- saturation: {float(ser['saturation']):.2f}")
-    if "highlight_reduction" in ser:
-        from .narrowband import TAME_SPAN as span
-        tame = round((float(ser["highlight_reduction"]) - 1.0) / span * 100)
-        lines.append(f"- tame core: {'off' if tame <= 0 else f'{tame}%'}")
-    if "brightness" in ser:
-        lines.append(f"- brightness: ×{float(ser['brightness']):.2f}")
-    if "lightness_preserve" in ser and not gold_blue:
-        lines.append(f"- preserve lightness: {_num(bool(ser['lightness_preserve']))}")
+    from .narrowband import GOLD_BLUE, TAME_SPAN, palette_controls
+    palette = ser.get("palette", "")
+    gold_blue = palette == GOLD_BLUE
+    pct = lambda v: f"{round(float(v) * 100)}%"            # noqa: E731
+    fmt = {
+        # Gold and blue: where the gold/blue line sits; else a gain on OIII.
+        "oxygen_strength": ("oxygen strength", pct if gold_blue
+                            else lambda v: f"×{float(v):.2f}"),
+        "blend_amount": ("green blend", lambda v: f"{float(v):.2f}"),
+        "protect_background": ("protect background", pct),
+        "saturation": ("saturation", lambda v: f"{float(v):.2f}"),
+        "gold_strength": ("gold", pct),
+        "blue_strength": ("blue", pct),
+        "highlight_reduction": ("tame core", lambda v: (
+            "off" if (t := round((float(v) - 1.0) / TAME_SPAN * 100)) <= 0 else f"{t}%")),
+        "brightness": ("brightness", lambda v: f"×{float(v):.2f}"),
+        "lightness_preserve": ("preserve lightness", lambda v: "on" if v else "off"),
+    }
+    lines = [f"- palette: {palette}"]
+    for field in palette_controls(palette):
+        if field in ser:
+            label, show = fmt[field]
+            lines.append(f"- {label}: {show(ser[field])}")
+        elif field == "oxygen_strength" and "oiii_boost" in ser:
+            # The control before 2026-09-09; it has no equivalent today.
+            lines.append(f"- OIII boost (an earlier control): ×{float(ser['oiii_boost']):.2f}")
     return lines
 
 
-# Colour Balance's three sliders run Cyan—Red, Magenta—Green, Yellow—Blue from
-# −100 to +100 (color_balance_dialog._AXES); the option stores them / 100.
-_CB_AXES = ("red", "green", "blue")
+# Colour Balance's three sliders, as the dialog labels them
+# (color_balance_dialog._AXES), from −100 to +100; the option stores them / 100.
+_CB_AXES = ("Cyan — Red", "Magenta — Green", "Yellow — Blue")
+
+
+def _signed(v: float, fmt: str) -> str:
+    """"+2", "−1": the sign a slider's value label shows, with a real minus."""
+    return format(v, fmt).replace("-", "−")
 
 
 def _colour_balance_params(ser: dict) -> list[str]:
+    """In the dialog's words: each tonal range by its Tone name, each slider by
+    both its ends, then the switches and the Limit-to rows."""
     from .color_balance import TONES
     lines = []
     for tone in TONES:
         v = ser.get(tone) or (0, 0, 0)
-        if not any(float(x) for x in v):
-            continue
-        moved = ", ".join(f"{axis} {round(float(x) * 100):+d}".replace("-", "−")
-                          for axis, x in zip(_CB_AXES, v) if round(float(x) * 100))
-        lines.append(f"- {tone}: {moved}")
+        moved = [f"{axis} {_signed(round(float(x) * 100), '+d')}"
+                 for axis, x in zip(_CB_AXES, v) if round(float(x) * 100)]
+        if moved:
+            lines.append(f"- {tone.capitalize()}: {', '.join(moved)}")
     if not lines:
         lines.append("- no tonal range moved")
-    lines.append(f"- preserve luminosity: {_num(bool(ser.get('preserve_lum', True)))}")
-    lines.append(f"- strength: {round(float(ser.get('strength', 1.0)) * 100)}%")
+    lines.append(f"- Preserve luminosity: {'on' if ser.get('preserve_lum', True) else 'off'}")
+    lines.append(f"- Strength: {round(float(ser.get('strength', 1.0)) * 100)}%")
     lo, hi = float(ser.get("lo", 0.0)), float(ser.get("hi", 1.0))
     if (lo, hi) != (0.0, 1.0):
-        lines.append(f"- limited to the brightness range {lo:.2f}–{hi:.2f}, "
-                     f"feather {float(ser.get('feather', 0.08)):.2f}")
+        lines.append(f"- Range: brightness {lo:.2f} to {hi:.2f}, "
+                     f"Feather {float(ser.get('feather', 0.08)):.2f}")
     if ser.get("invert"):
-        lines.append("- range inverted: yes (everything outside it was adjusted)")
+        lines.append("- Invert the range: on")
     return lines
+
+
+def _tint_values(ser) -> tuple[float, float] | None:
+    try:
+        t, w = (float(v) for v in ser)
+    except (TypeError, ValueError):
+        return None
+    return t, w
+
+
+# The panel's two sliders (step_panels: "Green ←→ Magenta", "Cool ←→ Warm"),
+# −1…+1, shown "+0.25" as the panel's value labels do.
+_TINT_SLIDERS = (("tint", "Green ←→ Magenta", ("green", "magenta")),
+                 ("temperature", "Cool ←→ Warm", ("cool", "warm")))
+
+
+def _tint_headline(ser) -> str:
+    if (v := _tint_values(ser)) is None:
+        return ""
+    return ", ".join(f"{name} {_signed(x, '+.2f') if round(x, 2) else '0.00'}"
+                     for (name, _l, _e), x in zip(_TINT_SLIDERS, v))
+
+
+def _tint_params(ser) -> list[str]:
+    if (v := _tint_values(ser)) is None:
+        return [f"- values: {', '.join(_num(x) for x in ser)}"]
+    out = []
+    for (name, label, (lo, hi)), x in zip(_TINT_SLIDERS, v):
+        where = "centred" if round(x, 2) == 0 else f"towards {hi if x > 0 else lo}"
+        out.append(f"- {name} ({label}): {_signed(x, '+.2f') if round(x, 2) else '0.00'}, {where}")
+    return out
 
 
 def _spikes_params(ser: dict) -> list[str]:
@@ -279,6 +432,9 @@ _DICT_PARAMS = {
     "Narrowband": _narrowband_params,
     "Colour Balance": _colour_balance_params,
     "Star Spikes": _spikes_params,
+    # A tap has no settings; its record names only the splitter (Engines).
+    "Star Colour": lambda ser: [],
+    "Sharpen Nebulosity": lambda ser: [],
 }
 
 
@@ -289,6 +445,8 @@ def _headline(name: str, ser) -> str:
         return str(ser)
     if isinstance(ser, (int, float, str)):
         return f"{ser}"
+    if isinstance(ser, list) and name == "Colour Tint":
+        return _tint_headline(ser)
     if isinstance(ser, dict):
         if name == "Levels":
             return _levels_headline(ser)
@@ -305,6 +463,8 @@ def _headline(name: str, ser) -> str:
             return describe(ser)
         if name in ("Noise Reduction", "Linear Denoise", "AI Denoise"):
             return _nr_headline(ser)
+        if name in _SHAPE_STEPS:
+            return _shape_headline(ser)
         field = _HEADLINE_FIELD.get(name)
         if field and ser.get(field) not in (None, ""):
             return f"{ser[field]}"
@@ -322,8 +482,6 @@ _POSITIONAL_FIELDS = {
     "Levels": ("black point", "midtones", "white point"),
     "Saturation": ("saturation", "nebula boost"),
     "Starless Levels": ("black point", "white point"),
-    # step_panels' Colour Tint sliders: "Green ←→ Magenta", "Cool ←→ Warm".
-    "Colour Tint": ("green ←→ magenta", "cool ←→ warm"),
 }
 
 
@@ -373,6 +531,8 @@ def _render_params(ser, name: str = "") -> list[str]:
         return _DICT_PARAMS[name](ser)
     if isinstance(ser, list) and name == "Curves":
         return _curves_params(ser)      # a bare list is the pre-matrix RGB curve
+    if isinstance(ser, list) and name == "Colour Tint":
+        return _tint_params(ser)
     if isinstance(ser, dict):
         # A step with no renderer yet: readable keys and values rather than
         # Python, so a new tool degrades to plain words (the every-step test
@@ -404,7 +564,7 @@ def _md_escape(s) -> str:
     return _MD_SPECIAL.sub(r"\\\1", str(s).replace("\n", " ").replace("\r", " "))
 
 
-def _capture_lines(metadata: dict) -> list[str]:
+def _capture_lines(metadata: dict, source_label: str | None = None) -> list[str]:
     out: list[str] = []
     target = metadata.get("target") or metadata.get("target_solved")
     if target:
@@ -423,11 +583,47 @@ def _capture_lines(metadata: dict) -> list[str]:
         out.append(f"- Camera: {cam.sensor} ({cam.name})")
     else:
         out.append(f"- Camera: {DEFAULT_INSTRUMENT.sensor} (assumed — no camera in the file)")
+    # What else the header held, said only when it is there (2026-10-17).
+    if filt := str(metadata.get("filter") or "").strip():
+        from .filter_type import detect_data_type
+        dual = detect_data_type(metadata) == "dualband"
+        out.append(f"- Filter: {_md_escape(filt)}" + (" (dual-band)" if dual else ""))
+    if (gain := _number(metadata.get("gain"))) is not None:
+        out.append(f"- Gain: {gain:g}")
+    if (focal := _number(metadata.get("focal_length"))) is not None:
+        out.append(f"- Focal length: {focal:g} mm")
     if metadata.get("date"):
-        out.append(f"- Captured: {_md_escape(str(metadata['date']).split('T')[0])}")
+        # The app's one way of saying when (format_capture_span): a run past
+        # midnight, or over several nights, is the whole span, not its first date.
+        span = format_capture_span(metadata.get("date"), metadata.get("date_end"))
+        out.append(f"- Captured: {_md_escape(span or str(metadata['date']).split('T')[0])}")
+    if source_label and (name := _file_name(source_label)):
+        out.append(f"- Source file: {_md_escape(name)}")
+    if isinstance(metadata.get("trimmed"), bool):
+        # The stacker's TRIMMED card, in the stack dialog's own words.
+        out.append(f"- Stacked with \u201cTrim the ragged edges\u201d: "
+                   f"{'on' if metadata['trimmed'] else 'off'}")
     if metadata.get("target_solved"):
         out.append(f"- Plate solve: {_md_escape(metadata['target_solved'])} (solved)")
     return out
+
+
+def _number(v) -> float | None:
+    try:
+        return None if v is None or isinstance(v, bool) else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+_IMAGE_FILE = re.compile(r"\.(fits?|fts|fz|tiff?|xisf|png|jpe?g)$", re.IGNORECASE)
+
+
+def _file_name(label: str) -> str:
+    """The file's NAME, when the label is one: never a folder (a report is
+    shared, and a path names the person's disk). "stacked master" and the other
+    labels for a picture made in memory are not files and are not called one."""
+    name = re.split(r"[\\/]", str(label))[-1].strip()
+    return name if _IMAGE_FILE.search(name) else ""
 
 
 # ---- Where the picture came from -------------------------------------------
@@ -515,6 +711,11 @@ _UNRECORDED = {"Deconvolution": _DECONV_UNRECORDED,
                    "Saturation", "Star Reduction", "Starless Levels", "Star Colour",
                    "Sharpen Nebulosity")}}
 _STAGE_OF = {"Saturation": "saturation", "Star Reduction": "star_reduction"}
+# The two split taps record the splitter that ran since 2026-10-17
+# (steps/enhance_step.tap_record), in splitter_name's words.
+_SPLIT_TAPS = ("Star Colour", "Sharpen Nebulosity")
+_SPLITTER_NAMES = {"StarX": "StarXTerminator", "StarNet2": "StarNet2",
+                   "free": "Nocturne (built-in star split)"}
 
 
 def _engine_text(name: str, ser) -> str | None:
@@ -547,6 +748,8 @@ def _engine_text(name: str, ser) -> str | None:
         if ran:
             return f"not recorded — {ran} was requested"
         return "not recorded"
+    if name in _SPLIT_TAPS and isinstance(ser, dict) and ser.get("ran") in _SPLITTER_NAMES:
+        return f"**{_SPLITTER_NAMES[ser['ran']]}**"
     if name in _UNRECORDED:
         from .receipt import splits_stars
         if name in _STAGE_OF and not splits_stars(_STAGE_OF[name], ser):
@@ -584,9 +787,51 @@ def _engine_lines(ser_entries, saved_version) -> list[str]:
     return lines
 
 
+# ---- Who applied a step ----------------------------------------------------
+# The two runs that apply several steps at once (MainWindow._record_auto_run).
+AUTO_ENHANCE = "auto_enhance"
+PRESET = "preset"
+
+
+def run_origin(by: str, name: str) -> dict:
+    """The record a run leaves beside each step it applied."""
+    return {"by": by, "name": name}
+
+
+def _origin_words(origin) -> str:
+    if not isinstance(origin, dict):
+        return ""
+    name = _md_escape(origin.get("name") or "")
+    if origin.get("by") == AUTO_ENHANCE:
+        return "applied by Auto Enhance" + (f" ({name})" if name else "")
+    if origin.get("by") == PRESET:
+        return f"from preset \u2018{name}\u2019" if name else "from a preset"
+    return ""
+
+
+def _origin_notes(origins, n: int) -> dict[int, str]:
+    """{index of a run's first step: its note}. A run's steps are consecutive
+    and share one record; the note names its range, so the steps after it
+    need no closing line."""
+    origins = list(origins or [])[:n] + [None] * max(0, n - len(origins or []))
+    notes, i = {}, 0
+    while i < n:
+        words = _origin_words(origins[i])
+        if not words:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and origins[j + 1] == origins[i]:
+            j += 1
+        span = f"Step {i + 1}" if i == j else f"Steps {i + 1}\u2013{j + 1}"
+        notes[i] = f"_{span} \u2014 {words}_"
+        i = j + 1
+    return notes
+
+
 def build_report(entries, metadata, *, app_version: str, date: datetime.date,
                  settings=None, saved_version: str | None = None,
-                 source_label: str | None = None) -> str:
+                 source_label: str | None = None, origins=None) -> str:
     """The Engines section comes from the RECORD — what each step stored about
     the engine that ran — never from today's tool setup, which said "ASTAP +
     Gaia" or "sky balance" according to what is installed now and contradicted
@@ -604,7 +849,7 @@ def build_report(entries, metadata, *, app_version: str, date: datetime.date,
 
     lines = ["# Nocturne processing report", ""]
     lines.append("## Capture")
-    lines += _capture_lines(metadata)
+    lines += _capture_lines(metadata or {}, source_label)
     lines.append("")
 
     origin = _origin_lines(metadata or {}, source_label)
@@ -620,7 +865,14 @@ def build_report(entries, metadata, *, app_version: str, date: datetime.date,
         lines.append("_No steps applied since it was made._" if origin
                      else "_No processing steps applied._")
     else:
+        # `origins` (aligned with entries): which Auto Enhance run or preset
+        # applied a step, said once above the steps it applied.
+        notes = _origin_notes(origins, len(ser_entries))
         for i, (name, ser) in enumerate(ser_entries, 1):
+            if i - 1 in notes:
+                if i > 1:
+                    lines.append("")
+                lines += [notes[i - 1], ""]
             h = _headline(name, ser)
             lines.append(f"{i}. {name}" + (f" — {h}" if h else ""))
     lines.append("")
