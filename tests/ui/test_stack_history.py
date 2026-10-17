@@ -60,3 +60,19 @@ def test_a_reopened_folder_draws_the_moved_frames_grey_but_does_not_list_them(qt
     assert chart.point_colour(3) == MOVED_COLOUR
     assert dlg.browser.model.rowCount() == 3, "but not on the list"
     assert len(dlg._stats) == 3, "and not in what is counted or stacked"
+
+
+def test_a_moved_frame_keeps_its_site_through_the_dialog(qtbot, tmp_path):
+    folder, stats = _subs(tmp_path)
+    for s in stats:
+        s.site_long = -104.0
+    stats[3].included, stats[3].reason = False, "Stars trailed"
+    dlg = StackDialog(Settings()); qtbot.addWidget(dlg)
+    dlg._stats = stats
+    dlg._graded_folder = folder
+    dlg.browser.set_frames(stats)
+    dlg._confirm = lambda *a: True
+    dlg._move_rejected()
+    (h,) = rm.read_moved_history(folder)
+    assert h["site_long"] == -104.0
+    assert StackDialog._history_frame(h).site_long == -104.0

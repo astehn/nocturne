@@ -9,7 +9,7 @@ import sep
 
 from ..core.fits_io import is_stacked_master
 from ..core.tasks import current
-from .capture_time import read_capture_time
+from .capture_time import read_capture
 from .frames import load_sub, luminance
 from .nights import split_nights
 
@@ -89,6 +89,9 @@ class FrameStats:
     # When the sub was taken (aware datetime), for the frame list's Time column
     # and its default sort. None when neither DATE-OBS nor the file name says.
     captured: datetime | None = None
+    # SITELONG, degrees east, or None: the night is the SITE's when known
+    # (stacking/nights.py) — a remote site's night split in this computer's zone.
+    site_long: float | None = None
     # In <folder>/rejected/ now (stacking/reject_move.py): `path` points there,
     # and the frame can never be ticked in — nothing may stack from rejected/.
     moved: bool = False
@@ -178,12 +181,12 @@ def _score(star_count: int, fwhm: float, background: float, elongation: float) -
 
 
 def grade_frame(path: str) -> FrameStats:
-    captured = read_capture_time(path)
+    captured, site_long = read_capture(path)
     try:
         if is_stacked_master(path):
             return FrameStats(path, 0, 0.0, 0.0, 0.0, False,
                               reason_code="not_raw", reason=REASON_NOT_RAW,
-                              error=True, captured=captured)
+                              error=True, captured=captured, site_long=site_long)
         img = load_sub(path, normalize=False)
         star_count, fwhm, background, elongation, bg_spread = _measure(luminance(img.data))
         score = _score(star_count, fwhm, background, elongation)
@@ -191,11 +194,11 @@ def grade_frame(path: str) -> FrameStats:
                           elongation=elongation, bg_spread=bg_spread,
                           exposure=float(img.metadata.get("exposure", 0.0) or 0.0),
                           target=str(img.metadata.get("target") or ""),
-                          captured=captured)
+                          captured=captured, site_long=site_long)
     except Exception:
         return FrameStats(path, 0, 0.0, 0.0, 0.0, False,
                           reason_code="measure_failed", reason=REASON_MEASURE,
-                          error=True, captured=captured)
+                          error=True, captured=captured, site_long=site_long)
 
 
 def upper_gate(values: list[float], k: float) -> float:

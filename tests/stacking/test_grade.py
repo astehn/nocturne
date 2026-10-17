@@ -865,3 +865,22 @@ def test_error_frames_stay_out_whichever_night_they_fall_in():
     broken.captured = _EVE_21
     judge([broken] + soft + sharp, "normal")
     assert broken.included is False and broken.reason == REASON_MEASURE
+
+
+def test_grading_keeps_the_site_so_the_night_is_the_sites(tmp_path):
+    from tests.stacking.synthetic import make_star_field, write_color_fits
+    p = tmp_path / "Light_X_10.0s_LP_20261013-010000.fit"
+    write_color_fits(p, make_star_field(shape=(64, 64)),
+                     header={"DATE-OBS": "2026-10-13T06:00:00", "SITELONG": -104.0})
+    s = grade_frame(str(p))
+    assert s.site_long == -104.0
+    from datetime import date
+    from nocturne.stacking.nights import night_key
+    assert night_key(s) == date(2026, 10, 12)      # 23:04 solar at the site, the 12th's
+
+
+def test_a_frame_without_a_site_grades_with_none(tmp_path):
+    from tests.stacking.synthetic import make_star_field, write_color_fits
+    p = tmp_path / "a.fit"
+    write_color_fits(p, make_star_field(shape=(64, 64)))
+    assert grade_frame(str(p)).site_long is None
