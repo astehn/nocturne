@@ -225,6 +225,16 @@ class FrameTableModel(QAbstractTableModel):
         self._stats: list = []
         self._overrides: dict[int, bool] = {}
         self._ticks_locked = False
+        # several_folders(), once per list: re-walking 7,000 paths cost 142 ms
+        # an arrow key (2026-10-17). Every change to the list comes through
+        # set_frames/add_frames/remove_frames, which clear it.
+        self._several: bool | None = None
+
+    def several_folders(self) -> bool:
+        """The frames come from more than one capture folder (Add folder…)."""
+        if self._several is None:
+            self._several = len({home_folder(s.path) for s in self._stats}) > 1
+        return self._several
 
     def set_ticks_locked(self, locked: bool) -> None:
         """No tick changes while the host's job runs: frames re-ticked
@@ -239,6 +249,7 @@ class FrameTableModel(QAbstractTableModel):
         self.beginResetModel()
         self._stats = stats
         self._overrides = {}
+        self._several = None
         self.endResetModel()
 
     def frames(self) -> list:
@@ -264,6 +275,7 @@ class FrameTableModel(QAbstractTableModel):
         first = len(self._stats)
         self.beginInsertRows(QModelIndex(), first, first + len(new_stats) - 1)
         self._stats.extend(new_stats)
+        self._several = None
         self.endInsertRows()
 
     def remove_frames(self, predicate) -> None:
@@ -274,6 +286,7 @@ class FrameTableModel(QAbstractTableModel):
         Removed highest index first so the row numbers of everything else —
         and so `_overrides`, keyed by row — stay valid throughout."""
         rows = sorted((i for i, s in enumerate(self._stats) if predicate(s)), reverse=True)
+        self._several = None
         for row in rows:
             self.beginRemoveRows(QModelIndex(), row, row)
             del self._stats[row]
@@ -956,7 +969,7 @@ class FrameBrowser(QWidget):
             return
         s = stats[row]
         name = os.path.basename(s.path)
-        if len({home_folder(x.path) for x in stats}) > 1:
+        if self.model.several_folders():
             # Frames from several folders (Stack's "Add folder…") can share a
             # name: say whose this one is.
             name = f"{os.path.basename(home_folder(s.path))}/{name}"

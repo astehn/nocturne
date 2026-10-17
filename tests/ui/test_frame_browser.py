@@ -590,3 +590,36 @@ def test_a_rejudge_does_not_move_show_or_the_cursor(qtbot):
     b.refresh_verdicts()
     assert b.proxy.show_mode() == show_before
     assert b.current_row() == row_before
+
+
+# --- The "several folders" check at 7,000 rows (2026-10-17) ------------------
+# The preview header names a frame's folder only when the list spans several.
+# That check walked every path on every row change: 142 ms an arrow key at
+# 7,000 rows. It is computed once per list now, and redone when the list does.
+
+def test_a_row_change_does_not_rescan_every_folder(qtbot, monkeypatch):
+    stats = [_frame(i, i) for i in range(200)]
+    b = _browser(qtbot, stats)
+    calls = []
+    real = fb.home_folder
+    monkeypatch.setattr(fb, "home_folder", lambda p: (calls.append(p), real(p))[1])
+    for row in range(1, 21):
+        b._update_preview_header(row)
+    assert len(calls) <= len(stats) + 20, "re-scanned the whole list per row"
+
+
+def test_the_folder_prefix_follows_the_list_as_it_changes(qtbot):
+    stats = [_frame(i, i) for i in range(3)]
+    b = _browser(qtbot, stats)
+    b._update_preview_header(0)
+    assert b.preview_name.text() == "f0.fit"
+    other = FrameStats("/y/g0.fit", 800, 2.5, 0.02, 0.5, True, exposure=10.0)
+    b.model.add_frames([other])                       # Add folder…
+    b._update_preview_header(0)
+    assert b.preview_name.text() == "x/f0.fit"
+    b.model.remove_frames(lambda s: s is other)
+    b._update_preview_header(0)
+    assert b.preview_name.text() == "f0.fit"
+    b.set_frames([other, *[_frame(i, i) for i in range(2)]])
+    b._update_preview_header(0)
+    assert b.preview_name.text() == "y/g0.fit"
