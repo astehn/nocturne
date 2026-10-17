@@ -141,3 +141,116 @@ def test_his_real_headers_put_past_midnight_in_the_evenings_night():
     assert [night_of(read_capture_time(p)) for p in REAL] == [
         date(2026, 9, 21), date(2026, 9, 26), date(2026, 9, 26)]
     assert [os.stat(p).st_mtime_ns for p in REAL] == before
+
+
+# --- A remote site (2026-10-17) ---------------------------------------------
+#
+# Noon-to-noon in THIS computer's zone splits a night shot far away: a Texas
+# session processed in a central European zone turns over at 05:00 Texas
+# time, mid-session.
+# Every Seestar sub carries SITELONG, so the night turns at the SITE's solar
+# noon instead — date(UTC + SITELONG/15 h - 12 h) — named after the site's
+# evening. No usable SITELONG: exactly as before.
+
+from zoneinfo import ZoneInfo
+
+from nocturne.stacking.nights import night_key
+
+TEXAS = -104.0           # Starfront, west Texas
+CDT = ZoneInfo("America/Chicago")
+
+
+def _at_site(name, dt, site_long):
+    s = _frame(name, dt)
+    s.site_long = site_long
+    return s
+
+
+def _texas_session(evening: date, n=67):
+    """19:00 to 06:00 Texas clock time, a frame every 10 minutes."""
+    start = datetime(evening.year, evening.month, evening.day, 19, 0, tzinfo=CDT)
+    return [_at_site(f"{evening}_{i}.fit", start + timedelta(minutes=10 * i), TEXAS)
+            for i in range(n)]
+
+
+def test_three_texas_nights_processed_in_europe_are_three_nights():
+    evenings = [date(2026, 10, 12), date(2026, 10, 13), date(2026, 10, 15)]
+    stats = [s for e in evenings for s in _texas_session(e)]
+    nights = split_nights(stats)
+    assert [n.key for n in nights] == evenings
+    assert [n.label for n in nights] == ["12 Oct", "13 Oct", "15 Oct"]
+    assert [len(n.frames) for n in nights] == [67, 67, 67]
+
+
+def test_without_the_site_the_same_frames_split_as_they_used_to():
+    """The defect, kept visible: in the pinned European zone the Texas nights turn
+    over at 05:00 Texas time and three nights become more."""
+    stats = [s for e in (date(2026, 10, 12), date(2026, 10, 13), date(2026, 10, 15))
+             for s in _texas_session(e)]
+    for s in stats:
+        s.site_long = None
+    assert len(split_nights(stats)) > 3
+
+
+def test_the_night_turns_at_the_sites_solar_noon():
+    # Solar noon at 104 W is 18:56 UTC (104/15 h = 6 h 56 min behind UTC).
+    noon_utc = datetime(2026, 10, 13, 18, 56, tzinfo=timezone.utc)
+    assert night_of(noon_utc, TEXAS) == date(2026, 10, 13)
+    assert night_of(noon_utc - timedelta(seconds=1), TEXAS) == date(2026, 10, 12)
+
+
+@pytest.mark.parametrize("site_long", [
+    179.9,             # just west of the date line: the evening is UTC morning
+    -179.9,            # just east of it: UTC morning of the NEXT day
+    0.5,               # Greenwich
+    TEXAS,
+])
+def test_a_session_either_side_of_the_date_line_is_one_night(site_long):
+    # 20:00 to 05:00 solar time at the site, named after the site's evening.
+    offset = timedelta(hours=site_long / 15)
+    evening = datetime(2026, 10, 13, 20, 0, tzinfo=timezone.utc) - offset
+    times = [evening + timedelta(minutes=15 * i) for i in range(37)]
+    assert {night_of(t, site_long) for t in times} == {date(2026, 10, 13)}
+
+
+def test_a_longitude_written_0_to_360_is_the_same_place():
+    t = datetime(2026, 10, 13, 3, 0, tzinfo=timezone.utc)
+    assert night_of(t, 360 + TEXAS) == night_of(t, TEXAS) == date(2026, 10, 12)
+
+
+@pytest.mark.parametrize("bad", [None, float("nan"), float("inf"), "west", "",
+                                 400.0, -181.0, 0.0, True])
+def test_no_usable_longitude_is_exactly_the_old_behaviour(bad):
+    # 0.0 counts as missing: a sub saved without a location fix carries 0, and
+    # this computer's zone is the better guess then.
+    times = [datetime(2026, 10, 13, h, 30, tzinfo=timezone.utc) for h in range(24)]
+    assert [night_of(t, bad) for t in times] == [night_of(t) for t in times]
+
+
+def test_night_key_reads_the_frames_site():
+    t = datetime(2026, 10, 13, 10, 30, tzinfo=timezone.utc)   # 12:30 pinned zone, 03:34 Texas
+    assert night_key(_at_site("a.fit", t, TEXAS)) == date(2026, 10, 12)
+    assert night_key(_frame("b.fit", t)) == date(2026, 10, 13)
+
+
+def test_his_real_sessions_group_exactly_as_before():
+    """DATE-OBS and SITELONG sampled from real S30 Pro capture folders (two
+    sites in the owner's data), processed in the pinned zone: every frame's
+    night — not just the grouping, the key and so the label too — is
+    unchanged by reading the site."""
+    import json
+    path = os.path.join(os.path.dirname(__file__), "..", "fixtures", "night_headers.json")
+    with open(path, encoding="utf-8") as fh:
+        folders = json.load(fh)["folders"]
+    multi = 0
+    for name, rows in folders.items():
+        with_site = [_at_site(f"{i}.fit", from_date_obs(t), lon) for i, (t, lon) in enumerate(rows)]
+        before = [night_of(s.captured) for s in with_site]
+        assert all(s.site_long for s in with_site), name   # the site really is in play
+        assert [night_key(s) for s in with_site] == before, name
+        assert ([(n.key, n.label, len(n.frames)) for n in split_nights(with_site)]
+                == [(n.key, n.label, len(n.frames))
+                    for n in split_nights([_frame(f"{i}.fit", s.captured)
+                                           for i, s in enumerate(with_site)])]), name
+        multi += len(set(before)) > 1
+    assert multi >= 3        # three of the folders span several nights

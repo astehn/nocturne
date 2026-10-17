@@ -131,3 +131,20 @@ def test_a_new_list_drops_the_previous_folders_history(qtbot):
     b.set_history([_ghost("/x/rejected/late1.fit", 70)])
     b.set_frames(_night())
     assert len(b.chart.plotted()) == len(stats)
+
+
+def test_without_history_a_refresh_resolves_no_paths(qtbot, monkeypatch):
+    """The de-duplication against history needs every list path made absolute;
+    with no history there is nothing to de-duplicate. At 7,000 rows it ran
+    three times at the end of grading (deep-stack UI run, 2026-10-17)."""
+    stats = _night()
+    b = _shown(qtbot, stats)
+    listed = {s.path for s in stats}
+    calls = []
+    real = qc.os.path.abspath
+    monkeypatch.setattr(qc.os.path, "abspath",
+                        lambda p: (calls.append(p) if p in listed else None, real(p))[1])
+    b.chart.refresh()
+    monkeypatch.undo()
+    assert calls == []
+    assert len(b.chart.plotted()) == len(stats)

@@ -8,6 +8,7 @@ shown in local time: "22:19" is what he remembers, not "20:19".
 """
 from __future__ import annotations
 
+import math
 import os
 import re
 from datetime import datetime, timezone, tzinfo
@@ -62,8 +63,27 @@ def from_filename(path: str) -> datetime | None:
     return attach_local(naive)
 
 
-def read_capture_time(path: str) -> datetime | None:
-    """DATE-OBS from the header, else the file name's stamp, else None.
+def site_longitude(value) -> float | None:
+    """SITELONG as degrees east in [-180, 180), or None when it cannot be
+    trusted. 0 is None too: a sub saved without a location fix would carry
+    0, and this computer's zone is the better guess then. A site truly on the
+    meridian just keeps the behaviour every frame had before 2026-10-17."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        lon = float(value)
+    except ValueError:
+        return None
+    if not math.isfinite(lon) or not -180.0 <= lon <= 360.0:
+        return None
+    lon = (lon + 180.0) % 360.0 - 180.0
+    return None if lon == 0.0 else lon
+
+
+def read_capture(path: str) -> tuple[datetime | None, float | None]:
+    """(capture time, site longitude) from one header read. The time is
+    DATE-OBS, else the file name's stamp, else None; the longitude is
+    SITELONG through site_longitude, which decides the night (nights.py).
 
     A header-only read: 0.24 ms a file on real subs (stacker.capture_span), so
     about 60 ms for a 254-frame folder against minutes of grading. Read here
@@ -72,10 +92,21 @@ def read_capture_time(path: str) -> datetime | None:
     """
     from astropy.io import fits
     try:
-        found = from_date_obs(fits.getheader(path, 0).get("DATE-OBS"))
+        header = fits.getheader(path, 0)
+        found = from_date_obs(header.get("DATE-OBS"))
+        site = site_longitude(header.get("SITELONG"))
     except Exception:          # noqa: BLE001 — a bad card must not lose the frame
-        found = None
-    return found or from_filename(path)
+        found, site = None, None
+    if found is None:
+        # The name stamp is the Seestar's clock time at the site, read here in
+        # this computer's zone; the site's offset on top would shift it twice.
+        return from_filename(path), None
+    return found, site
+
+
+def read_capture_time(path: str) -> datetime | None:
+    """DATE-OBS from the header, else the file name's stamp, else None."""
+    return read_capture(path)[0]
 
 
 def time_label(dt: datetime | None) -> str:

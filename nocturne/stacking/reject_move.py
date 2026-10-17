@@ -54,6 +54,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Iterable
 
+from .capture_time import site_longitude
+
 REJECTED_DIR = "rejected"
 MANIFEST_NAME = ".nocturne-moved.json"
 _VERSION = 1
@@ -395,7 +397,13 @@ def _clean_measured(m) -> dict | None:
             captured = None
         reason = m.get("reason") if isinstance(m.get("reason"), str) else ""
         reason.encode("utf-8")
-        return {"captured": captured, "fwhm": fwhm, "star_count": stars, "reason": reason}
+        out = {"captured": captured, "fwhm": fwhm, "star_count": stars, "reason": reason}
+        # Only when known, so a record without a site reads byte for byte as
+        # it always did; a damaged one is dropped, not the frame.
+        site = site_longitude(m.get("site_long"))
+        if site is not None:
+            out["site_long"] = site
+        return out
     except (ValueError, OverflowError, TypeError, UnicodeError):
         return None
 
@@ -440,7 +448,7 @@ def read_moved_history(folder: str) -> list[dict]:
                         "captured": (datetime.fromisoformat(m["captured"])
                                      if m["captured"] else None),
                         "fwhm": m["fwhm"], "star_count": m["star_count"],
-                        "reason": m["reason"]})
+                        "reason": m["reason"], "site_long": m.get("site_long")})
         return out
     except Exception:
         return []

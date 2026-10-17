@@ -1529,6 +1529,7 @@ class StackDialog(QDialog):
         never a row, never counted, never stacked."""
         s = FrameStats(h["path"], h["star_count"], h["fwhm"], 0.0, 0.0, False)
         s.captured, s.reason, s.moved = h["captured"], h["reason"] or "Moved", True
+        s.site_long = h.get("site_long")
         return s
 
     def _sync_reject_buttons(self, check_disk: bool = False) -> None:
@@ -1643,7 +1644,8 @@ class StackDialog(QDialog):
                 # folder can still draw them on the chart (2026-10-01).
                 measured = {os.path.abspath(s.path): {
                     "captured": s.captured, "fwhm": s.fwhm,
-                    "star_count": s.star_count, "reason": s.reason} for s in group}
+                    "star_count": s.star_count, "reason": s.reason,
+                    "site_long": s.site_long} for s in group}
                 moved = move_to_rejected(folder, [s.path for s in group], graded,
                                          measured=measured)
             except RejectMoveError as exc:

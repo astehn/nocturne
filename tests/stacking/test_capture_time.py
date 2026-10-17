@@ -87,3 +87,46 @@ def test_no_source_is_no_time_and_a_dash(tmp_path):
 
 def test_the_full_label_carries_date_and_seconds(stockholm):
     assert full_label(from_filename(REAL_NAME)) == "21 Sep 2026 22:19:41"
+
+
+# SITELONG rides along with the capture time, from the same header read: the
+# night a frame belongs to is the SITE's (stacking/nights.py, 2026-10-17).
+
+def test_the_site_longitude_is_read_with_the_time(tmp_path):
+    from nocturne.stacking.capture_time import read_capture
+    p = tmp_path / REAL_NAME
+    write_color_fits(p, make_star_field(shape=(40, 40)),
+                     header={"DATE-OBS": REAL_DATE_OBS, "SITELONG": -104.0})
+    assert read_capture(str(p)) == (from_date_obs(REAL_DATE_OBS), -104.0)
+
+
+@pytest.mark.parametrize("header", [{}, {"SITELONG": "nowhere"}, {"SITELONG": 0.0}])
+def test_no_usable_site_is_none_and_the_time_still_reads(tmp_path, header):
+    from nocturne.stacking.capture_time import read_capture
+    p = tmp_path / REAL_NAME
+    write_color_fits(p, make_star_field(shape=(40, 40)), header={"DATE-OBS": REAL_DATE_OBS, **header})
+    assert read_capture(str(p)) == (from_date_obs(REAL_DATE_OBS), None)
+
+
+def test_an_unreadable_file_has_no_site(tmp_path, stockholm):
+    from nocturne.stacking.capture_time import read_capture
+    p = tmp_path / REAL_NAME
+    p.write_bytes(b"not a fits file")
+    assert read_capture(str(p)) == (from_filename(REAL_NAME), None)
+
+
+def test_a_time_from_the_file_name_carries_no_site(tmp_path, stockholm):
+    """The name stamp is the Seestar's own clock time at the site, not UTC:
+    adding SITELONG/15 h to it would shift it twice. Such a frame keeps the
+    old night (this computer's zone), as every frame did before."""
+    from nocturne.stacking.capture_time import read_capture
+    name = "Light_X_10.0s_LP_20261012-190000.fit"          # 19:00 Texas clock
+    p = tmp_path / name
+    write_color_fits(p, make_star_field(shape=(40, 40)), header={"SITELONG": -104.0})
+    assert read_capture(str(p)) == (from_filename(name), None)
+
+
+def test_360_degrees_is_the_meridian_and_so_no_fix_like_0():
+    from nocturne.stacking.capture_time import site_longitude
+    assert site_longitude(360.0) is None and site_longitude(0.0) is None
+    assert site_longitude(256.0) == -104.0

@@ -231,10 +231,14 @@ class QualityChart(QWidget):
         """Re-read the list: after a grade, a re-judge, or frames moved."""
         # A frame moved THIS session is a list row already; never draw it twice.
         # By full path: a frame moved this session already points into
-        # rejected/, and two added folders may hold the same names.
-        listed = {os.path.abspath(s.path) for s in self._list}
-        self._stats = list(self._list) + [
-            h for h in self._history if os.path.abspath(h.path) not in listed]
+        # rejected/, and two added folders may hold the same names. Only when
+        # there IS history: resolving 7,000 paths, three times at the end of
+        # a grade, was part of a 2 s freeze (2026-10-17).
+        self._stats = list(self._list)
+        if self._history:
+            listed = {os.path.abspath(s.path) for s in self._list}
+            self._stats += [h for h in self._history
+                            if os.path.abspath(h.path) not in listed]
         rows = [i for i, s in enumerate(self._stats) if plottable(s) and self._shown(s)]
         # One frame without a time and the whole axis is file-name order: a
         # half-timed axis would put the timeless frames somewhere false.

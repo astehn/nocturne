@@ -171,3 +171,27 @@ def test_one_bad_entry_does_not_hide_the_others(night):
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(text)
     assert len(rm.read_moved_history(folder)) == 1
+
+
+def test_the_record_keeps_the_site_so_a_moved_frame_stays_on_its_night(night):
+    """The chart groups history frames by night_key like any other; without
+    the site a moved Texas frame would fall back to this computer's night."""
+    folder, paths = night
+    measured = _measured(paths[:2])
+    measured[os.path.abspath(paths[0])]["site_long"] = -104.0
+    rm.move_to_rejected(folder, paths[:2], paths, measured=measured)
+    rec = {os.path.basename(e["name"]): e["measured"] for e in _record(folder)["moved"]}
+    assert rec[os.path.basename(paths[0])]["site_long"] == -104.0
+    assert "site_long" not in rec[os.path.basename(paths[1])], "unknown stays absent"
+    hist = {os.path.basename(h["path"]): h for h in rm.read_moved_history(folder)}
+    assert hist[os.path.basename(paths[0])]["site_long"] == -104.0
+    assert hist[os.path.basename(paths[1])]["site_long"] is None
+
+
+def test_a_damaged_site_in_the_record_is_dropped_not_the_frame(night):
+    folder, paths = night
+    measured = _measured(paths[:1])
+    measured[os.path.abspath(paths[0])]["site_long"] = "west"
+    rm.move_to_rejected(folder, paths[:1], paths, measured=measured)
+    (h,) = rm.read_moved_history(folder)
+    assert h["site_long"] is None and h["fwhm"] == 2.6

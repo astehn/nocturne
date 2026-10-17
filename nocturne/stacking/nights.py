@@ -13,13 +13,24 @@ off by the zone difference, and a noon boundary has twelve hours of slack
 either side of a night's middle before that splits a night. Daylight saving
 cannot split one: the clocks change at 02:00-03:00, ten hours from the
 boundary, and noon is resolved per date with that date's own offset.
+
+A frame that says where it was taken (SITELONG, which every Seestar sub
+carries) turns over at the SITE's solar noon instead, and is named after the
+site's evening (2026-10-17). Twelve hours of slack is not enough for a remote
+site: a Texas session processed in Europe turns over at 05:00 Texas time,
+inside the session, and three nights became four chips judged "mixed". Solar
+rather than civil time because the header has no zone, and noon only needs to
+be far from the dark. For the owner's own capture folders it changes no
+frame's night (tests/fixtures/night_headers.json). The Time column is still
+this computer's zone, so for a remote site a chip can read "12 Oct" over
+rows reading "13 · 04:30" — a known gap, far smaller than a split night.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
-from .capture_time import to_local
+from .capture_time import site_longitude, to_local
 
 # A night turns over at this local hour — mid-day, as far from any
 # observing as a clock gets.
@@ -29,16 +40,21 @@ NIGHT_TURNS_AT = 12
 NO_DATE_LABEL = "No date"
 
 
-def night_of(dt: datetime | None) -> date | None:
-    """The date of the evening a capture time belongs to; None for no time."""
+def night_of(dt: datetime | None, site_long=None) -> date | None:
+    """The date of the evening a capture time belongs to; None for no time.
+    With a usable `site_long`, the evening at the site, by its solar time."""
     if dt is None:
         return None
-    return (to_local(dt) - timedelta(hours=NIGHT_TURNS_AT)).date()
+    lon = site_longitude(site_long)
+    if lon is None:
+        return (to_local(dt) - timedelta(hours=NIGHT_TURNS_AT)).date()
+    solar = dt.astimezone(timezone.utc) + timedelta(hours=lon / 15.0)
+    return (solar - timedelta(hours=NIGHT_TURNS_AT)).date()
 
 
 def night_key(s) -> date | None:
-    """A frame's night, from its `captured`."""
-    return night_of(getattr(s, "captured", None))
+    """A frame's night, from its `captured` and, when known, its site."""
+    return night_of(getattr(s, "captured", None), getattr(s, "site_long", None))
 
 
 def night_label(key: date | None, with_year: bool = False) -> str:
