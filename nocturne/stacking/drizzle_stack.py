@@ -104,7 +104,10 @@ def drizzle_integrate(items, in_shape, n_channels, *, pixfrac=PIXFRAC):
 
     h, w = in_shape
     out_shape = (h * DRIZZLE_SCALE, w * DRIZZLE_SCALE)
-    drizzlers = [Drizzle(kernel=KERNEL, out_shape=out_shape) for _ in range(n_channels)]
+    # disable_ctx: the library's default context image costs +381 MB per 32
+    # frames on a 3840x2160 grid and Nocturne never reads it (see the tests).
+    drizzlers = [Drizzle(kernel=KERNEL, out_shape=out_shape, disable_ctx=True)
+                 for _ in range(n_channels)]
     for data, matrix, weight in items:
         pixmap = build_pixmap(matrix, in_shape, DRIZZLE_SCALE)
         data = np.asarray(data, np.float32)
@@ -290,7 +293,10 @@ def drizzle_clipped(make_items, in_shape, n_channels, *, kappa=2.5, pixfrac=PIXF
               count, _t1 - _t0, (_t1 - _t0) / max(count, 1))
 
     # --- Pass 2: mask per-input-pixel outliers, then drizzle ---
-    drizzlers = [Drizzle(kernel=KERNEL, out_shape=out_shape, fillval=0.0) for _ in range(n_channels)]
+    # disable_ctx: the context image grew +381 MB per 32 frames and was copied
+    # on every growth — at 1,000 frames it was most of a 36 GB peak. Unread.
+    drizzlers = [Drizzle(kernel=KERNEL, out_shape=out_shape, fillval=0.0, disable_ctx=True)
+                 for _ in range(n_channels)]
     for data, matrix in make_items():
         data = _as_hwc(data).astype(np.float32)
         pixmap = build_pixmap(matrix, in_shape, DRIZZLE_SCALE)

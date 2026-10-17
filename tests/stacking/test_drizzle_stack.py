@@ -288,3 +288,71 @@ def test_the_progress_steps_add_up():
             for step, total in pairs:
                 assert step <= total, (
                     f"{method} reported 'Step {step} of {total}'")
+
+
+# --- The context image (2026-10-17 deep-stack measurement) -----------------
+#
+# The drizzle library keeps, by default, a "context" image: one int32 bit-plane
+# per 32 input frames recording which frames hit each output pixel. On the 2x
+# grid of a 3840x2160 sub that is +381 MB every 32 frames, re-allocated and
+# copied each time it grows, so a 7,000-frame drizzle was projected at ~125 GB.
+# Nocturne never reads it. These tests hold it off and prove dropping it
+# changes no pixel.
+
+def _dithered_frames(n=40, shape=(24, 28), channels=3, seed=7):
+    rng = np.random.default_rng(seed)
+    frames = []
+    for _ in range(n):
+        f = (0.2 + 0.05 * rng.standard_normal(shape + (channels,))).astype(np.float32)
+        f[12, 14, :] += 1.0                                  # a star
+        dx, dy = rng.uniform(-1.5, 1.5, 2)
+        m = np.array([[1, 0, dx], [0, 1, dy], [0, 0, 1]], float)
+        frames.append((f, m))
+    return frames
+
+
+def _recording_drizzle(monkeypatch, force_ctx=None):
+    """Swap in a Drizzle that records every instance, and optionally forces
+    disable_ctx so the with/without comparison runs the same code path."""
+    import drizzle.resample as resample
+    real = resample.Drizzle
+    made = []
+
+    class Recording(real):
+        def __init__(self, *a, **kw):
+            if force_ctx is not None:
+                kw["disable_ctx"] = force_ctx
+            super().__init__(*a, **kw)
+            made.append(self)
+
+    monkeypatch.setattr(resample, "Drizzle", Recording)
+    return made
+
+
+def test_neither_drizzle_pass_builds_a_context_image(monkeypatch):
+    made = _recording_drizzle(monkeypatch)
+    frames = _dithered_frames(n=40)
+    drizzle_integrate([(f, m, None) for f, m in frames], (24, 28), 3)
+    drizzle_clipped(lambda: list(frames), (24, 28), 3)
+    assert len(made) == 6                                    # 3 channels x 2 calls
+    # 40 frames is past the 32-frame point where the library grows the context
+    # cube to a second plane, so a context left on would be a real array here.
+    assert all(d.out_ctx is None for d in made)
+
+
+def test_dropping_the_context_image_changes_no_pixel(monkeypatch):
+    frames = _dithered_frames(n=40)
+    items = [(f, m, None) for f, m in frames]
+
+    _recording_drizzle(monkeypatch, force_ctx=False)
+    with_ctx_int = drizzle_integrate(items, (24, 28), 3)
+    with_ctx_clip, with_ctx_cov = drizzle_clipped(lambda: list(frames), (24, 28), 3)
+    monkeypatch.undo()
+
+    _recording_drizzle(monkeypatch, force_ctx=True)
+    no_ctx_int = drizzle_integrate(items, (24, 28), 3)
+    no_ctx_clip, no_ctx_cov = drizzle_clipped(lambda: list(frames), (24, 28), 3)
+
+    assert np.array_equal(with_ctx_int, no_ctx_int)
+    assert np.array_equal(with_ctx_clip, no_ctx_clip)
+    assert np.array_equal(with_ctx_cov, no_ctx_cov)
