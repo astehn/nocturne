@@ -627,6 +627,10 @@ def _plain_step_line(name: str, option) -> str:
     return format_log_entry(name, option, None)
 
 
+# How much of a failed tool's own output the details row and the log keep.
+_OUTPUT_TAIL = 20
+
+
 class MainWindow(QMainWindow):
     _JOB_LOG_EVERY = 10      # percent between log lines; the panel shows every tick
     _recover_prep = _slot_property("_recover_prep")
@@ -1619,12 +1623,16 @@ class MainWindow(QMainWindow):
 
     def _report_tool_error(self, prefix: str, exc) -> None:
         """Surface a `ToolError` as a concise warning plus an expandable
-        diagnostic (command + stderr + elapsed) with a Copy-log affordance."""
+        diagnostic (command + output + elapsed) with a Copy-log affordance.
+        A streaming tool's stderr is folded into stdout and arrives empty, so
+        the tail of stdout is what says why it failed."""
         command = " ".join(str(part) for part in exc.command)
+        tail = "\n".join((getattr(exc, "stdout", "") or "").strip().splitlines()[-_OUTPUT_TAIL:])
         self._last_diagnostic = (
             f"Command: {command}\n"
             f"Elapsed: {exc.elapsed:.1f}s\n"
             f"stderr:\n{exc.stderr}"
+            + (f"\noutput (last lines):\n{tail}" if tail else "")
         )
         sessionlog.write(f"ERROR {prefix}\n{self._last_diagnostic}")
         self._show_warning(prefix)          # clears any older error's pending row

@@ -248,6 +248,12 @@ def test_collecting_imagecodecs_actually_brings_the_lzw_module():
     assert binaries, "collect_all brought no shared libraries for imagecodecs"
 
 
+# What the real StarNet2 2.5.2 prints on a 300x300 picture, stdout and stderr
+# merged as run_cli streams them: the complaint comes LAST.
+_REAL_TOO_SMALL = ("Reading input from /tmp/starnet_x/in.tif...\nColor image is detected!\n"
+                   "Image size: 300x300\nImage size is too small for the window!\n")
+
+
 def _echo_runner(seen):
     """A StarNet2 stand-in that, like the real binary, refuses a picture
     under its 512 px window, and otherwise echoes the input as 'starless'."""
@@ -258,7 +264,7 @@ def _echo_runner(seen):
         src = tifffile.imread(args[args.index("--input") + 1])
         seen.append(src.shape)
         if min(src.shape[:2]) < 512:
-            raise ToolError(args, 255, "Image size is too small for the window!\n", "", 0.1)
+            raise ToolError(args, 255, _REAL_TOO_SMALL, "", 0.1)
         tifffile.imwrite(args[args.index("--output") + 1], src)
         tifffile.imwrite(args[args.index("--unscreen") + 1], np.zeros_like(src))
     return runner
@@ -291,6 +297,6 @@ def test_a_failing_tool_says_why_even_when_it_wrote_to_stdout():
     """Streaming tools have stderr folded into stdout, so the message used to
     end at the colon: "CLI failed (255): " with nothing after it."""
     from nocturne.tools.base import ToolError
-    e = ToolError(["starnet2"], 255, "\nImage size is too small for the window!\nReading input…\n", "", 0.1)
+    e = ToolError(["starnet2"], 255, _REAL_TOO_SMALL, "", 0.1)
     assert str(e) == "CLI failed (255): Image size is too small for the window!"
     assert str(ToolError(["x"], 1, "out", "real stderr", 0.1)) == "CLI failed (1): real stderr"

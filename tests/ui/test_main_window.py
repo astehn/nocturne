@@ -2863,6 +2863,19 @@ def test_toolerror_diagnostic_is_available(qtbot, tmp_path):
     assert "graxpert" in txt and "model missing" in txt
 
 
+def test_a_streaming_tools_failure_shows_its_own_output(qtbot, tmp_path):
+    """StarNet2, GraXpert and RC-Astro --json stream with stderr folded into
+    stdout, so stderr arrives empty; the details row showed an empty
+    'stderr:' and nothing else. The tail of the output is where they say why."""
+    win = _window(qtbot, tmp_path)
+    from nocturne.tools.base import ToolError
+    out = "".join(f"routine line {i}\n" for i in range(40)) + "Image size is too small for the window!\n"
+    win._report_tool_error("Star removal failed", ToolError(["starnet2"], 255, out, "", 0.4))
+    txt = win._last_diagnostic_text()
+    assert "Image size is too small for the window!" in txt
+    assert "routine line 0\n" not in txt                # only the tail, not 40 lines
+
+
 def test_auto_progress_drives_determinate_bar(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
