@@ -85,6 +85,25 @@ def start_session(home: str | None = None) -> str | None:
     return target
 
 
+def join_session(home: str | None = None) -> str | None:
+    """Append to the session already running, without rotating it.
+
+    For a background stack: it is a child process of the window, and rotating
+    here moved the window's whole session to session.prev.log under it. Its own
+    lines (the ASTAP runs a mosaic makes) belong in that session anyway. Does
+    not set the start time: this process did not begin the session. Never
+    raises, for the reason in start_session."""
+    global _active
+    target = session_path(home)
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+    except _CANNOT:
+        _active = None
+        return None
+    _active = target
+    return target
+
+
 def write(line: str) -> None:
     """Append one line. Never raises, for the reason in start_session."""
     if _active is None:

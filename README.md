@@ -30,7 +30,7 @@ It's beginner-friendly: it *explains* what each step does and teaches the concep
   <em>The guided flow — every step explained, with live stack &amp; sensor details.</em>
 </p>
 <p align="center">
-  <img src="docs/img/shot-platesolve.jpg" alt="Plate-solved NGC 7000 with object circles drawn at their true size on the sky, named stars, an RA/Dec grid, a compass and a scale bar" width="90%"><br>
+  <img src="docs/img/shot-platesolve.jpg" alt="Plate-solved NGC 7000 and the Pelican Nebula, with object circles drawn at their true size on the sky, catalogue labels, named stars, an RA/Dec grid, a compass and a 30 arcminute scale bar" width="90%"><br>
   <em>Plate Solve &amp; Annotate — identify the target and overlay objects at their true size, named stars, an RA/Dec grid, a compass and a scale bar.</em>
 </p>
 <p align="center">

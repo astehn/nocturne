@@ -54,10 +54,24 @@ import tempfile
 
 import pytest
 
+# The home the suite must leave alone, read before anything below redirects it.
+# Run with HOME=<somewhere> and that somewhere is what is protected.
+REAL_HOME = os.path.expanduser("~")
+_SANDBOX = tempfile.mkdtemp(prefix="nocturne_home_")
+
+# And the home every test and every CHILD PROCESS sees. The function redirects
+# below only reach this process; test_bundle_selftest runs `python -m nocturne
+# --check-codecs`, whose main() opened the real nocturne.log and rotated the
+# real session.log — under a Nocturne the developer had open (2026-10-17).
+# matplotlib keeps its font cache where it was, so it is not rebuilt per run.
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(REAL_HOME, ".matplotlib"))
+os.environ["HOME"] = _SANDBOX
+if sys.platform == "win32":
+    os.environ["USERPROFILE"] = _SANDBOX
+
 import nocturne.settings as _settings
 
 _REAL_RESOLVE = _settings.resolve_settings_path
-_SANDBOX = tempfile.mkdtemp(prefix="nocturne_settings_")
 
 
 def _sandboxed_resolve(home: str | None = None) -> str:
@@ -74,6 +88,118 @@ def _settings_sandbox():
     _settings.resolve_settings_path = _sandboxed_resolve
     yield
     _settings.resolve_settings_path = _REAL_RESOLVE
+
+
+# --- and so are the user's log files -----------------------------------------
+#
+# test_startup_actually_opens_a_session calls the real main(), whose bare
+# configure_logging() attached a handler to the real ~/.nocturne/nocturne.log;
+# every test after it that logged an error ("boom A", "paint failed", "never
+# released") wrote it there, worktree paths and all. That log rides along with
+# in-app problem reports. Found 2026-10-17. The default home of both logs now
+# resolves into the same sandbox as settings.json; an explicit `home=` is
+# untouched, as above.
+
+import logging
+
+import nocturne.core.applog as _applog
+import nocturne.core.sessionlog as _sessionlog
+
+_REAL_LOG_PATH = _applog.log_path
+_REAL_SESSION_DIR = _sessionlog._dir
+
+
+def _sandboxed_log_path(home: str | None = None) -> str:
+    return _REAL_LOG_PATH(home if home is not None else _SANDBOX)
+
+
+def _sandboxed_session_dir(home: str | None) -> str:
+    return _REAL_SESSION_DIR(home if home is not None else _SANDBOX)
+
+
+_applog.log_path = _sandboxed_log_path
+_sessionlog._dir = _sandboxed_session_dir
+
+# The guard. Not an mtime check on the real files: the developer's own Nocturne
+# writes session.log and settings.json while the suite runs (it did, during the
+# run that found the child-process leak above), so that check fails on him, not
+# on the tests. An audit hook sees every open/rename/remove THIS process makes,
+# so it names the culprit exactly — and every child process it starts, which
+# must not be handed the real home.
+_REAL_DIR = os.path.join(os.path.realpath(REAL_HOME), ".nocturne")
+_PATH_EVENTS = {"open": 1, "os.rename": 2, "os.remove": 1, "os.truncate": 1,
+                "os.utime": 1, "shutil.rmtree": 1, "os.listdir": 1, "os.scandir": 1}
+_touched: list = []
+
+
+def _under_real_dir(path) -> bool:
+    if isinstance(path, int) or path is None:
+        return False
+    try:
+        p = os.fsdecode(os.fspath(path))
+    except TypeError:
+        return False
+    if ".nocturne" not in p:            # cheap: this runs on every open in the suite
+        return False
+    real = os.path.realpath(p)
+    return real == _REAL_DIR or real.startswith(_REAL_DIR + os.sep)
+
+
+def _child_home_is_real(env) -> bool:
+    """A child sees the real home if it is handed it, or handed no HOME at all
+    (POSIX then falls back to the password database, which is the real one)."""
+    env = os.environ if env is None else env
+    key = "USERPROFILE" if sys.platform == "win32" else "HOME"
+    home = env.get(key) if hasattr(env, "get") else None
+    if isinstance(home, bytes):
+        home = os.fsdecode(home)
+    return not home or os.path.realpath(home) == os.path.realpath(REAL_HOME)
+
+
+def _audit(event, args):
+    if not _guard_armed:
+        return
+    if event == "subprocess.Popen":
+        if _child_home_is_real(args[3]):
+            _touched.append((event, args[1]))
+        return
+    n = _PATH_EVENTS.get(event)
+    if n is None:
+        return
+    for path in args[:n]:
+        if _under_real_dir(path):
+            _touched.append((event, os.fspath(path)))
+
+
+_guard_armed = False
+sys.addaudithook(_audit)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _real_home_untouched():
+    """Fails the run if any test so much as opened the real ~/.nocturne."""
+    global _guard_armed
+    _guard_armed = True
+    yield
+    _guard_armed = False
+    assert not _touched, f"the test run reached the user's real ~/.nocturne: {_touched[:10]}"
+
+
+@pytest.fixture(autouse=True)
+def _isolated_app_logging():
+    """main() puts a file handler on the `nocturne` logger and detaches it from
+    the root (propagate=False). Left in place, every later test's caplog stops
+    seeing nocturne.* records, and the file collects the rest of the run."""
+    root = logging.getLogger("nocturne")
+    handlers, propagate, level = list(root.handlers), root.propagate, root.level
+    configured = _applog._configured
+    yield
+    for h in root.handlers:
+        if h not in handlers:
+            root.removeHandler(h)
+            h.close()
+    root.propagate, root.level = propagate, level
+    _applog._configured = configured
 
 
 # `sessionlog._active` and `_started_at` are MODULE GLOBALS. A test that calls
@@ -133,6 +259,34 @@ if sys.platform == "win32":
                 self.setFont(QFont("Segoe UI", 9))
 
         return _WindowsDefaultFontApp
+
+
+# --- what a test leaves queued is delivered before the next one starts --------
+
+@pytest.fixture(autouse=True)
+def _no_worker_outlives_its_test():
+    """Waits for every global-pool job to finish, then delivers what they
+    posted — their done/error signals and any deferred deletes — before the
+    next test starts. A job's done left queued landed in the NEXT test's event
+    loop, on a window pytest-qt had already deleted: the class of crash behind
+    the one full-suite segfault on the no-freezes branch (2026-10-06). Live
+    previews made pool jobs routine.
+
+    Here, not in tests/ui/conftest.py, for every test: test_linear_denoise_legacy
+    builds MainWindows from tests/ and so went unflushed, and its windows'
+    deferred deletes ran inside the next test's event loop — test_save_preset's
+    export-button test then measured a side panel whose layout had not settled
+    (button 12 px tall, no scroll range) and failed in that order only
+    (2026-10-17). Flushing DeferredDelete alone was enough to fix it."""
+    yield
+    try:
+        from PySide6.QtCore import QCoreApplication, QEvent, QThreadPool
+    except ImportError:
+        return
+    QThreadPool.globalInstance().waitForDone(30000)
+    if QCoreApplication.instance() is not None:
+        QCoreApplication.sendPostedEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 # --- prompt refusals -----------------------------------------------------------
