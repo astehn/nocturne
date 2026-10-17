@@ -261,6 +261,34 @@ if sys.platform == "win32":
         return _WindowsDefaultFontApp
 
 
+# --- what a test leaves queued is delivered before the next one starts --------
+
+@pytest.fixture(autouse=True)
+def _no_worker_outlives_its_test():
+    """Waits for every global-pool job to finish, then delivers what they
+    posted — their done/error signals and any deferred deletes — before the
+    next test starts. A job's done left queued landed in the NEXT test's event
+    loop, on a window pytest-qt had already deleted: the class of crash behind
+    the one full-suite segfault on the no-freezes branch (2026-10-06). Live
+    previews made pool jobs routine.
+
+    Here, not in tests/ui/conftest.py, for every test: test_linear_denoise_legacy
+    builds MainWindows from tests/ and so went unflushed, and its windows'
+    deferred deletes ran inside the next test's event loop — test_save_preset's
+    export-button test then measured a side panel whose layout had not settled
+    (button 12 px tall, no scroll range) and failed in that order only
+    (2026-10-17). Flushing DeferredDelete alone was enough to fix it."""
+    yield
+    try:
+        from PySide6.QtCore import QCoreApplication, QEvent, QThreadPool
+    except ImportError:
+        return
+    QThreadPool.globalInstance().waitForDone(30000)
+    if QCoreApplication.instance() is not None:
+        QCoreApplication.sendPostedEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
 # --- prompt refusals -----------------------------------------------------------
 #
 # Here, not in tests/ui/conftest.py: a command line that mixes tests/ui files with
