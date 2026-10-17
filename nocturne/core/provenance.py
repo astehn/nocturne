@@ -9,7 +9,7 @@ import re
 
 from ..recipe import _NAME_TO_STAGE, serialize_option
 from .crop import shape_label
-from .fits_io import format_integration, resolve_integration
+from .fits_io import format_capture_span, format_integration, resolve_integration
 from .instrument import DEFAULT_INSTRUMENT, identify
 
 # dict-option steps whose headline choice is a single field of the serialized dict
@@ -431,7 +431,7 @@ def _md_escape(s) -> str:
     return _MD_SPECIAL.sub(r"\\\1", str(s).replace("\n", " ").replace("\r", " "))
 
 
-def _capture_lines(metadata: dict) -> list[str]:
+def _capture_lines(metadata: dict, source_label: str | None = None) -> list[str]:
     out: list[str] = []
     target = metadata.get("target") or metadata.get("target_solved")
     if target:
@@ -450,11 +450,47 @@ def _capture_lines(metadata: dict) -> list[str]:
         out.append(f"- Camera: {cam.sensor} ({cam.name})")
     else:
         out.append(f"- Camera: {DEFAULT_INSTRUMENT.sensor} (assumed — no camera in the file)")
+    # What else the header held, said only when it is there (2026-10-17).
+    if filt := str(metadata.get("filter") or "").strip():
+        from .filter_type import detect_data_type
+        dual = detect_data_type(metadata) == "dualband"
+        out.append(f"- Filter: {_md_escape(filt)}" + (" (dual-band)" if dual else ""))
+    if (gain := _number(metadata.get("gain"))) is not None:
+        out.append(f"- Gain: {gain:g}")
+    if (focal := _number(metadata.get("focal_length"))) is not None:
+        out.append(f"- Focal length: {focal:g} mm")
     if metadata.get("date"):
-        out.append(f"- Captured: {_md_escape(str(metadata['date']).split('T')[0])}")
+        # The app's one way of saying when (format_capture_span): a run past
+        # midnight, or over several nights, is the whole span, not its first date.
+        span = format_capture_span(metadata.get("date"), metadata.get("date_end"))
+        out.append(f"- Captured: {_md_escape(span or str(metadata['date']).split('T')[0])}")
+    if source_label and (name := _file_name(source_label)):
+        out.append(f"- Source file: {_md_escape(name)}")
+    if isinstance(metadata.get("trimmed"), bool):
+        # The stacker's TRIMMED card, in the stack dialog's own words.
+        out.append(f"- Stacked with \u201cTrim the ragged edges\u201d: "
+                   f"{'on' if metadata['trimmed'] else 'off'}")
     if metadata.get("target_solved"):
         out.append(f"- Plate solve: {_md_escape(metadata['target_solved'])} (solved)")
     return out
+
+
+def _number(v) -> float | None:
+    try:
+        return None if v is None or isinstance(v, bool) else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+_IMAGE_FILE = re.compile(r"\.(fits?|fts|fz|tiff?|xisf|png|jpe?g)$", re.IGNORECASE)
+
+
+def _file_name(label: str) -> str:
+    """The file's NAME, when the label is one: never a folder (a report is
+    shared, and a path names the person's disk). "stacked master" and the other
+    labels for a picture made in memory are not files and are not called one."""
+    name = re.split(r"[\\/]", str(label))[-1].strip()
+    return name if _IMAGE_FILE.search(name) else ""
 
 
 # ---- Where the picture came from -------------------------------------------
@@ -631,7 +667,7 @@ def build_report(entries, metadata, *, app_version: str, date: datetime.date,
 
     lines = ["# Nocturne processing report", ""]
     lines.append("## Capture")
-    lines += _capture_lines(metadata)
+    lines += _capture_lines(metadata or {}, source_label)
     lines.append("")
 
     origin = _origin_lines(metadata or {}, source_label)
