@@ -46,7 +46,7 @@ def test_a_curve_is_described_not_dumped():
     # One point at 0.25 lifts the whole curve: most in the midtones, but the
     # highlights too (by 0.016 on average) — said, as it is true.
     assert line == ("- RGB curve: 3 points — brightens the shadows, midtones and highlights "
-                    "(in 0.25 → out 0.30)")
+                    "(in 0.250 → out 0.300)")
 
 
 def test_an_s_curve_reads_as_one():
@@ -58,7 +58,7 @@ def test_an_s_curve_reads_as_one():
 def test_black_and_white_points_are_named():
     pts = [(0.1, 0), (0.9, 1)]
     (line,) = _params(_report("Curves", {curve_key("rgb", "all"): pts}))
-    assert "black point at 0.10" in line and "white point at 0.90" in line
+    assert "black point at 0.100" in line and "white point at 0.900" in line
 
 
 def test_colour_and_saturation_curves_use_their_own_verbs():

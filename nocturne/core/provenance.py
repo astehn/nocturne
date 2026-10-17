@@ -239,20 +239,22 @@ def _curve_words(channel: str, pts) -> str:
         parts += [f"{verb} {_and_list(where)}" for where, verb in groups if where]
     (x0, y0), (x1, y1) = pts[0], pts[-1]
     if x0 > 0.001 and y0 < 0.001:
-        parts.append(f"black point at {x0:.2f}")
+        parts.append(f"black point at {x0:.3f}")
     elif y0 > 0.001:
-        parts.append(f"black lifted to {y0:.2f}")
+        parts.append(f"black lifted to {y0:.3f}")
     if x1 < 0.999 and y1 > 0.999:
-        parts.append(f"white point at {x1:.2f}")
+        parts.append(f"white point at {x1:.3f}")
     elif y1 < 0.999:
-        parts.append(f"white lowered to {y1:.2f}")
+        parts.append(f"white lowered to {y1:.3f}")
     return ", ".join(p for p in parts if p) or "no visible change"
 
 
 def _curves_params(ser) -> list[str]:
     """Per curve: its channel and colour range as the dialog's selectors name
     them, how many points it has, what it does, and its inner points in the
-    editor's own readout ("in 0.25 → out 0.30") — never the stored tuples."""
+    editor's readout words ("in 0.250 → out 0.300") — never the stored tuples.
+    Three decimals, as Levels prints, not the readout's two: a saved curve
+    holds four, and the report is what someone reproduces it from."""
     from .curves import CURVE_CHANNELS, normalize_curves
     lines = []
     curves = normalize_curves(ser)
@@ -265,7 +267,7 @@ def _curves_params(ser) -> list[str]:
         if target and target != "all":
             label += f", {target.capitalize()} only"
         inner = [(x, y) for x, y in pts[1:-1]]
-        where = (" (" + ", ".join(f"in {x:.2f} → out {y:.2f}" for x, y in inner) + ")"
+        where = (" (" + ", ".join(f"in {x:.3f} → out {y:.3f}" for x, y in inner) + ")"
                  if inner else "")
         lines.append(f"- {label}: {len(pts)} points — {_curve_words(channel, pts)}{where}")
     return lines or ["- no curve set"]

@@ -104,9 +104,9 @@ def test_the_report_after_save_and_reopen_is_the_live_report(tmp_path):
                  "8. Levels — auto (stops at the clipping limit), blue −0.010",
                  "9. Curves",
                  "- RGB curve: 3 points — brightens the shadows, midtones and highlights "
-                 "(in 0.25 → out 0.30)",
+                 "(in 0.250 → out 0.300)",
                  "- Saturation curve, Reds only: 3 points — raises saturation "
-                 "(in 0.50 → out 0.60)",
+                 "(in 0.500 → out 0.600)",
                  "10. Noise Reduction — strong, GraXpert",
                  "11. Narrowband — SHO-style (gold and blue)", "- gold: 100%",
                  "12. Colour Balance — midtones", "- Midtones: Cyan — Red +2, Yellow — Blue −1",
