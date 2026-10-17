@@ -8,11 +8,12 @@ paths. Verified on 2026-09-11 — the file's mtime matched a full-suite run.
 import os
 
 from nocturne.settings import resolve_settings_path
+from tests.conftest import REAL_HOME
 
 
 def test_the_default_path_is_sandboxed_during_tests():
     p = resolve_settings_path()
-    home = os.path.expanduser("~")
+    home = REAL_HOME
     assert not p.startswith(os.path.join(home, ".nocturne")), (
         f"tests resolve to the real settings file: {p}")
 
@@ -28,7 +29,7 @@ def test_the_real_file_is_not_touched_by_saving_through_the_default_path(tmp_pat
     """The exact motion that caused the damage."""
     from nocturne.settings import Settings, save_settings
 
-    real = os.path.join(os.path.expanduser("~"), ".nocturne", "settings.json")
+    real = os.path.join(REAL_HOME, ".nocturne", "settings.json")
     before = os.path.getmtime(real) if os.path.exists(real) else None
     save_settings(Settings(), resolve_settings_path())
     after = os.path.getmtime(real) if os.path.exists(real) else None
