@@ -113,3 +113,20 @@ def test_an_unreadable_file_has_no_site(tmp_path, stockholm):
     p = tmp_path / REAL_NAME
     p.write_bytes(b"not a fits file")
     assert read_capture(str(p)) == (from_filename(REAL_NAME), None)
+
+
+def test_a_time_from_the_file_name_carries_no_site(tmp_path, stockholm):
+    """The name stamp is the Seestar's own clock time at the site, not UTC:
+    adding SITELONG/15 h to it would shift it twice. Such a frame keeps the
+    old night (this computer's zone), as every frame did before."""
+    from nocturne.stacking.capture_time import read_capture
+    name = "Light_X_10.0s_LP_20261012-190000.fit"          # 19:00 Texas clock
+    p = tmp_path / name
+    write_color_fits(p, make_star_field(shape=(40, 40)), header={"SITELONG": -104.0})
+    assert read_capture(str(p)) == (from_filename(name), None)
+
+
+def test_360_degrees_is_the_meridian_and_so_no_fix_like_0():
+    from nocturne.stacking.capture_time import site_longitude
+    assert site_longitude(360.0) is None and site_longitude(0.0) is None
+    assert site_longitude(256.0) == -104.0

@@ -74,9 +74,10 @@ def site_longitude(value) -> float | None:
         lon = float(value)
     except ValueError:
         return None
-    if not math.isfinite(lon) or not -180.0 <= lon <= 360.0 or lon == 0.0:
+    if not math.isfinite(lon) or not -180.0 <= lon <= 360.0:
         return None
-    return (lon + 180.0) % 360.0 - 180.0
+    lon = (lon + 180.0) % 360.0 - 180.0
+    return None if lon == 0.0 else lon
 
 
 def read_capture(path: str) -> tuple[datetime | None, float | None]:
@@ -96,7 +97,11 @@ def read_capture(path: str) -> tuple[datetime | None, float | None]:
         site = site_longitude(header.get("SITELONG"))
     except Exception:          # noqa: BLE001 — a bad card must not lose the frame
         found, site = None, None
-    return found or from_filename(path), site
+    if found is None:
+        # The name stamp is the Seestar's clock time at the site, read here in
+        # this computer's zone; the site's offset on top would shift it twice.
+        return from_filename(path), None
+    return found, site
 
 
 def read_capture_time(path: str) -> datetime | None:
