@@ -54,6 +54,10 @@ import tempfile
 
 import pytest
 
+# The home the suite must leave alone, read before anything below can redirect
+# it. Run with HOME=<somewhere> and that somewhere is what is protected.
+REAL_HOME = os.path.expanduser("~")
+
 import nocturne.settings as _settings
 
 _REAL_RESOLVE = _settings.resolve_settings_path
@@ -74,6 +78,84 @@ def _settings_sandbox():
     _settings.resolve_settings_path = _sandboxed_resolve
     yield
     _settings.resolve_settings_path = _REAL_RESOLVE
+
+
+# --- and so are the user's log files -----------------------------------------
+#
+# test_startup_actually_opens_a_session calls the real main(), whose bare
+# configure_logging() attached a handler to the real ~/.nocturne/nocturne.log;
+# every test after it that logged an error ("boom A", "paint failed", "never
+# released") wrote it there, worktree paths and all. That log rides along with
+# in-app problem reports. Found 2026-10-17. The default home of both logs now
+# resolves into the same sandbox as settings.json; an explicit `home=` is
+# untouched, as above.
+
+import logging
+
+import nocturne.core.applog as _applog
+import nocturne.core.sessionlog as _sessionlog
+
+_REAL_LOG_PATH = _applog.log_path
+_REAL_SESSION_DIR = _sessionlog._dir
+
+
+def _sandboxed_log_path(home: str | None = None) -> str:
+    return _REAL_LOG_PATH(home if home is not None else _SANDBOX)
+
+
+def _sandboxed_session_dir(home: str | None) -> str:
+    return _REAL_SESSION_DIR(home if home is not None else _SANDBOX)
+
+
+_applog.log_path = _sandboxed_log_path
+_sessionlog._dir = _sandboxed_session_dir
+
+# What the suite must leave exactly as it found it. Size AND mtime, and compared
+# for equality: "no test line in it" would pass a run that rewrote the file.
+_GUARDED = ("nocturne.log", "session.log", "session.prev.log", "settings.json")
+
+
+def _real_home_snapshot() -> dict:
+    snap = {}
+    for name in _GUARDED:
+        path = os.path.join(REAL_HOME, ".nocturne", name)
+        try:
+            st = os.stat(path)
+            snap[path] = (st.st_size, st.st_mtime_ns)
+        except FileNotFoundError:
+            snap[path] = None
+    return snap
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _real_home_untouched():
+    """Fails the run if any test wrote the real ~/.nocturne. One caveat: a
+    Nocturne the developer is USING while the suite runs writes these files
+    too, and is indistinguishable from here."""
+    before = _real_home_snapshot()
+    yield
+    after = _real_home_snapshot()
+    changed = [p for p in before if before[p] != after[p]]
+    assert not changed, (
+        f"the test run changed the user's real files: {changed} "
+        f"(before {[before[p] for p in changed]}, after {[after[p] for p in changed]})")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_app_logging():
+    """main() puts a file handler on the `nocturne` logger and detaches it from
+    the root (propagate=False). Left in place, every later test's caplog stops
+    seeing nocturne.* records, and the file collects the rest of the run."""
+    root = logging.getLogger("nocturne")
+    handlers, propagate, level = list(root.handlers), root.propagate, root.level
+    configured = _applog._configured
+    yield
+    for h in root.handlers:
+        if h not in handlers:
+            root.removeHandler(h)
+            h.close()
+    root.propagate, root.level = propagate, level
+    _applog._configured = configured
 
 
 # `sessionlog._active` and `_started_at` are MODULE GLOBALS. A test that calls
