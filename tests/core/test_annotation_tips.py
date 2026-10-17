@@ -26,6 +26,17 @@ def test_the_scale_bar_tip_names_the_unit_and_compares_with_the_moon(arcsec, say
     assert "60 arcminutes make 1 degree" in tip
 
 
+def test_the_scale_bar_tip_names_the_moon_once_and_keeps_the_units():
+    """It said the Moon twice: "…about the width of the full Moon. … the full
+    Moon is about 30 arcminutes across." (his read, 2026-10-17). Every length
+    the bar can take, so no branch brings the second one back."""
+    from nocturne.core.annotate import _NICE_ARCSEC
+    for arcsec in sorted(set(_NICE_ARCSEC) | {1, 30, 60, 300, 600, 900, 1800, 3600, 7200}):
+        tip = scale_bar_tip(arcsec)
+        assert tip.count("Moon") == 1, (arcsec, tip)
+        assert "60 arcminutes make 1 degree" in tip and "60 arcseconds make 1 arcminute" in tip
+
+
 def test_the_scale_bar_label_carries_the_tip_for_its_own_length():
     prims = build_layout_for([], [], None, (600, 800), 2.0, _layers(scale=True), "all")
     bar = [p for p in prims if isinstance(p, Label)]

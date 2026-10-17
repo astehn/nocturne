@@ -126,9 +126,10 @@ def scale_bar_tip(arcsec: int) -> str:
         else:
             frac = _FRACTION_WORDS.get(n, f"1/{n} of")
             moon = f"{frac} the width of the full Moon"
+    # The Moon once: the comparison above already is the ruler, so a closing
+    # "the full Moon is about 30 arcminutes across" said it twice.
     return (f"This bar spans {amount} of sky — {moon}. "
-            "60 arcminutes make 1 degree, 60 arcseconds make 1 arcminute; "
-            "the full Moon is about 30 arcminutes across.")
+            "60 arcminutes make 1 degree, and 60 arcseconds make 1 arcminute.")
 
 
 def scale_bar_arcsec(pixscale_arcsec: float, width_px: int) -> int:

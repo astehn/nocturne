@@ -72,8 +72,7 @@ def test_the_real_canvas_shows_the_tip_over_the_picture(qtbot):
 
 
 LONG = ("This bar spans 15 arcminutes of sky — half the width of the full Moon. "
-        "60 arcminutes make 1 degree, 60 arcseconds make 1 arcminute; the full Moon "
-        "is about 30 arcminutes across.")
+        "60 arcminutes make 1 degree, and 60 arcseconds make 1 arcminute.")
 
 
 def test_tips_are_rich_text_so_qt_wraps_them(qtbot):
