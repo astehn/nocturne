@@ -296,13 +296,6 @@ def main() -> None:
     # which phase was slow. ~/.nocturne/nocturne.log now holds it.
     configure_logging()
 
-    # A DIFFERENT file and a different job. nocturne.log is drizzle's phase
-    # timings; this one is what a support ticket carries — every step, every
-    # tool run, every caught error. Opened here, above everything, because a
-    # write with no session open is silently dropped and MainWindow's own
-    # construction already autoconfigures tools and probes paths.
-    sessionlog.start_session()
-
     # The check the packaged app could not do for itself. From source the build
     # machine's Homebrew cert store is present, so a bundle that works only here
     # looks perfectly healthy; the failure appears on a user's Mac as silence.
@@ -329,9 +322,23 @@ def main() -> None:
     # shipped .app `sys.executable` IS the app binary — `-m` there re-launches
     # Nocturne instead of running a job. From source the reverse is true and the
     # module has to be named; job_command() holds both halves.
+    #
+    # It JOINS the session instead of starting one: start_session() here rotated
+    # the running window's session.log to session.prev.log under it, so the
+    # report sent after a background stack lacked that session (2026-10-17).
+    # The --check-* modes above open no session at all.
     if "--stack-job" in sys.argv:
+        sessionlog.join_session()
         from .stacking.job import main as job_main
         raise SystemExit(job_main(sys.argv))
+
+    # A DIFFERENT file and a different job. nocturne.log is drizzle's phase
+    # timings; this one is what a support ticket carries — every step, every
+    # tool run, every caught error. Opened here, before the QApplication,
+    # because a write with no session open is silently dropped and MainWindow's
+    # own construction already autoconfigures tools and probes paths. Below the
+    # headless dispatches, which must not rotate a running window's session.
+    sessionlog.start_session()
 
     app = QApplication(sys.argv)
     # Cyclic garbage is collected on THIS thread only, before any pool work

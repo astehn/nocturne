@@ -194,3 +194,56 @@ def test_a_session_that_cannot_be_opened_does_not_stop_the_app(tmp_path, monkeyp
     """A log file is a diagnostic, never a reason for the app not to start."""
     monkeypatch.setattr(sessionlog, "_active", None)
     sessionlog.write("dropped, silently, on purpose")
+
+
+# --- headless launches leave the window's session alone ----------------------
+#
+# A background stack is a child of this same executable (`--stack-job`), and
+# main() opened the session log before dispatching it — so every background
+# stack rotated the RUNNING window's session.log to session.prev.log and began
+# an empty one. The report sent afterwards carried neither half properly.
+# Found 2026-10-17 while sandboxing the suite.
+
+def _headless_main(monkeypatch, tmp_path, argv):
+    import nocturne.__main__ as entry
+    home = tmp_path / ".nocturne"
+    home.mkdir()
+    monkeypatch.setattr(sessionlog, "_dir", lambda h=None: str(home))
+    (home / "session.log").write_bytes(b"10:00:00  step  Crop\n10:01:00  step  Stretch\n")
+    (home / "session.prev.log").write_bytes(b"09:00:00  step  an older session\n")
+    before = {p.name: (p.read_bytes(), p.stat().st_ino) for p in home.iterdir()}
+    monkeypatch.setattr(entry.sys, "argv", argv)
+    with pytest.raises(SystemExit):
+        entry.main()
+    return home, before
+
+
+def test_a_stack_job_does_not_rotate_the_windows_session(monkeypatch, tmp_path):
+    """It JOINS the window's session instead: the ASTAP runs a mosaic job makes
+    are logged by run_cli, and a report should still carry them."""
+    import nocturne.stacking.job as job
+
+    def fake_job(argv, out=None):
+        sessionlog.write("tool  astap -f panel1.fits -> exit 0 in 2.0s")
+        return 0
+    monkeypatch.setattr(job, "main", fake_job)
+    home, before = _headless_main(monkeypatch, tmp_path,
+                                  ["nocturne", "--stack-job", str(tmp_path / "o.json")])
+    log, prev = home / "session.log", home / "session.prev.log"
+    assert prev.read_bytes() == before["session.prev.log"][0]
+    assert log.stat().st_ino == before["session.log"][1], "session.log was replaced"
+    text = log.read_bytes()
+    assert text.startswith(before["session.log"][0]), "the window's lines were lost"
+    assert b"astap -f panel1.fits" in text[len(before["session.log"][0]):]
+
+
+@pytest.mark.parametrize("flag, fn", [("--check-codecs", "_check_codecs"),
+                                      ("--check-network", "_check_network"),
+                                      ("--check-tools", "_check_tools")])
+def test_a_self_check_leaves_the_session_files_byte_identical(monkeypatch, tmp_path, flag, fn):
+    import nocturne.__main__ as entry
+    monkeypatch.setattr(entry, fn, lambda: 0)
+    home, before = _headless_main(monkeypatch, tmp_path, ["nocturne", flag])
+    after = {p.name: (p.read_bytes(), p.stat().st_ino) for p in home.iterdir()
+             if p.name.startswith("session")}
+    assert after == before
