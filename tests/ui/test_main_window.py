@@ -7295,3 +7295,35 @@ def test_a_saved_frame_that_differs_from_the_picture_restores_STALE(qtbot, tmp_p
     win._restore_solve_state(d)
     assert win._solve is not None and win._solve[0] != win._solve_sig()
 
+
+def _crop_through_the_panel(win, bounds):
+    """As the Crop panel's Apply does: the box's bounds, the panel's shape."""
+    win.image_view.crop_bounds = lambda: bounds
+    win._apply_plain_crop()
+
+
+def test_a_recrop_of_the_same_size_elsewhere_makes_the_solve_STALE(qtbot, tmp_path, monkeypatch):
+    """Crop A, solve, undo, then crop B — the same pixel size at another position.
+    The shape alone cannot tell them apart; the recorded region must, or the
+    labels draw from A's frame and the gallery is sent A's solve. Must fail
+    against: a signature that leaves the crop's option out."""
+    from nocturne.core.export import jpeg_bytes
+    win = _window_solved_with(qtbot, tmp_path, [_ic1805()])   # 24x24
+    win._ask_geometry = lambda names, label: True
+    _crop_through_the_panel(win, (2, 18, 3, 19))              # 16x16 at (3, 2)
+    res = win._solve[1]
+    win._solve = (win._solve_sig(), res, win._solve[2])       # solved after crop A
+    shape_a = win.project.current().data.shape[:2]
+    win._undo()                                               # crop A undone ...
+    _crop_through_the_panel(win, (6, 22, 7, 23))              # ... B: 16x16 at (7, 6)
+    assert win.project.current().data.shape[:2] == shape_a, "fixture: identical size"
+    assert [n for n, _ in win.project.entries()] == ["Crop"], "fixture: B replaced A"
+    assert win._solve[0] != win._solve_sig()
+    img = win.project.current()
+    assert win._sky_wcs_for_send(img, jpeg_bytes(img, 2400)) is None
+    # And the saved frame records the region, so a reopen tells them apart too.
+    win._solve = (win._solve_sig(), res, win._solve[2])
+    frame_b = win._solve_frame()
+    win._undo()
+    _crop_through_the_panel(win, (2, 18, 3, 19))
+    assert win._solve_frame() != frame_b
