@@ -7276,3 +7276,22 @@ def test_an_old_bundle_with_a_flip_or_rotation_is_restored_STALE(qtbot, tmp_path
     assert win._solve is not None and win._solve[0] != win._solve_sig()
     img = win.project.current()
     assert win._sky_wcs_for_send(img, jpeg_bytes(img, 2400)) is None
+
+
+def test_a_saved_frame_that_differs_from_the_picture_restores_STALE(qtbot, tmp_path):
+    """The saved-frame comparison itself. A 1 px-per-side crop after the save
+    keeps the centre within the old-bundle test's pixel, and adds no flip or
+    rotation, so only comparing the recorded frame can see it. Must fail
+    against: ignoring "frame", and the comparison answering True."""
+    from nocturne.core.crop import CropParams
+    win = _window_solved_with(qtbot, tmp_path, [_ic1805()])   # 24x24, CRPIX 12
+    d = win._solve_state_dict()
+    assert isinstance(d["frame"], dict), "fixture: the solve fitted when saved"
+    win._ask_geometry = lambda names, label: True
+    win._apply_geometry("Crop", CropParams(bounds=(1, 23, 1, 23)), shape="Free")
+    h, w = win.project.current().data.shape[:2]
+    assert abs(12 - (w + 1) / 2) <= 1 and abs(12 - (h + 1) / 2) <= 1, \
+        "fixture: the centre test alone would pass it"
+    win._restore_solve_state(d)
+    assert win._solve is not None and win._solve[0] != win._solve_sig()
+
