@@ -4304,7 +4304,9 @@ class MainWindow(QMainWindow):
         measured on every saved solve in his projects, 2026-10-18 — so a CRPIX
         more than a pixel off this frame's centre was solved on another frame.
         That alone catches M45_drizzle.nocturne (solved uncropped, saved
-        cropped)."""
+        cropped). It cannot see a flip, or a rotation of a square frame — both
+        keep the centre — so such a bundle is not trusted at all: its solve
+        may be the mirrored one."""
         if "frame" in d:
             saved = d["frame"]
             if not isinstance(saved, dict):
@@ -4313,6 +4315,8 @@ class MainWindow(QMainWindow):
             def canon(x):
                 return json.dumps(x, sort_keys=True, default=str)
             return canon(saved) == canon(self._solve_frame())
+        if any(n in ("Rotate", "Flip H", "Flip V") for n, _ in self.project.entries()):
+            return False
         h, w = self.project.current().data.shape[:2]
         cx, cy = (float(v) for v in wcs.wcs.crpix)
         return abs(cx - (w + 1) / 2) <= 1.0 and abs(cy - (h + 1) / 2) <= 1.0

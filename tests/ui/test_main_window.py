@@ -7189,7 +7189,9 @@ def test_an_old_bundles_solve_from_another_frame_is_restored_STALE(qtbot, tmp_pa
     win._restore_solve_state({"wcs": dict(_M45_SAVED_WCS), "objects": []})
     assert win._solve is not None, "kept, so the panel can say it is out of date"
     assert win._solve[0] != win._solve_sig()
-    assert win._sky_wcs_for_send(win.project.current(), b"") is None
+    from nocturne.core.export import jpeg_bytes
+    img = win.project.current()
+    assert win._sky_wcs_for_send(img, jpeg_bytes(img, 2400)) is None
 
 
 def test_an_old_bundles_solve_of_THIS_frame_is_restored_as_it_was(qtbot, tmp_path):
@@ -7254,3 +7256,23 @@ def test_a_solve_that_was_stale_when_saved_is_stale_when_reopened(qtbot, tmp_pat
     assert win._solve[0] != win._solve_sig(), "fixture: stale before saving"
     win2 = _reopened(qtbot, tmp_path, win)
     assert win2._solve is not None and win2._solve[0] != win2._solve_sig()
+
+
+@pytest.mark.parametrize("act, shape", [("_flip_h", (40, 60, 3)), ("_flip_v", (40, 60, 3)),
+                                        ("_rotate", (50, 50, 3))])
+def test_an_old_bundle_with_a_flip_or_rotation_is_restored_STALE(qtbot, tmp_path, act, shape):
+    """A flip, or a rotation of a square frame, keeps the centre, so the
+    centre test cannot tell a solve made before it (mirrored or turned) from
+    one made after: the old bundle's solve is not trusted, and not sent. Found
+    in review 2026-10-18. Must fail against: the centre test alone."""
+    from astropy.io import fits
+    from nocturne.core.export import jpeg_bytes
+    win = _window_at_shape(qtbot, tmp_path, shape)
+    win._ask_geometry = lambda names, label: True
+    getattr(win, act)()
+    h, w = win.project.current().data.shape[:2]
+    hdr = dict(_NGC6888_SAVED_WCS, CRPIX1=(w + 1) / 2, CRPIX2=(h + 1) / 2)
+    win._restore_solve_state({"wcs": hdr, "objects": []})
+    assert win._solve is not None and win._solve[0] != win._solve_sig()
+    img = win.project.current()
+    assert win._sky_wcs_for_send(img, jpeg_bytes(img, 2400)) is None
