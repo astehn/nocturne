@@ -7144,3 +7144,186 @@ def test_an_off_frame_lbn_is_still_in_the_objects_list(qtbot, tmp_path):
     win = _window_solved_with(qtbot, tmp_path, [_ic1805(), off])
     win._refresh_object_list(win._solve[1], win._solve[2])
     assert win.image_view.object_panel.count() >= 2
+
+
+# --- a saved solve must still fit the picture it is restored onto (2026-10-18) -
+#
+# _restore_solve_state stamped any saved solve with the CURRENT signature, so a
+# solve that was already stale when the project was saved came back as valid:
+# labels drawn from the wrong frame, and (since the gallery send) a wrong solve
+# posted. The real case: M45_drizzle.nocturne was solved on the uncropped
+# 4320x7680 drizzle frame and saved cropped to 3975x4969.
+
+_M45_SAVED_WCS = {   # verbatim from M45_drizzle.nocturne's manifest
+    "WCSAXES": 2, "CRPIX1": 2160.5, "CRPIX2": 3840.5,
+    "PC1_1": -0.00022328359580184, "PC1_2": 0.00045698834853367,
+    "PC2_1": -0.00045693690379519, "PC2_2": -0.00022342359571409,
+    "CDELT1": 1.0, "CDELT2": 1.0, "CUNIT1": "deg", "CUNIT2": "deg",
+    "CTYPE1": "RA---TAN", "CTYPE2": "DEC--TAN",
+    "CRVAL1": 56.674839499111, "CRVAL2": 24.178174485501,
+    "LONPOLE": 180.0, "LATPOLE": 24.178174485501, "MJDREF": 0.0, "RADESYS": "ICRS",
+}
+_NGC6888_SAVED_WCS = {   # verbatim from NGC6888.nocturne: solved after its crop, 3152x3939
+    "WCSAXES": 2, "CRPIX1": 1576.5, "CRPIX2": 1970.0,
+    "PC1_1": 7.994377568737e-05, "PC1_2": 0.00050188661483855,
+    "PC2_1": -0.00050192613041556, "PC2_2": 7.9901971008227e-05,
+    "CDELT1": 1.0, "CDELT2": 1.0, "CUNIT1": "deg", "CUNIT2": "deg",
+    "CTYPE1": "RA---TAN", "CTYPE2": "DEC--TAN",
+    "CRVAL1": 303.47116335483, "CRVAL2": 38.374496276714,
+    "LONPOLE": 180.0, "LATPOLE": 38.374496276714, "MJDREF": 0.0, "RADESYS": "ICRS",
+}
+
+
+def _window_at_shape(qtbot, tmp_path, shape):
+    from nocturne.core.image import AstroImage
+    win = _window(qtbot, tmp_path)
+    win.open_image(AstroImage(np.zeros(shape, np.float32), is_linear=False), "test")
+    return win
+
+
+def test_an_old_bundles_solve_from_another_frame_is_restored_STALE(qtbot, tmp_path):
+    """M 45's real numbers: CRPIX is the centre of the 4320x7680 frame ASTAP
+    solved, not of the 3975x4969 picture. Kept (a re-solve can replace it), but
+    stale — no labels, no gallery solve. Must fail against: today's restore."""
+    win = _window_at_shape(qtbot, tmp_path, (4969, 3975))
+    win._restore_solve_state({"wcs": dict(_M45_SAVED_WCS), "objects": []})
+    assert win._solve is not None, "kept, so the panel can say it is out of date"
+    assert win._solve[0] != win._solve_sig()
+    from nocturne.core.export import jpeg_bytes
+    img = win.project.current()
+    assert win._sky_wcs_for_send(img, jpeg_bytes(img, 2400)) is None
+
+
+def test_an_old_bundles_solve_of_THIS_frame_is_restored_as_it_was(qtbot, tmp_path):
+    """NGC 6888's real numbers: solved after its crop, CRPIX at the centre of
+    the 3152x3939 picture. Restored valid and unchanged — the heuristic must not
+    cost a good solve its labels."""
+    from astropy.io import fits
+    from nocturne.tools.astap import ASTAP
+    win = _window_at_shape(qtbot, tmp_path, (3939, 3152))
+    expect = dict(ASTAP._build(fits.Header(dict(_NGC6888_SAVED_WCS))).wcs.to_header())
+    win._restore_solve_state({"wcs": dict(_NGC6888_SAVED_WCS), "objects": []})
+    assert win._solve is not None and win._solve[0] == win._solve_sig()
+    assert dict(win._solve[1].wcs.to_header()) == expect
+    assert win._solve_freshness == "cached"
+
+
+def _solved_after_geometry(qtbot, tmp_path):
+    """A 24x24 picture cropped (with a shape), rotated and flipped, THEN solved:
+    the solve fits the picture as it stands."""
+    from nocturne.core.crop import CropParams
+    win = _window_solved_with(qtbot, tmp_path, [_ic1805()])
+    win._ask_geometry = lambda names, label: True
+    win._apply_geometry("Crop", CropParams(bounds=(2, 22, 4, 20)), shape="1:1")
+    win._rotate()
+    win._flip_v()
+    # As ASTAP solves it: the reference pixel at the centre of what it solved.
+    from nocturne.tools.astap import SolveResult
+    h, w = win.project.current().data.shape[:2]
+    wc = win._solve[1].wcs.deepcopy()
+    wc.wcs.crpix = [(w + 1) / 2, (h + 1) / 2]
+    win._solve = (win._solve_sig(), SolveResult(True, wc, 40.0, 61.0, 3.6), win._solve[2])
+    return win
+
+
+def _reopened(qtbot, tmp_path, win):
+    from nocturne.history.project_store import save_project
+    path = str(tmp_path / "p.nocturne")
+    save_project(win.project, path, solve_state=win._solve_state_dict(), source_label="s.fits")
+    (tmp_path / "w2").mkdir()
+    win2 = _window(qtbot, tmp_path / "w2")
+    win2._open_project(path)
+    return win2
+
+
+def test_a_solve_that_fitted_when_saved_fits_when_reopened(qtbot, tmp_path):
+    """Through a real save and open, after a shaped Crop, a Rotate and a Flip:
+    the live options and the reopened ones differ in type (native vs JSON), so
+    a raw comparison would wrongly call every reopened solve stale."""
+    win = _solved_after_geometry(qtbot, tmp_path)
+    assert [n for n, _ in win.project.entries()] == ["Crop", "Rotate", "Flip V"]
+    win2 = _reopened(qtbot, tmp_path, win)
+    assert win2._solve is not None and win2._solve[0] == win2._solve_sig()
+    assert dict(win2._solve[1].wcs.to_header()) == dict(win._solve[1].wcs.to_header())
+
+
+def test_a_solve_that_was_stale_when_saved_is_stale_when_reopened(qtbot, tmp_path):
+    """Its CRPIX is near the centre, so the old-bundle heuristic alone would
+    pass it: only the saved frame record can tell. Must fail against: today's
+    restore, and against ignoring the saved frame."""
+    win = _solved_after_geometry(qtbot, tmp_path)
+    win._flip_h()                                 # after the solve
+    assert win._solve[0] != win._solve_sig(), "fixture: stale before saving"
+    win2 = _reopened(qtbot, tmp_path, win)
+    assert win2._solve is not None and win2._solve[0] != win2._solve_sig()
+
+
+@pytest.mark.parametrize("act, shape", [("_flip_h", (40, 60, 3)), ("_flip_v", (40, 60, 3)),
+                                        ("_rotate", (50, 50, 3))])
+def test_an_old_bundle_with_a_flip_or_rotation_is_restored_STALE(qtbot, tmp_path, act, shape):
+    """A flip, or a rotation of a square frame, keeps the centre, so the
+    centre test cannot tell a solve made before it (mirrored or turned) from
+    one made after: the old bundle's solve is not trusted, and not sent. Found
+    in review 2026-10-18. Must fail against: the centre test alone."""
+    from astropy.io import fits
+    from nocturne.core.export import jpeg_bytes
+    win = _window_at_shape(qtbot, tmp_path, shape)
+    win._ask_geometry = lambda names, label: True
+    getattr(win, act)()
+    h, w = win.project.current().data.shape[:2]
+    hdr = dict(_NGC6888_SAVED_WCS, CRPIX1=(w + 1) / 2, CRPIX2=(h + 1) / 2)
+    win._restore_solve_state({"wcs": hdr, "objects": []})
+    assert win._solve is not None and win._solve[0] != win._solve_sig()
+    img = win.project.current()
+    assert win._sky_wcs_for_send(img, jpeg_bytes(img, 2400)) is None
+
+
+def test_a_saved_frame_that_differs_from_the_picture_restores_STALE(qtbot, tmp_path):
+    """The saved-frame comparison itself. A 1 px-per-side crop after the save
+    keeps the centre within the old-bundle test's pixel, and adds no flip or
+    rotation, so only comparing the recorded frame can see it. Must fail
+    against: ignoring "frame", and the comparison answering True."""
+    from nocturne.core.crop import CropParams
+    win = _window_solved_with(qtbot, tmp_path, [_ic1805()])   # 24x24, CRPIX 12
+    d = win._solve_state_dict()
+    assert isinstance(d["frame"], dict), "fixture: the solve fitted when saved"
+    win._ask_geometry = lambda names, label: True
+    win._apply_geometry("Crop", CropParams(bounds=(1, 23, 1, 23)), shape="Free")
+    h, w = win.project.current().data.shape[:2]
+    assert abs(12 - (w + 1) / 2) <= 1 and abs(12 - (h + 1) / 2) <= 1, \
+        "fixture: the centre test alone would pass it"
+    win._restore_solve_state(d)
+    assert win._solve is not None and win._solve[0] != win._solve_sig()
+
+
+def _crop_through_the_panel(win, bounds):
+    """As the Crop panel's Apply does: the box's bounds, the panel's shape."""
+    win.image_view.crop_bounds = lambda: bounds
+    win._apply_plain_crop()
+
+
+def test_a_recrop_of_the_same_size_elsewhere_makes_the_solve_STALE(qtbot, tmp_path, monkeypatch):
+    """Crop A, solve, undo, then crop B — the same pixel size at another position.
+    The shape alone cannot tell them apart; the recorded region must, or the
+    labels draw from A's frame and the gallery is sent A's solve. Must fail
+    against: a signature that leaves the crop's option out."""
+    from nocturne.core.export import jpeg_bytes
+    win = _window_solved_with(qtbot, tmp_path, [_ic1805()])   # 24x24
+    win._ask_geometry = lambda names, label: True
+    _crop_through_the_panel(win, (2, 18, 3, 19))              # 16x16 at (3, 2)
+    res = win._solve[1]
+    win._solve = (win._solve_sig(), res, win._solve[2])       # solved after crop A
+    shape_a = win.project.current().data.shape[:2]
+    win._undo()                                               # crop A undone ...
+    _crop_through_the_panel(win, (6, 22, 7, 23))              # ... B: 16x16 at (7, 6)
+    assert win.project.current().data.shape[:2] == shape_a, "fixture: identical size"
+    assert [n for n, _ in win.project.entries()] == ["Crop"], "fixture: B replaced A"
+    assert win._solve[0] != win._solve_sig()
+    img = win.project.current()
+    assert win._sky_wcs_for_send(img, jpeg_bytes(img, 2400)) is None
+    # And the saved frame records the region, so a reopen tells them apart too.
+    win._solve = (win._solve_sig(), res, win._solve[2])
+    frame_b = win._solve_frame()
+    win._undo()
+    _crop_through_the_panel(win, (2, 18, 3, 19))
+    assert win._solve_frame() != frame_b

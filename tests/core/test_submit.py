@@ -234,3 +234,149 @@ def test_jpeg_bytes_survives_a_MONO_image():
     mono = AstroImage(np.random.default_rng(1).random((200, 300)).astype("float32"))
     im = Image.open(io.BytesIO(jpeg_bytes(mono, 900)))
     assert im.mode == "RGB", "JPEG needs three channels"
+
+
+# --- the plate solve that goes with a submission (2026-10-18) ---------------
+#
+# Spec docs/superpowers/specs/2026-10-18-app-sends-solve-design.md. The app
+# sends its solve rescaled to the uploaded JPEG's own pixels, so the server can
+# check it against the stored file with the star check instead of running
+# ASTAP. Every test here works from the REAL ASTAP header of an NGC 7000 frame:
+# a synthetic WCS is self-consistent under either convention (see
+# test_catalog's _REAL_ASTAP_WCS note) and cannot catch a wrong one.
+
+import json as _json
+
+from tests.core.test_catalog import _REAL_ASTAP_WCS, _REAL_ROWS, _REAL_SHAPE
+
+
+def _thumb_size(h, w, edge=S.SUBMIT_EDGE):
+    """(w, h) PIL's thumbnail() gives a (h, w) picture — the size jpeg_bytes
+    uploads, rounding included."""
+    from PIL import Image
+    im = Image.new("L", (w, h))
+    im.thumbnail((edge, edge))
+    return im.size
+
+
+def _wcs_from_field(field):
+    """The WCS a receiver builds from the field: plain TAN, nothing else."""
+    from astropy.io import fits
+    from astropy.wcs import WCS
+    d = _json.loads(field)
+    h = fits.Header()
+    h["CTYPE1"], h["CTYPE2"] = "RA---TAN", "DEC--TAN"
+    h["CRVAL1"], h["CRVAL2"] = d["crval"]
+    h["CRPIX1"], h["CRPIX2"] = d["crpix"]
+    (h["CD1_1"], h["CD1_2"]), (h["CD2_1"], h["CD2_2"]) = d["cd"]
+    return WCS(h)
+
+
+def _real_wcs():
+    from astropy.io import fits
+    from astropy.wcs import WCS
+    return WCS(fits.Header(_REAL_ASTAP_WCS))
+
+
+def test_the_sky_field_lands_every_star_where_the_resize_puts_it():
+    """A star at 0-based (x, y) in the solved frame sits at (x+0.5)*sx - 0.5 in
+    the resized one: a whole-image resize maps outer edge to outer edge.
+
+    The frame is non-square and its thumbnail rounds the two axes differently
+    (sx != sy), so a swap of the factors moves stars too. Must fail against:
+    dropping the 0.5 terms (~0.16 px here); swapping sx and sy; scaling CRVAL;
+    scaling the CD matrix by rows instead of columns."""
+    h, w = _REAL_SHAPE
+    tw, th = _thumb_size(h, w)
+    sx, sy = tw / w, th / h
+    assert abs(sx - sy) > 1e-4, "fixture: the axes must round differently"
+    field = S.sky_wcs_field(dict(_REAL_ASTAP_WCS), (h, w), (tw, th))
+    orig, scaled = _real_wcs(), _wcs_from_field(field)
+    ras = [r[2] for r in _REAL_ROWS]
+    decs = [r[3] for r in _REAL_ROWS]
+    x0, y0 = orig.world_to_pixel_values(ras, decs)
+    x1, y1 = scaled.world_to_pixel_values(ras, decs)
+    for a, b, c, d in zip(x0, y0, x1, y1):
+        assert c == pytest.approx((a + 0.5) * sx - 0.5, abs=0.01)
+        assert d == pytest.approx((b + 0.5) * sy - 0.5, abs=0.01)
+    # The fixture reaches far from the reference pixel, or a swapped factor
+    # would hide inside the tolerance.
+    assert max(abs(a - (_REAL_ASTAP_WCS["CRPIX1"] - 1)) for a in x0) > 500
+
+
+def test_the_sky_field_is_exactly_the_agreed_shape():
+    """Compact JSON, these keys and no others — the server validates against
+    exactly this. Nothing else from the header can ride along."""
+    h, w = _REAL_SHAPE
+    tw, th = _thumb_size(h, w)
+    hdr = dict(_REAL_ASTAP_WCS, SITELAT=57.7, SITELONG=11.9, OBSERVER="someone")
+    field = S.sky_wcs_field(hdr, (h, w), (tw, th))
+    d = _json.loads(field)
+    assert set(d) == {"v", "w", "h", "crval", "crpix", "cd"}
+    assert d["v"] == 1 and (d["w"], d["h"]) == (tw, th)
+    assert isinstance(d["w"], int) and isinstance(d["h"], int)
+    assert d["crval"] == [_REAL_ASTAP_WCS["CRVAL1"], _REAL_ASTAP_WCS["CRVAL2"]]
+    assert " " not in field
+    for bad in ("57.7", "11.9", "someone", "SITE"):
+        assert bad not in field
+
+
+def test_an_unscaled_send_keeps_the_solve_exactly():
+    """A picture already under the cap is uploaded at its own size: the field
+    is the solve itself, unchanged."""
+    h, w = _REAL_SHAPE
+    d = _json.loads(S.sky_wcs_field(dict(_REAL_ASTAP_WCS), (h, w), (w, h)))
+    assert d["crpix"] == [_REAL_ASTAP_WCS["CRPIX1"], _REAL_ASTAP_WCS["CRPIX2"]]
+    cd = _real_wcs().pixel_scale_matrix
+    assert d["cd"] == [[cd[0, 0], cd[0, 1]], [cd[1, 0], cd[1, 1]]]
+
+
+@pytest.mark.parametrize("change", [
+    {"CRVAL1": float("nan")},
+    {"CD_INF": None},
+    {"CTYPE1": "RA---SIN", "CTYPE2": "DEC--SIN"},
+    {"CTYPE1": "GLON-TAN", "CTYPE2": "GLAT-TAN"},
+    {"PC1_1": 0.0, "PC1_2": 0.0},
+    {"LONPOLE": 0.0},
+])
+def test_a_solve_the_receiver_could_misread_sends_nothing(change):
+    """None rather than a field: a projection, frame or pole the receiver's
+    plain TAN would not reproduce, a non-finite number or a singular matrix."""
+    hdr = dict(_REAL_ASTAP_WCS)
+    if "CD_INF" in change:
+        hdr["PC2_2"] = float("inf")
+    else:
+        hdr.update(change)
+    h, w = _REAL_SHAPE
+    assert S.sky_wcs_field(hdr, (h, w), _thumb_size(h, w)) is None
+
+
+@pytest.mark.parametrize("solved, sent", [((0, 10), (10, 10)), ((10, 10), (0, 5)),
+                                          ((10, 10), (-5, 5))])
+def test_a_degenerate_size_sends_nothing(solved, sent):
+    assert S.sky_wcs_field(dict(_REAL_ASTAP_WCS), solved, sent) is None
+
+
+def test_the_sky_field_is_posted_only_when_given_a_string():
+    """No solve means no field — never an empty one, never a placeholder — and
+    the rest of the payload is the same either way. Must fail against: always
+    adding the key."""
+    seen = []
+
+    def opener(req, timeout=None):
+        seen.append(req.data)
+        return _Resp(b'{"ok":true,"errors":[]}')
+
+    S.submit(b"img", META, "@a", opener=opener)
+    S.submit(b"img", META, "@a", opener=opener, sky_wcs=None)
+    S.submit(b"img", META, "@a", opener=opener, sky_wcs='{"v":1}')
+
+    def names(body):
+        import re
+        return re.findall(rb'name="([^"]+)"', body)
+
+    assert b"sky_wcs" not in seen[0] and b"sky_wcs" not in seen[1]
+    with_it = names(seen[2])
+    assert with_it.count(b"sky_wcs") == 1
+    assert [n for n in with_it if n != b"sky_wcs"] == names(seen[0])
+    assert b'name="sky_wcs"\r\n\r\n{"v":1}\r\n' in seen[2]

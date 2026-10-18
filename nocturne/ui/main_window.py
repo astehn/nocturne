@@ -4,6 +4,7 @@ import contextlib
 import dataclasses
 import datetime
 import hashlib
+import json
 import os
 import shutil
 import threading
@@ -422,6 +423,11 @@ def _share_rgb8(data):
     if rgb8.ndim == 2:
         rgb8 = np.stack([rgb8] * 3, axis=2)
     return rgb8
+
+
+# What a restored solve that no longer fits the picture is stamped with: equal
+# to no `_solve_sig()`, so every user of the solve treats it as stale.
+_STALE_SOLVE_SIG = ("stale",)
 
 
 def _restored_object(saved: dict, wcs):
@@ -4270,7 +4276,50 @@ class MainWindow(QMainWindow):
         return {
             "wcs": dict(res.wcs.to_header()) if res.wcs is not None else None,
             "objects": [{k: v for k, v in asdict(o).items() if k != "r_px"} for o in objs],
+            # The framing the solve fits, or None when it no longer fitted at
+            # save time. Without it a stale solve came back valid on reopen.
+            # An unknown key to older builds, which read only the two above.
+            "frame": self._solve_frame() if _sig == self._solve_sig() else None,
         }
+
+    def _solve_frame(self) -> dict:
+        """The current framing in a form that survives a save and reopen.
+
+        Not `_solve_sig()` itself: its geometry options are reprs of whatever
+        the history holds — a live CropParams before saving, the manifest's
+        JSON after reopening — so the same framing would never compare equal.
+        Each option goes through the serialisation the bundle itself uses."""
+        from ..history.project_store import _ensure_serialized, _stage_for
+        h, w = self.project.current().data.shape[:2]
+        geo = [[n, _ensure_serialized(_stage_for(n), o)]
+               for n, o in self.project.entries() if n in GEOMETRY_NAMES]
+        return {"shape": [int(h), int(w)], "geometry": geo}
+
+    def _saved_solve_fits(self, d: dict, wcs) -> bool:
+        """Whether a saved solve fits the picture it is being restored onto.
+
+        A bundle that recorded its frame is compared with the current one.
+        One saved before that (no "frame" key) is judged by its reference
+        pixel: ASTAP always puts CRPIX at the centre of the frame it solved —
+        measured on every saved solve in his projects, 2026-10-18 — so a CRPIX
+        more than a pixel off this frame's centre was solved on another frame.
+        That alone catches M45_drizzle.nocturne (solved uncropped, saved
+        cropped). It cannot see a flip, or a rotation of a square frame — both
+        keep the centre — so such a bundle is not trusted at all: its solve
+        may be the mirrored one."""
+        if "frame" in d:
+            saved = d["frame"]
+            if not isinstance(saved, dict):
+                return False
+
+            def canon(x):
+                return json.dumps(x, sort_keys=True, default=str)
+            return canon(saved) == canon(self._solve_frame())
+        if any(n in ("Rotate", "Flip H", "Flip V") for n, _ in self.project.entries()):
+            return False
+        h, w = self.project.current().data.shape[:2]
+        cx, cy = (float(v) for v in wcs.wcs.crpix)
+        return abs(cx - (w + 1) / 2) <= 1.0 and abs(cy - (h + 1) / 2) <= 1.0
 
     def _restore_solve_state(self, d: dict | None) -> None:
         """Best-effort rebuild of self._solve from a saved solve-state dict. Kept
@@ -4291,7 +4340,10 @@ class MainWindow(QMainWindow):
             if res is None:
                 return
             objs = [_restored_object(o, res.wcs) for o in (d.get("objects") or [])]
-            self._solve = (self._solve_sig(), res, objs)
+            # Kept even when it no longer fits, as a solve made before a crop
+            # is kept: the panel then says it is out of date.
+            sig = self._solve_sig() if self._saved_solve_fits(d, res.wcs) else _STALE_SOLVE_SIG
+            self._solve = (sig, res, objs)
             self._solve_freshness = "cached"   # a restored solution, not a fresh solve
         except Exception:
             self._solve = None   # degrade to "re-solve to re-annotate" — never raise
@@ -7915,6 +7967,7 @@ class MainWindow(QMainWindow):
 
         img = self.project.current()
         data = jpeg_bytes(img, SUBMIT_EDGE, linked=self._view_linked)
+        sky_wcs = self._sky_wcs_for_send(img, data)
 
         # run_async, NOT a hand-rolled QRunnable.
         #
@@ -7954,7 +8007,31 @@ class MainWindow(QMainWindow):
             # worse than a refusal.
             _land(False, f"Could not send: {exc}")
 
-        run_async(self._pool, lambda: _submit(data, meta, handle), _done, _failed)
+        run_async(self._pool, lambda: _submit(data, meta, handle, sky_wcs=sky_wcs),
+                  _done, _failed)
+
+    def _sky_wcs_for_send(self, img, data: bytes) -> str | None:
+        """The solve, in the uploaded JPEG's pixels, while it still fits the
+        picture — else None, and the send goes without it, silently (the
+        server falls back to ASTAP). A stale solve sent here would place the
+        photo wrongly if the server's star check ever let it through.
+
+        The JPEG's size is READ BACK from its bytes, not computed: thumbnail()
+        rounds each axis on its own, and a pixel of difference in the factor
+        is a pixel of error at the far edge."""
+        if not self._solve or self._solve[0] != self._solve_sig():
+            return None
+        res = self._solve[1]
+        if res is None or res.wcs is None:
+            return None
+        try:
+            import io
+            from PIL import Image
+            from ..core.submit import sky_wcs_field
+            sent_wh = Image.open(io.BytesIO(data)).size
+            return sky_wcs_field(dict(res.wcs.to_header()), img.data.shape[:2], sent_wh)
+        except Exception:                         # noqa: BLE001 — the picture goes regardless
+            return None
 
     def export_final(self, fmt: str, space: str = "sRGB") -> None:
         if self.project is None or self._busy:
