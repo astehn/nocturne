@@ -75,6 +75,66 @@ def submission_fields(metadata: dict, handle: str) -> dict[str, str]:
     return out
 
 
+def sky_wcs_field(header: dict, solved_hw: tuple[int, int],
+                  sent_wh: tuple[int, int]) -> str | None:
+    """The plate solve, rescaled to the uploaded JPEG's own pixels, as the
+    compact JSON of the gallery's optional `sky_wcs` field — or None.
+
+    WHY IT GOES ALONG. A wall photo promoted to the planner has to be placed on
+    the sky, and the server's ASTAP run fails on heavily processed pictures.
+    With this it only has to CHECK a solve, with the same star check it already
+    trusts; a field that fails the check costs nothing but the ASTAP run.
+
+    ONLY A WHOLE-IMAGE RESIZE IS MAPPED. The caller sends this only while the
+    solve's framing signature still matches, so the solved array is the
+    uploaded one before thumbnail(). A resize maps outer edge to outer edge, so
+    in 1-based pixels CRPIX' = (CRPIX - 0.5)*s + 0.5 per axis and each CD
+    column divides by its axis's factor. `sent_wh` must be the JPEG's REAL size:
+    thumbnail() rounds each axis on its own, and the factors are taken from it.
+
+    Plain TAN only — SIP terms are dropped (the receiver builds a plain TAN,
+    and the star check judges the residual). Anything that plain TAN would not
+    reproduce exactly, or any non-finite or singular value, gives None: no
+    field is better than one the receiver would misread.
+    """
+    import math
+
+    import numpy as np
+    from astropy.io import fits
+    from astropy.wcs import WCS
+
+    try:
+        h, w = (int(v) for v in solved_hw)
+        tw, th = (int(v) for v in sent_wh)
+        if min(h, w, tw, th) <= 0:
+            return None
+        wcs = WCS(fits.Header(header), naxis=2)
+        ctype = [str(c).upper() for c in wcs.wcs.ctype]
+        if not (ctype[0].startswith("RA--") and ctype[1].startswith("DEC-")
+                and all(c[4:8] == "-TAN" for c in ctype)):
+            return None
+        # A non-default pole rotates the projection in a way a receiver that
+        # writes only CRVAL/CRPIX/CD would not repeat.
+        if not math.isclose(float(wcs.wcs.lonpole), 180.0, abs_tol=1e-9):
+            return None
+        cd = np.array(wcs.pixel_scale_matrix, dtype=float)
+        crval = [float(v) for v in wcs.wcs.crval]
+        crpix = [float(v) for v in wcs.wcs.crpix]
+    except Exception:                             # noqa: BLE001 — never block a send
+        return None
+
+    sx, sy = tw / w, th / h
+    crpix = [(crpix[0] - 0.5) * sx + 0.5, (crpix[1] - 0.5) * sy + 0.5]
+    cd = [[cd[0, 0] / sx, cd[0, 1] / sy], [cd[1, 0] / sx, cd[1, 1] / sy]]
+    nums = crval + crpix + cd[0] + cd[1]
+    if not all(math.isfinite(v) for v in nums):
+        return None
+    if cd[0][0] * cd[1][1] - cd[0][1] * cd[1][0] == 0.0:
+        return None
+    return json.dumps({"v": 1, "w": tw, "h": th, "crval": crval, "crpix": crpix, "cd": cd},
+                      separators=(",", ":"))
+
+
 def encode_multipart(fields: dict[str, str], image: bytes | None,
                      filename: str, *, field: str = "image",
                      content_type: str = "image/jpeg") -> tuple[bytes, str]:
@@ -123,8 +183,11 @@ def encode_multipart(fields: dict[str, str], image: bytes | None,
 
 def submit(image: bytes, metadata: dict, handle: str, *,
            opener=urllib.request.urlopen, timeout: float = TIMEOUT,
-           url: str = SUBMIT_URL) -> tuple[bool, str]:
+           url: str = SUBMIT_URL, sky_wcs: str | None = None) -> tuple[bool, str]:
     """POST the picture. Returns `(ok, message)` and NEVER raises.
+
+    `sky_wcs` is `sky_wcs_field`'s output, posted only when it is a string: no
+    solve means no field at all. A server older than the field ignores it.
 
     The message is shown to the person who pressed the button, so the
     endpoint's own wording is preferred over anything invented here — it knows
@@ -143,6 +206,8 @@ def submit(image: bytes, metadata: dict, handle: str, *,
         fields["consent"] = "1"
         # Makes the endpoint answer JSON instead of a page.
         fields["ajax"] = "1"
+        if isinstance(sky_wcs, str):
+            fields["sky_wcs"] = sky_wcs
         body, ctype = encode_multipart(fields, image, "nocturne-share.jpg")
         req = urllib.request.Request(
             url, data=body, method="POST",

@@ -7963,6 +7963,7 @@ class MainWindow(QMainWindow):
 
         img = self.project.current()
         data = jpeg_bytes(img, SUBMIT_EDGE, linked=self._view_linked)
+        sky_wcs = self._sky_wcs_for_send(img, data)
 
         # run_async, NOT a hand-rolled QRunnable.
         #
@@ -8002,7 +8003,31 @@ class MainWindow(QMainWindow):
             # worse than a refusal.
             _land(False, f"Could not send: {exc}")
 
-        run_async(self._pool, lambda: _submit(data, meta, handle), _done, _failed)
+        run_async(self._pool, lambda: _submit(data, meta, handle, sky_wcs=sky_wcs),
+                  _done, _failed)
+
+    def _sky_wcs_for_send(self, img, data: bytes) -> str | None:
+        """The solve, in the uploaded JPEG's pixels, while it still fits the
+        picture — else None, and the send goes without it, silently (the
+        server falls back to ASTAP). A stale solve sent here would place the
+        photo wrongly if the server's star check ever let it through.
+
+        The JPEG's size is READ BACK from its bytes, not computed: thumbnail()
+        rounds each axis on its own, and a pixel of difference in the factor
+        is a pixel of error at the far edge."""
+        if not self._solve or self._solve[0] != self._solve_sig():
+            return None
+        res = self._solve[1]
+        if res is None or res.wcs is None:
+            return None
+        try:
+            import io
+            from PIL import Image
+            from ..core.submit import sky_wcs_field
+            sent_wh = Image.open(io.BytesIO(data)).size
+            return sky_wcs_field(dict(res.wcs.to_header()), img.data.shape[:2], sent_wh)
+        except Exception:                         # noqa: BLE001 — the picture goes regardless
+            return None
 
     def export_final(self, fmt: str, space: str = "sRGB") -> None:
         if self.project is None or self._busy:

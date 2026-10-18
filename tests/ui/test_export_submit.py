@@ -299,3 +299,113 @@ def test_the_help_says_gallery_and_where():
     assert "wall" not in body.lower()
     assert "gallery" in body.lower()
     assert "nocturneastro.com" in body, "a new user does not know where it goes"
+
+
+# --- the plate solve goes along (2026-10-18) -------------------------------
+#
+# docs/superpowers/specs/2026-10-18-app-sends-solve-design.md. The send adds
+# `sky_wcs` — the solve in the UPLOADED JPEG's pixels — only while the solve
+# still fits the picture. These drive the real _submit_to_wall and read what
+# would have gone over the wire through a fake opener.
+
+def _solved_win(qtbot, tmp_path, shape):
+    import numpy as np
+    from astropy.io import fits
+    from astropy.wcs import WCS
+    from nocturne.core.image import AstroImage
+    from nocturne.tools.astap import SolveResult
+    from tests.core.test_catalog import _REAL_ASTAP_WCS
+    from tests.ui.test_main_window import _window
+    win = _window(qtbot, tmp_path)
+    rng = np.random.default_rng(3)
+    win.open_image(AstroImage(rng.random(shape).astype(np.float32), is_linear=False,
+                              metadata={"target": "NGC 7000", "sitelat": 57.7,
+                                        "sitelong": 11.9}), "test")
+    win.settings.handle = "@a"
+    wcs = WCS(fits.Header(_REAL_ASTAP_WCS))
+    win._solve = (win._solve_sig(), SolveResult(True, wcs, 313.7, 43.98, 3.6), [])
+    return win
+
+
+def _send_and_capture(qtbot, win, monkeypatch):
+    """What _submit_to_wall posts: the multipart field names/values and the JPEG."""
+    import re
+    from nocturne.core import submit as S
+    # The unpatched one, also on a second send in the same test.
+    real = getattr(S.submit, "_real", S.submit)
+    posted = {}
+
+    class _Resp:
+        def read(self):
+            return b'{"ok":true,"errors":[]}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def opener(req, timeout=None):
+        posted["body"] = req.data
+        return _Resp()
+
+    def fake(*a, **k):
+        return real(*a, opener=opener, **k)
+    fake._real = real
+    monkeypatch.setattr("nocturne.core.submit.submit", fake)
+    win._submit_to_wall("")
+    qtbot.waitUntil(lambda: "body" in posted, timeout=8000)
+    body = posted["body"]
+    fields = dict(re.findall(rb'name="([^"]+)"\r\n\r\n([^\r]*)\r\n', body))
+    jpeg = body[body.index(b"\xff\xd8"):body.rindex(b"\xff\xd9") + 2]
+    return {k.decode(): v.decode() for k, v in fields.items()}, jpeg
+
+
+@pytest.mark.parametrize("shape", [
+    (2501, 1667, 3),     # portrait over the cap: PIL rounds the short side UP (1600, not 1599)
+    (1667, 2501, 3),     # the same, landscape
+    (1667, 2501),        # mono: expanded to RGB, no geometry change
+    (801, 1203, 3),      # under the cap: sent at its own size
+])
+def test_the_sent_solve_is_in_the_UPLOADED_JPEGS_pixels(qtbot, tmp_path, monkeypatch, shape):
+    """The field's size is the JPEG's real one, read back from the bytes, and
+    its reference pixel is mapped with the factors of THAT size. Must fail
+    against: computing the size instead of reading it (int() gives 1599 for
+    the first three), or passing the stack's own size."""
+    import io
+    import json
+    from PIL import Image
+    from tests.core.test_catalog import _REAL_ASTAP_WCS
+    win = _solved_win(qtbot, tmp_path, shape)
+    fields, jpeg = _send_and_capture(qtbot, win, monkeypatch)
+    tw, th = Image.open(io.BytesIO(jpeg)).size
+    d = json.loads(fields["sky_wcs"])
+    assert (d["w"], d["h"]) == (tw, th)
+    h, w = shape[:2]
+    sx, sy = tw / w, th / h
+    assert d["crpix"][0] == pytest.approx((_REAL_ASTAP_WCS["CRPIX1"] - 0.5) * sx + 0.5, abs=1e-9)
+    assert d["crpix"][1] == pytest.approx((_REAL_ASTAP_WCS["CRPIX2"] - 0.5) * sy + 0.5, abs=1e-9)
+    # The location the header carried is never involved.
+    assert "57.7" not in fields["sky_wcs"] and "11.9" not in fields["sky_wcs"]
+    assert not any("site" in k.lower() for k in fields)
+
+
+def test_a_flip_after_the_solve_sends_no_solve(qtbot, tmp_path, monkeypatch):
+    """The solve no longer fits the picture, so nothing goes — silently, and
+    the picture still does. Must fail against: removing the sig comparison."""
+    win = _solved_win(qtbot, tmp_path, (40, 60, 3))
+    fields, _ = _send_and_capture(qtbot, win, monkeypatch)
+    assert "sky_wcs" in fields, "precondition: a fitting solve is sent"
+    before = {k: v for k, v in fields.items() if k != "sky_wcs"}
+    win._flip_h()
+    assert [n for n, _ in win.project.entries()][-1] == "Flip H"
+    fields, jpeg = _send_and_capture(qtbot, win, monkeypatch)
+    assert "sky_wcs" not in fields
+    assert fields == before and jpeg, "the rest of the send is unchanged"
+
+
+def test_no_solve_sends_no_solve(qtbot, tmp_path, monkeypatch):
+    win = _solved_win(qtbot, tmp_path, (40, 60, 3))
+    win._solve = None
+    fields, jpeg = _send_and_capture(qtbot, win, monkeypatch)
+    assert "sky_wcs" not in fields and jpeg

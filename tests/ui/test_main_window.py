@@ -7189,6 +7189,7 @@ def test_an_old_bundles_solve_from_another_frame_is_restored_STALE(qtbot, tmp_pa
     win._restore_solve_state({"wcs": dict(_M45_SAVED_WCS), "objects": []})
     assert win._solve is not None, "kept, so the panel can say it is out of date"
     assert win._solve[0] != win._solve_sig()
+    assert win._sky_wcs_for_send(win.project.current(), b"") is None
 
 
 def test_an_old_bundles_solve_of_THIS_frame_is_restored_as_it_was(qtbot, tmp_path):
