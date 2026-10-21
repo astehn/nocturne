@@ -22,6 +22,17 @@ site/config.php
 /packaging/build_downloads.py
 /packaging/build_gallery.py
 /packaging/build_planner_targets.py
+/packaging/build_sky_data.py
+/packaging/build_sky_constellations.py
+/tests/test_build_sky_constellations.py
+/packaging/sky_sources/
+/packaging/build_sky_images.py
+/packaging/sky_image_sources/
+/tests/test_build_sky_images.py
+/packaging/solve_planner_images.py
+/tests/test_solve_planner_images.py
+/packaging/planner_image_sources/
+/tests/test_build_sky_data.py
 /packaging/build_samples.py
 /packaging/build_showcase.py
 /packaging/build_site.py
@@ -39,6 +50,7 @@ site/config.php
 /tests/test_planner_images.py
 /tests/test_planner_page.py
 /tests/test_planner_targets.py
+/tests/test_sky_engine.py
 /tests/test_site_a11y.py
 /tests/test_site_analytics.py
 /tests/test_site_php_tests.py
