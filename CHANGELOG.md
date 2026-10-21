@@ -2,6 +2,27 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.55.0] — 2026-10-21
+
+Big stacks that finish, gallery sends that bring their plate solve, and a fuller provenance report.
+
+### Added
+- Sending a picture to the gallery now includes its plate solve, so the website can place it on the sky straight away.
+- Provenance report: Crop and Trim record which part of the picture you kept; Capture names the filter, gain, focal length, how long you captured for, the file and any trim; steps run by Auto Enhance or a preset say so; Star Colour and Sharpen Nebulosity record which star remover ran.
+
+### Changed
+- The provenance report describes Tint, Curves, Colour Balance and Narrowband in the same words their panels use. Curves are described by what they do to the dark, middle and bright tones.
+- The Stack dialog is quicker with thousands of frames: arrow keys are instant, and the chart no longer stalls.
+
+### Fixed
+- Drizzle no longer uses more memory with every frame. 2000 frames now drizzle in about 11 GB; before, 1000 frames needed 36 GB and kept climbing.
+- Stacks from several nights at a remote telescope now split the nights at the site's own midday, not your computer's.
+- A reopened project uses its saved plate solve only if it still fits the picture. After a crop, flip or rotation, it solves again.
+- StarNet2 failed on crops smaller than 512 pixels, for example in Upscale Crop, with "CLI failed (255)". It works now.
+- When an outside tool fails, the message shows its last line, the one that says why.
+- A stack running in the background no longer cuts off the main window's log.
+- The scale-bar tip in Plate Solve mentions the full Moon once.
+
 ## [0.54.0] — 2026-10-16
 
 A calmer, clearer plate-solve overlay, the nebula names that were missing, and a provenance report that says only what it knows.
