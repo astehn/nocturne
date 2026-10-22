@@ -258,4 +258,4 @@ def test_the_preset_summary_still_names_the_split_when_one_ran(qtbot, tmp_path):
     out = win.output_panel.toPlainText()
     assert ("Saturation used Nocturne (free star split): "
             "no star tool set up (StarXTerminator or StarNet2).") in out, out
-    assert "cleaner stars" in out, out
+    assert "cleaner stars" not in out, out

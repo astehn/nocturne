@@ -15,8 +15,20 @@ def test_a_starnet2_split_is_named_not_called_free(qtbot, tmp_path):
     assert note != win._split_note("free")
 
 
-def test_the_free_note_names_the_free_tool_too(qtbot):
-    assert "StarNet2" in main_window._FREE_STAR_NOTE
+def test_the_app_does_not_rank_the_external_tools(qtbot):
+    """Andreas, 2026-10-22: a panel saying StarXTerminator "gives a cleaner
+    separation" read as "your tools are inferior" and as advertising RC Astro.
+    The app says which split ran; help and the website may describe the tools."""
+    import pathlib
+    import nocturne.ui as ui
+    for path in pathlib.Path(ui.__file__).parent.glob("*.py"):
+        if path.name == "help_content.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        for phrase in ("gives cleaner", "gives a cleaner", "for a cleaner separation"):
+            assert phrase not in text, f"{path.name}: {phrase!r}"
+    assert "StarNet2" not in main_window._FREE_STAR_NOTE
+    assert "StarX" not in main_window._FREE_STAR_NOTE
 
 
 def test_saturation_does_not_say_free_when_starnet2_is_set(qtbot, tmp_path, monkeypatch):

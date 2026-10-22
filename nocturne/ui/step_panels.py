@@ -1227,8 +1227,6 @@ def build_panel(
         controls.addLayout(neb_row)
         controls.addWidget(neb)
         notes.addWidget(neb_status)
-        notes.addWidget(_desc_label(
-            "StarXTerminator gives a cleaner separation but is not required."))
         w.sat_slider = slider
         w.sat_val = sat_val
         w.neb_slider = neb
@@ -1427,8 +1425,7 @@ def build_panel(
         w.split_note = None
         if not split_enabled:
             w.split_note = _desc_label(
-                "Starless + stars uses the built-in star split. StarNet2 (free) or "
-                "StarXTerminator gives cleaner layers — set one up in Settings.")
+                "Starless + stars uses Nocturne's built-in star split.")
             w.split_note.setVisible(False)
 
         def _format_changed(fmt: str) -> None:
