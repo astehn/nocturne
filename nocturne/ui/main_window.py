@@ -307,10 +307,10 @@ def _listed(names: list[str]) -> str:
     return ", ".join(names[:-1]) + f" and {names[-1]}"
 
 
-_FREE_STAR_NOTE = (
-    "Using free star detection — set up StarNet2 (free) or StarXTerminator in Settings for a "
-    "cleaner separation."
-)
+# Says which split ran, never that another tool would do it better: in the app
+# that reads as "your setup is inferior" and as advertising (Andreas,
+# 2026-10-22). Help and the website may describe the tools; the log names them.
+_FREE_STAR_NOTE = "Using Nocturne's built-in star detection."
 
 # The step panel is capped so the RIGHT PANE cannot change width from step to
 # step. It had only a minimum, so it grew to whatever its widest child wanted:
@@ -598,26 +598,6 @@ def _remove_quietly(path: str) -> None:
             os.remove(path)
     except OSError:
         pass
-
-
-# The steps that split stars from the sky, and so are cleaner with a real star
-# tool: the receipt's splitter-taking stages and the two layered Enhancements taps.
-def _split_sets():
-    from ..core import receipt
-    from ..steps.enhance_step import _LAYERED
-    return receipt.SPLIT_STAGES, frozenset(_LAYERED)
-
-
-_SPLIT_STAGES, _SPLIT_TAPS = _split_sets()
-
-
-def _uses_star_split(stage_id: str, option) -> bool:
-    if stage_id in _SPLIT_STAGES:
-        # Saturation at nebula 0 and Star Reduction at 0 split nothing, so a
-        # better splitter would change nothing either.
-        from ..core.receipt import splits_stars
-        return splits_stars(stage_id, option)
-    return stage_id == "enhance" and option in _SPLIT_TAPS
 
 
 def _and_join(words: list[str]) -> str:
@@ -2384,8 +2364,6 @@ class MainWindow(QMainWindow):
                 isnt = "isn't" if len(left) == 1 else "aren't"
                 msg += (f" {_and_join(left)} {were} left out: "
                         f"{_and_join([tools[n] for n in left])} {isnt} set up.")
-            if preferred_splitter(self.settings) is None:
-                msg += " StarNet2 (free) or StarXTerminator gives cleaner stars."
             # Color's own message (a sky-balance fallback, or its dual-band
             # step-aside) never reaches this summary otherwise.
             for note in dict.fromkeys(run.notes):
@@ -2633,9 +2611,6 @@ class MainWindow(QMainWindow):
                 used.setdefault((engine, reason.rstrip(".")), []).append(name)
             for (engine, reason), names in used.items():
                 msg += f" {_and_join(names)} used {engine}" + (f": {reason}." if reason else ".")
-            if (preferred_splitter(self.settings) is None
-                    and any(_uses_star_split(sid, opt) for sid, opt in plan.plan)):
-                msg += " StarNet2 (free) or StarXTerminator gives cleaner stars."
             for n in dict.fromkeys(run.notes):
                 msg += " " + n
             with contextlib.suppress(Exception):     # a stamp, never worth a failed apply
@@ -7273,7 +7248,7 @@ class MainWindow(QMainWindow):
                     "and only where it is actually green. No visible change "
                     "means there was no green to remove.")
         # NOT _FREE_STAR_NOTE, which is shared with Star Reduction and
-        # Saturation and says the free path is merely a less clean separation.
+        # Saturation and only says which split ran.
         # Here it is a different operation: the whole image is de-greened
         # inside a star mask, so the sky moves too.
         return ("Using free star detection — de-greens the whole image inside a "

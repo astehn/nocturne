@@ -350,13 +350,6 @@ def test_an_auto_levels_preset_records_auto(qtbot, tmp_path):
     assert ("Levels", new_levels_option(auto=True)) in win.project.entries()
 
 
-def test_the_split_stage_lists_match_their_sources():
-    from nocturne.ui import main_window as mw
-    assert mw._SPLIT_STAGES == {"star_reduction", "saturation", "green_fringe",
-                                "narrowband", "color_balance", "starless_levels"}
-    assert mw._SPLIT_TAPS == {"Star Colour", "Sharpen Nebulosity"}
-
-
 def test_a_project_saved_after_a_preset_reopens_with_the_same_picture(qtbot, tmp_path):
     import numpy as np
     from nocturne.history.project_store import load_project, save_project
@@ -404,8 +397,7 @@ def test_auto_enhance_log_and_warning_are_unchanged(qtbot, tmp_path, monkeypatch
                                    "Local Contrast failed: boom")
     assert win.output_panel.toPlainText() == (
         "Auto-enhanced (Natural) \u2014 7 steps. Background and Deconvolution were left "
-        "out: GraXpert and RC-Astro aren't set up. StarNet2 (free) or StarXTerminator "
-        "gives cleaner stars.")
+        "out: GraXpert and RC-Astro aren't set up.")
 
 
 def _crop_state(win):
