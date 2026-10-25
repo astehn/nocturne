@@ -553,3 +553,61 @@ def test_a_fresh_levels_panel_has_no_empty_gap(qtbot, tmp_path):
     Auto never stopped must not open with a blank line above Black point."""
     win = _at_levels(qtbot, tmp_path)
     assert not win._panel.auto_note.sizePolicy().retainSizeWhenHidden()
+
+
+# --- Auto with no room counts as no change (stretch-v3 spec B) ---------------
+
+NO_ROOM_NOTE = ("Auto left the black point at 0: this picture's darkest colour is "
+                "already at the warning limit.")
+
+
+def _force_auto(monkeypatch, win, black, candidate=0.041):
+    from nocturne.core.levels import AutoBlack
+    # Patch the search itself so the cache the note reads is filled the real way.
+    monkeypatch.setattr(mw, "auto_black", lambda *a, **k: AutoBlack(black, candidate, True))
+
+
+def test_auto_with_no_room_changes_nothing(qtbot, tmp_path, monkeypatch):
+    win = _at_levels(qtbot, tmp_path)
+    p = win._panel
+    _force_auto(monkeypatch, win, 0.00064)
+    before = (p.black_slider.value(), p.gamma_slider.value(), p.white_slider.value())
+    apply_before = p.apply_btn.isEnabled()
+    pending_before = win._levels_pending
+    win._on_levels_auto()
+    assert (p.black_slider.value(), p.gamma_slider.value(),
+            p.white_slider.value()) == before
+    assert before[0] == 0
+    assert not p.auto_btn.isChecked() and win._levels_auto is False
+    assert p.apply_btn.isEnabled() == apply_before
+    assert not win._has_pending()
+    assert not p.auto_note.isHidden() and p.auto_note.text() == NO_ROOM_NOTE
+    assert win._levels_pending == p.commit_option()
+    assert "auto" not in win._levels_pending
+    assert pending_before is None or win._levels_pending == pending_before
+
+
+def test_auto_with_no_room_returns_a_dragged_black_to_identity(qtbot, tmp_path, monkeypatch):
+    win = _at_levels(qtbot, tmp_path)
+    p = win._panel
+    p.black_slider.setValue(50)
+    p.blue_slider.setValue(-15)
+    _force_auto(monkeypatch, win, 0.00064)
+    win._on_levels_auto()
+    assert p.black_slider.value() == 0 and not p.auto_btn.isChecked()
+    assert p.blue_slider.value() == -15, "the user's colour offset was dropped"
+    assert win._levels_pending["offsets"] == [0.0, 0.0, -0.015]
+    assert p.auto_note.text() == NO_ROOM_NOTE
+
+
+def test_auto_stopped_at_one_step_still_selects_auto(qtbot, tmp_path, monkeypatch):
+    win = _at_levels(qtbot, tmp_path)
+    p = win._panel
+    _force_auto(monkeypatch, win, 0.031)
+    win._on_levels_auto()
+    assert p.auto_btn.isChecked() and win._levels_auto is True
+    assert not p.auto_note.isHidden()
+    assert p.auto_note.text() == ("Auto stopped at 0.031 so no colour is crushed past "
+                                  "the warning limit. Drag Black point right to go "
+                                  "darker on purpose.")
+    assert p.black_slider.value() == 31

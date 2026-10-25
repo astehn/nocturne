@@ -6466,6 +6466,23 @@ class MainWindow(QMainWindow):
         # exact underneath, so the preview, the commit and a later midtones
         # nudge all use Auto's value, not the slider's.
         panel = self._panel
+        if decided.stopped and decided.black < 1.0 / BLACK_STEPS:
+            # No room: the darkest colour already sits at the warning limit, so
+            # Auto's black is below the slider's first step and selecting it
+            # would "change" a picture it leaves alone (his IC 63: note said
+            # 0.000, crushed still rose 2.2 -> 2.3 %, Apply lit up). Auto
+            # counts as no change: identity, not selected, and say why.
+            panel.set_levels_values(0.0, 1.0, 1.0, panel.levels_offsets())
+            self._set_levels_auto(False)
+            note = getattr(panel, "auto_note", None)
+            if note is not None:
+                note.setText("Auto left the black point at 0: this picture's darkest "
+                             "colour is already at the warning limit.")
+                note.setVisible(True)
+            self._levels_pending = self._levels_commit_option(panel.commit_option())
+            self._render_levels_preview()
+            self._sync_step_controls()
+            return
         panel.set_levels_values(decided.black, 1.0, 1.0, panel.levels_offsets())
         self._set_levels_auto(True)
         self._levels_pending = self._levels_commit_option(self._panel.commit_option())
