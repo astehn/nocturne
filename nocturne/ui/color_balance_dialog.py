@@ -274,8 +274,7 @@ class ColorBalanceDialog(QDialog):
             return
         if preferred_splitter(self._settings) is None:
             self.status.setText("No star separation tool — the whole image is adjusted, so star "
-                                "colour shifts with the rest. Install StarNet2 (free) or "
-                                "RC-Astro and point at it in Settings.")
+                                "colour shifts with the rest.")
             self._on_starless((self._base, None))
             return
         self.preview.show_waiting(_SPLIT_MSG)

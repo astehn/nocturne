@@ -301,8 +301,7 @@ class NarrowbandDialog(QDialog):
             return
         if preferred_splitter(self._settings) is None:
             self.status.setText("No star separation tool — narrowband applied to the whole "
-                                "image (star colour may look off). Install StarNet2 (free) "
-                                "or RC-Astro and point at it in Settings.")
+                                "image (star colour may look off).")
             self._on_starless((self._base, None))
             return
         self.waiting.set_text(_SPLIT_MSG)

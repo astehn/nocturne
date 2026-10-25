@@ -25,7 +25,8 @@ def test_the_app_does_not_rank_the_external_tools(qtbot):
         if path.name == "help_content.py":
             continue
         text = path.read_text(encoding="utf-8")
-        for phrase in ("gives cleaner", "gives a cleaner", "for a cleaner separation"):
+        for phrase in ("gives cleaner", "gives a cleaner", "for a cleaner separation",
+                       "Install StarNet2", "Set StarNet2"):
             assert phrase not in text, f"{path.name}: {phrase!r}"
     assert "StarNet2" not in main_window._FREE_STAR_NOTE
     assert "StarX" not in main_window._FREE_STAR_NOTE

@@ -7287,9 +7287,8 @@ class MainWindow(QMainWindow):
         # Saturation and only says which split ran.
         # Here it is a different operation: the whole image is de-greened
         # inside a star mask, so the sky moves too.
-        return ("Using free star detection — de-greens the whole image inside a "
-                "star mask, so background colour shifts too. Set StarNet2 "
-                "(free) or RC-Astro in Settings to de-green only the stars.")
+        return ("Using Nocturne's built-in star detection — de-greens the whole "
+                "image inside a star mask, so background colour shifts too.")
 
     def _fringe_path_label(self) -> str:
         """Which of the two quite different implementations actually ran.
