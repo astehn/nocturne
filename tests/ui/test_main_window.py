@@ -6261,9 +6261,9 @@ def test_degreen_stars_still_falls_back_to_a_mask_with_no_splitter(qtbot, tmp_pa
     win._go_to_id("green_fringe")
     assert win._fringe_layers[1] == "mask"
     assert win._fringe_path_label() == "mask"
-    assert "free star detection" in win._panel.fringe_status.text()
-    assert "StarNet2" in win._panel.fringe_status.text(), \
-        "and it should name the free tool that would fix it, not only the paid one"
+    assert "built-in star detection" in win._panel.fringe_status.text()
+    # It no longer tells the user to install a tool (his rule, 2026-10-22).
+    assert "StarNet2" not in win._panel.fringe_status.text()
 
 
 def test_degreen_stars_reuses_a_split_another_surface_paid_for(qtbot, tmp_path, monkeypatch):

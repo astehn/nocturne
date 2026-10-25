@@ -92,6 +92,10 @@ def test_format_integration_rounds_the_minutes_once_it_shows_hours():
     assert format_integration(3600 + 29) == "1h 00m"
     assert format_integration(2 * 3600 - 20) == "2h 00m"     # 119m 40s rounds up a whole hour
     assert master_filename("M31", 460, 10, 76.7 * 60).endswith("_77min.fits")
+    # Rounded once, as the file name is: 3630.3 s was cut to 3630 first, then
+    # rounded half-to-even down to 60 min, while the name said 61min.
+    assert format_integration(3630.3) == "1h 01m"
+    assert master_filename("M31", 1, 3630.3, 3630.3).endswith("_61min.fits")
 
 
 def test_parse_metadata_temp_and_date(tmp_path):

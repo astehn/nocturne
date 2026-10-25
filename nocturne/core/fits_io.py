@@ -258,7 +258,7 @@ def format_integration(seconds: float) -> str:
     if s >= 3600:
         # Rounded to the minute, not cut: 76.7 min read "1h 16m" while the
         # master's own file name said 77min (stacker.master_filename rounds).
-        h, m = divmod(int(round(s / 60)), 60)
+        h, m = divmod(int(round(seconds / 60)), 60)     # once, as the file name
         return f"{h}h {m:02d}m"
     m, sec = divmod(s, 60)
     if m:
