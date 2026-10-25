@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .autostretch import neutral_stretch, unlinked_stretch
+from .autostretch import neutral_stretch, versioned_unlinked_stretch
 from .image import AstroImage
 
 # Slider amount [0, 1] maps to a target background-median brightness. Mid-slider
@@ -40,10 +40,11 @@ def apply_stretch(img: AstroImage, amount: float, *,
     unresolved; the user chooses by eye. See
     docs/superpowers/specs/2026-09-14-linked-unlinked-stretch-design.md.
 
-    `version` selects the LINKED stretch's version (autostretch.STRETCH_VERSION
-    when None); a replayed step passes the one it recorded. Unlinked has one.
+    `version` selects the stretch's version, linked or unlinked
+    (autostretch.STRETCH_VERSION when None); a replayed step passes the one it
+    recorded. Unlinked only changed at version 3, so 1 and 2 replay the same.
     """
     target = amount_to_target(amount)
     out = (neutral_stretch(img.data, target, version) if linked
-           else unlinked_stretch(img.data, target))
+           else versioned_unlinked_stretch(img.data, target, version))
     return AstroImage(out.astype(np.float32), is_linear=False, metadata=dict(img.metadata))

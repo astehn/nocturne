@@ -2235,16 +2235,21 @@ def test_color_help_matches_what_photometric_colour_does():
 
 def test_stretch_help_describes_the_stretch_version_in_use():
     """The Stretch topic says how the linked stretch picks its sky and its black
-    point, which is stretch VERSION 2's behaviour (2026-10-11). Flip the revert
-    switch (autostretch.STRETCH_VERSION) and this fails, so the help is changed
-    with it rather than left describing a stretch that no longer runs."""
+    point, which is stretch version 2's behaviour (2026-10-11), and that the
+    black point leaves almost none of the sky pure black, linked or unlinked,
+    which is VERSION 3's (2026-10-25). Flip the revert switch
+    (autostretch.STRETCH_VERSION) and this fails, so the help is changed with it
+    rather than left describing a stretch that no longer runs."""
     from nocturne.core import autostretch as A
     b = _body("stretch")
     assert "darkest part of the frame" in b and "noisiest channel" in b
-    assert A.STRETCH_VERSION == A.STRETCH_V2
+    assert "Linked or unlinked, the black point sits just below" in b
+    assert "almost none of the sky turns pure black" in b
+    assert A.STRETCH_VERSION == A.STRETCH_V3
     src = _src("nocturne/core/autostretch.py")
     assert "_SKY_PCT = 30.0" in src            # "the darkest part"
     assert "noisiest" in src.split("def _neutral_stretch_v1")[0]
+    assert "_MAD_TO_SIGMA = 1.4826" in src     # "just below the sky's grain"
 
 
 def test_linked_is_never_said_to_keep_the_skys_own_colour():

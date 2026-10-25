@@ -67,11 +67,19 @@ def test_linked_is_exactly_neutral_stretch():
                           neutral_stretch(img.data, amount_to_target(0.30)))
 
 
-def test_unlinked_is_exactly_unlinked_stretch():
-    from nocturne.core.autostretch import unlinked_stretch
+def test_unlinked_is_exactly_the_versioned_unlinked_stretch():
+    """Unlinked is versioned since stretch version 3; versions 1 and 2 are
+    still exactly unlinked_stretch."""
+    from nocturne.core.autostretch import (STRETCH_V1, STRETCH_V2,
+                                           unlinked_stretch,
+                                           versioned_unlinked_stretch)
     img = _two_tone_linear()
+    t = amount_to_target(0.30)
     assert np.array_equal(apply_stretch(img, 0.30, linked=False).data,
-                          unlinked_stretch(img.data, amount_to_target(0.30)))
+                          versioned_unlinked_stretch(img.data, t))
+    for v in (STRETCH_V1, STRETCH_V2):
+        assert np.array_equal(apply_stretch(img, 0.30, linked=False, version=v).data,
+                              unlinked_stretch(img.data, t))
 
 
 def test_the_two_mechanisms_actually_differ():
