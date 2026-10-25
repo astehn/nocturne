@@ -1630,7 +1630,7 @@ def test_green_fringe_ungated_without_rcastro(qtbot, tmp_path):
     win._go_to_id("green_fringe")               # no RC-Astro configured -> free split used
     assert win._fringe_ready is True
     assert win._panel.apply_btn.isEnabled() is True
-    assert "StarNet2" in win._panel.fringe_status.text()            # free-detection note
+    assert "built-in star detection" in win._panel.fringe_status.text()  # free-detection note
     assert "Needs RC-Astro" not in win._panel.fringe_status.text()  # not the old gate text
 
 
