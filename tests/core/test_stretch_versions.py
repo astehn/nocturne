@@ -1,6 +1,8 @@
 """Stretch version 2 (2026-10-11): the linked stretch measures the sky on the
-sky and takes its black point from the noisiest channel. Version 1 stays, byte
-for byte, for every stretch saved before it — Stretch is REPLAYED on reopen.
+sky and takes its black point from the noisiest channel. Version 3 (2026-10-25)
+puts the black point 2.8 normalised MADs below the sky, linked and unlinked.
+Older versions stay, byte for byte, for every stretch saved with them —
+Stretch is REPLAYED on reopen.
 """
 import hashlib
 import json
@@ -11,8 +13,9 @@ import numpy as np
 import pytest
 
 import nocturne.core.autostretch as A
-from nocturne.core.autostretch import (STRETCH_V1, STRETCH_V2, neutral_stretch,
-                                       stretch_v2_params)
+from nocturne.core.autostretch import (STRETCH_V1, STRETCH_V2, STRETCH_V3,
+                                       neutral_stretch, stretch_v2_params,
+                                       versioned_unlinked_stretch)
 from nocturne.core.image import AstroImage
 from nocturne.core.stretch import amount_to_target, apply_stretch
 from nocturne.steps.stretch_step import (StretchStep, new_stretch_option,
@@ -84,12 +87,77 @@ _V1_STEP_HASHES = [
 ]
 
 
+# Captured from apply_stretch on branch stretch-v3 @ 3006ca6a (== main),
+# BEFORE version 3 existed, with the same fixtures (keys: frame, slider amount).
+# Until version 3 the unlinked stretch had one implementation and ignored the
+# recorded version, so options saved with version 1, with version 2 and with
+# none all made these bytes; version 3 must not move them. Linked version 2 had
+# no byte pin before this. Same rule as above if a library upgrade moves them:
+# re-capture only from 3006ca6a under the new library, never from the branch.
+_UNLINKED_V1_V2_HASHES = {
+    ("big", 0.3): "708dfcdc4fc007903455f750",
+    ("big", 0.6): "c40cc7ac5016a0c013385b3f",
+    ("border", 0.3): "c0261db4aab7da0ab6429fdf",
+    ("border", 0.6): "14cf3d9a75082170744efc84",
+    ("mono", 0.3): "b1edd3190ab0c39941bb4e7b",
+    ("mono", 0.6): "f11871b51cce6249ce9247f5",
+    ("nan", 0.3): "3f035152fb08d1575ec23ccf",
+    ("nan", 0.6): "8051076144408f4a138875c2",
+    ("nebula", 0.3): "9361c2498d0bde6c88c793c8",
+    ("nebula", 0.6): "5f459b0164f35cc9b10f4587",
+}
+_LINKED_V2_HASHES = {
+    ("big", 0.3): "cae4f99d7ed2ad511cb170a5",
+    ("big", 0.6): "1a58352149614790a41d5ae5",
+    ("border", 0.3): "1c97fd51873bb59eee854b08",
+    ("border", 0.6): "de32d217dfccdcc37d859a8a",
+    ("mono", 0.3): "b1edd3190ab0c39941bb4e7b",
+    ("mono", 0.6): "f11871b51cce6249ce9247f5",
+    ("nan", 0.3): "ce8845ab3e130d4fcbedcafa",
+    ("nan", 0.6): "9181f7376556b49556bade2c",
+    ("nebula", 0.3): "759098a3786b36d891491770",
+    ("nebula", 0.6): "a1f4abc8fe2a7515ac69c90c",
+}
+# StretchStep().apply(nebula, option) on the same commit.
+_OLD_STEP_HASHES = [
+    ({"amount": 0.3, "linked": False}, "9361c2498d0bde6c88c793c8"),
+    ({"amount": 0.3, "linked": False, "version": 1}, "9361c2498d0bde6c88c793c8"),
+    ({"amount": 0.3, "linked": False, "version": 2}, "9361c2498d0bde6c88c793c8"),
+    ({"amount": 0.3, "linked": True, "version": 2}, "759098a3786b36d891491770"),
+]
+
+
 @pytest.mark.parametrize("key", sorted(_V1_HASHES))
 def test_version_1_is_byte_identical_to_the_old_stretch(key):
     name, target = key
     data = _legacy_frames()[name]
     target = 0.205 if target == 0.205 else amount_to_target(0.6)
     assert _digest(neutral_stretch(data, target, version=STRETCH_V1)) == _V1_HASHES[key]
+
+
+@pytest.mark.parametrize("key", sorted(_UNLINKED_V1_V2_HASHES))
+@pytest.mark.parametrize("version", [None, STRETCH_V1, STRETCH_V2])
+def test_unlinked_versions_1_and_2_replay_the_old_unlinked_stretch(key, version):
+    """None here is an option with no version: StretchStep reads it as 1."""
+    name, amount = key
+    img = AstroImage(_legacy_frames()[name], is_linear=True)
+    v = STRETCH_V1 if version is None else version
+    got = apply_stretch(img, amount, linked=False, version=v).data
+    assert _digest(got) == _UNLINKED_V1_V2_HASHES[key]
+
+
+@pytest.mark.parametrize("key", sorted(_LINKED_V2_HASHES))
+def test_linked_version_2_is_byte_identical(key):
+    name, amount = key
+    img = AstroImage(_legacy_frames()[name], is_linear=True)
+    got = apply_stretch(img, amount, linked=True, version=STRETCH_V2).data
+    assert _digest(got) == _LINKED_V2_HASHES[key]
+
+
+@pytest.mark.parametrize("option,expected", _OLD_STEP_HASHES)
+def test_old_options_replay_their_own_version(option, expected):
+    img = AstroImage(_legacy_frames()["nebula"], is_linear=True)
+    assert _digest(StretchStep().apply(img, option).data) == expected
 
 
 @pytest.mark.parametrize("option,expected", _V1_STEP_HASHES)
@@ -109,15 +177,21 @@ def test_the_version_is_read_from_every_option_shape():
 def test_a_new_option_records_the_current_version():
     opt = new_stretch_option(0.3)
     assert opt == {"amount": 0.3, "linked": True, "version": A.STRETCH_VERSION}
-    assert A.STRETCH_VERSION == STRETCH_V2
+    assert A.STRETCH_VERSION == STRETCH_V3
+    assert new_stretch_option(0.3, linked=False)["version"] == STRETCH_V3
 
 
-def test_the_new_option_replays_as_version_2():
+@pytest.mark.parametrize("linked", [True, False])
+def test_the_new_option_replays_as_version_3(linked):
     img = AstroImage(_legacy_frames()["nebula"], is_linear=True)
-    got = StretchStep().apply(img, new_stretch_option(0.3)).data
-    assert np.array_equal(got, neutral_stretch(img.data, amount_to_target(0.3),
-                                               version=STRETCH_V2))
-    assert _digest(got) != _V1_STEP_HASHES[0][1]
+    got = StretchStep().apply(img, new_stretch_option(0.3, linked=linked)).data
+    t = amount_to_target(0.3)
+    want = (neutral_stretch(img.data, t, version=STRETCH_V3) if linked
+            else versioned_unlinked_stretch(img.data, t, version=STRETCH_V3))
+    assert np.array_equal(got, want)
+    for option, digest in _OLD_STEP_HASHES:
+        if option["linked"] == linked:
+            assert _digest(got) != digest
 
 
 def test_the_revert_switch_sends_every_new_stretch_back_to_version_1(monkeypatch):
@@ -131,8 +205,12 @@ def test_the_revert_switch_sends_every_new_stretch_back_to_version_1(monkeypatch
 
 
 def test_an_unknown_version_is_refused_not_guessed():
+    img = AstroImage(_legacy_frames()["nebula"], is_linear=True)
     with pytest.raises(ValueError):
-        neutral_stretch(_legacy_frames()["nebula"], 0.205, version=7)
+        neutral_stretch(img.data, 0.205, version=7)
+    for linked in (True, False):
+        with pytest.raises(ValueError):
+            StretchStep().apply(img, {"amount": 0.3, "linked": linked, "version": 4})
 
 
 def test_recipe_keeps_the_version_only_when_it_was_recorded():
@@ -140,7 +218,7 @@ def test_recipe_keeps_the_version_only_when_it_was_recorded():
     from nocturne.recipe import deserialize_option, serialize_option
     assert "version" not in serialize_option("stretch", 0.3)
     assert "version" not in serialize_option("stretch", {"amount": 0.3, "linked": True})
-    assert serialize_option("stretch", new_stretch_option(0.3))["version"] == STRETCH_V2
+    assert serialize_option("stretch", new_stretch_option(0.3))["version"] == STRETCH_V3
     assert serialize_option("stretch", {"amount": 0.3, "version": 1})["version"] == 1
     old = deserialize_option("stretch", serialize_option("stretch", 0.3))
     assert parse_stretch_version(old) == STRETCH_V1
@@ -158,7 +236,7 @@ def test_batch_replays_each_recipe_in_its_own_version():
     new = apply_recipe(img, Recipe(steps=[{"stage": "stretch",
                                            "option": new_stretch_option(0.3)}]),
                        Settings())
-    assert np.array_equal(new.data, neutral_stretch(img.data, 0.205, version=STRETCH_V2))
+    assert np.array_equal(new.data, neutral_stretch(img.data, 0.205, version=STRETCH_V3))
 
 
 def test_a_saved_project_reopens_each_stretch_in_its_own_version(tmp_path):
@@ -167,7 +245,7 @@ def test_a_saved_project_reopens_each_stretch_in_its_own_version(tmp_path):
 
     base = AstroImage(_legacy_frames()["nebula"], is_linear=True)
     for option, want_version in (({"amount": 0.3, "linked": True}, None),
-                                 (new_stretch_option(0.3), STRETCH_V2)):
+                                 (new_stretch_option(0.3), STRETCH_V3)):
         p = Project(base, str(tmp_path / "cache"))
         p.run_step(StretchStep(), option)
         made = p.current().data.copy()
@@ -338,6 +416,93 @@ def test_nan_is_not_data_and_does_not_poison_the_stretch():
     out = neutral_stretch(data, 0.205, version=STRETCH_V2)
     assert np.isfinite(out).all()
     assert (out[5, 7] == 0.0).all()
+
+
+# --- what version 3 fixes ------------------------------------------------------
+
+def _sky_frame(seed=20261025, h=400, w=500):
+    """Pure sky with Gaussian noise (blue the noisiest, green the quietest, as
+    on a Bayer sensor) and a small nebula: 4% of the frame, so the frame is
+    what his frames are after Background — almost all sky."""
+    rng = np.random.default_rng(seed)
+    noise = np.array([4e-4, 2.5e-4, 6e-4], np.float32)
+    d = (np.array([0.020, 0.019, 0.021], np.float32)
+         + rng.normal(0, 1, (h, w, 3)).astype(np.float32) * noise)
+    d[150:230, 200:300] += np.array([0.003, 0.002, 0.004], np.float32)
+    return np.clip(d, 0, 1).astype(np.float32)
+
+
+def _black_shares(out):
+    """Share of each channel that is 0 in the 8-bit export."""
+    return [float(((out[..., c] * 255 + 0.5) < 1).mean()) for c in range(3)]
+
+
+@pytest.mark.parametrize("linked,old_version", [(True, STRETCH_V2),
+                                                (False, STRETCH_V1)])
+def test_version_3_does_not_send_the_sky_to_black(linked, old_version):
+    """2.8 NORMALISED MADs put the black point 2.8 sigma below the sky:
+    P(z < -2.8) = 0.26%. The raw MAD put it 1.9 sigma below, 2.9% by
+    construction. Measured on this frame at the default amount (R/G/B):
+        linked   v2 0.17/0.00/2.33%   v3 0.00/0.00/0.17%
+        unlinked v1 2.62/2.66/2.65%   v3 0.20/0.20/0.20%
+    The old version is asserted to fail too, so the fixture has teeth."""
+    img = AstroImage(_sky_frame(), is_linear=True)
+    new = _black_shares(apply_stretch(img, 0.3, linked=linked, version=STRETCH_V3).data)
+    assert max(new) < 0.003, new
+    old = _black_shares(apply_stretch(img, 0.3, linked=linked, version=old_version).data)
+    assert max(old) > 0.02, old
+
+
+def test_version_3_mono_does_not_send_the_sky_to_black():
+    """Mono, linked and unlinked alike, gets the normalised MAD too: version 2
+    hands mono to version 1, which had the same defect."""
+    img = AstroImage(_sky_frame()[..., 1].copy(), is_linear=True)
+    for linked in (True, False):
+        out = apply_stretch(img, 0.3, linked=linked, version=STRETCH_V3).data
+        assert float(((out * 255 + 0.5) < 1).mean()) < 0.003
+    old = apply_stretch(img, 0.3, version=STRETCH_V2).data
+    assert float(((old * 255 + 0.5) < 1).mean()) > 0.02
+    assert np.array_equal(
+        apply_stretch(img, 0.3, linked=False, version=STRETCH_V3).data,
+        apply_stretch(img, 0.3, linked=True, version=STRETCH_V3).data)
+
+
+def test_version_3_keeps_what_version_2_does_right():
+    """Neutral sky and a black border that stays black and is not sky."""
+    data, sky = _blue_nebula(seed=2)
+    data[:40] = 0.0
+    border = np.zeros(data.shape[:2], bool)
+    border[:40] = True
+    out = neutral_stretch(data, 0.205, version=STRETCH_V3)
+    assert (out[border] == 0.0).all()
+    lv = _sky_levels(out, sky & ~border)
+    assert max(lv) - min(lv) < 1.0, lv
+
+
+def test_every_new_stretch_follows_the_switch_to_version_3():
+    """The step's default, the live preview, the picker and the linear display
+    all call with no version: each must give version 3, linked and unlinked."""
+    data = _legacy_frames()["nebula"]
+    img = AstroImage(data, is_linear=True)
+    t = amount_to_target(0.3)
+    assert np.array_equal(apply_stretch(img, 0.3).data,
+                          neutral_stretch(data, t, version=STRETCH_V3))
+    assert np.array_equal(apply_stretch(img, 0.3, linked=False).data,
+                          versioned_unlinked_stretch(data, t, version=STRETCH_V3))
+    assert np.array_equal(A.autostretch(img),
+                          neutral_stretch(data, A._TARGET_BG, version=STRETCH_V3))
+    assert np.array_equal(A.autostretch(img, linked=False),
+                          versioned_unlinked_stretch(data, A._TARGET_BG,
+                                                     version=STRETCH_V3))
+
+
+def test_the_revert_switch_takes_the_unlinked_stretch_back_too(monkeypatch):
+    monkeypatch.setattr(A, "STRETCH_VERSION", STRETCH_V2)
+    img = AstroImage(_legacy_frames()["nebula"], is_linear=True)
+    assert (_digest(apply_stretch(img, 0.3, linked=False).data)
+            == _UNLINKED_V1_V2_HASHES[("nebula", 0.3)])
+    assert (_digest(apply_stretch(img, 0.3).data)
+            == _LINKED_V2_HASHES[("nebula", 0.3)])
 
 
 # --- preview == apply ----------------------------------------------------------

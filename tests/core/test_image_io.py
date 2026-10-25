@@ -28,6 +28,13 @@ def _synthetic_linear():
     rng = np.random.default_rng(0)
     d = np.clip(rng.normal(0.02, 0.005, (400, 300, 3)), 0, 1).astype(np.float32)
     d[10:14, 10:14] = 0.9        # stars: 0.004% of pixels, far under p99.9
+    # A faint nebula over 1% of the frame: on real data the NEBULOSITY carries
+    # the stretched bright tail (looks_linear's docstring). Without it p99.9 was
+    # the sky noise's own +3 sigma tail, 0.231 at amount 0, which stretch
+    # version 3's lower black point took to 0.193, under the threshold; real
+    # masters at amount 0 still read 0.66-0.82 under version 3 (IC 1396A
+    # drizzle, NGC 6888; 2026-10-25).
+    d[100:140, 100:130] += 0.05
     return d
 
 

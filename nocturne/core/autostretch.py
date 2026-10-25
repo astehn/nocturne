@@ -142,20 +142,27 @@ def _mtf_midtones(current_med: float, target: float) -> float:
 #   1  whole-frame medians, one black point from the MAD pooled over the three
 #      channels (until 2026-10-11)
 #   2  sky medians, black point from the noisiest channel (from 2026-10-11)
+#   3  version 2 with the black point 2.8 NORMALISED MADs below the sky, and
+#      the unlinked stretch versioned too (from 2026-10-25)
+#
+# The UNLINKED stretch had one implementation until version 3 and ignored the
+# recorded version, so an unlinked option saying 1, 2 or nothing replays
+# unlinked_stretch; only 3 replays the new one.
 STRETCH_V1 = 1
 STRETCH_V2 = 2
+STRETCH_V3 = 3
 # THE REVERT SWITCH: the version every NEW stretch uses — the Stretch step, its
 # live preview, the visual picker, the linear display, Auto Enhance and new
-# recipes. Set it back to STRETCH_V1 to return to the old stretch. Stretches
+# recipes. Set it back to STRETCH_V2 (or V1) to return to an old stretch. Stretches
 # already saved keep the version they recorded, either way.
 #
 # Reverting is THIS LINE, never a `git revert` and never deleting a version's
-# function: projects and recipes saved since 2026-10-11 say "version": 2, and a
-# build without _neutral_stretch_v2 would replay them as version 1 without a
-# word. Two tests pin the current value on purpose and must be changed with it
-# (test_help_accuracy's stretch-help test, which also makes you fix the help,
+# function: projects and recipes saved since 2026-10-11 say "version": 2 (and
+# since 2026-10-25 "version": 3), and a build without that version's function
+# would replay them as another version without a word. Two tests pin the
+# current value on purpose and must be changed with it (test_help_accuracy's stretch-help test, which also makes you fix the help,
 # and test_stretch_versions' test_a_new_option_records_the_current_version).
-STRETCH_VERSION = STRETCH_V2
+STRETCH_VERSION = STRETCH_V3
 
 # Version 2's sky. The darkest 30% of a smoothed luminance: the prototype's
 # choice, and on M 45 and IC 1396A it separated sky from nebula in his renders
@@ -187,6 +194,24 @@ def neutral_stretch(data: np.ndarray, target: float = _TARGET_BG,
         return _neutral_stretch_v1(data, target)
     if v == STRETCH_V2:
         return _neutral_stretch_v2(data, target)
+    if v == STRETCH_V3:
+        return _neutral_stretch_v3(data, target)
+    raise ValueError(f"unknown stretch version {version!r}")
+
+
+def versioned_unlinked_stretch(data: np.ndarray, target: float = _TARGET_BG,
+                               version: int | None = None) -> np.ndarray:
+    """The unlinked stretch, in the given version (`None`: STRETCH_VERSION).
+
+    Versions 1 and 2 are both unlinked_stretch: it did not change when the
+    linked stretch became version 2, and options saved since then record 2 for
+    an unlinked stretch too. unlinked_stretch itself stays as it is — the sub
+    previews call it directly, as a display."""
+    v = STRETCH_VERSION if version is None else int(version)
+    if v in (STRETCH_V1, STRETCH_V2):
+        return unlinked_stretch(data, target)
+    if v == STRETCH_V3:
+        return _unlinked_stretch_v3(data, target)
     raise ValueError(f"unknown stretch version {version!r}")
 
 
@@ -387,6 +412,113 @@ def _neutral_stretch_v1(data: np.ndarray, target: float = _TARGET_BG) -> np.ndar
     return _apply_params(out, shadow, m)
 
 
+# --- version 3 ----------------------------------------------------------------
+# Raw MAD to sigma for Gaussian noise. Versions 1 and 2 put the black point
+# _SIGMA x the RAW MAD below the sky; the convention that 2.8 comes from
+# (PixInsight STF, Siril autostretch) means the NORMALISED MAD, so the black
+# point sat 1.9 sigma below the sky and ~2.9% of a pure-sky frame went to black
+# by construction. Measured on his states after Background, amount 0.30, share
+# of R/G/B at 8-bit zero (spike 2026-10-25):
+#
+#   image        unlinked raw     unlinked x1.4826   linked v2 raw    linked x1.4826
+#   IC 63        2.13/2.50/2.69   0.12/0.17/0.20     0.46/0.00/0.02   0.01/0/0
+#   IC 1805      1.54/2.53/2.66   0.05/0.17/0.20     0.14/0.04/0.83   0/0/0.02
+#   M 45         1.65/1.46/1.90   0.07/0.05/0.08     0.46/0.00/0.57   0.01/0/0.01
+#   IC 1396A     0.38/2.25/2.57   0.01/0.18/0.26     0.01/0/0.01      0/0/0
+#
+# The cost, his eye and the percentiles: the median does not move (the stretch
+# targets it), the darkest sky lifts (IC 63 5th percentile 18.7 -> 24.4 levels)
+# and everything above the median dims (99th 144 -> 124). Andreas chose it.
+_MAD_TO_SIGMA = 1.4826
+
+
+def _v3_channel_params(c: np.ndarray, target: float) -> tuple[float, float]:
+    """_stretch_params with the normalised MAD: version 3's per-channel (and
+    mono) statistic. A copy rather than a parameter on _stretch_params, which
+    versions 1 and 2 replay through and must not change."""
+    if not np.isfinite(c).any():
+        return 0.0, 0.5
+    s = _sample(c)
+    med = float(np.nanmedian(s))
+    mad = float(np.nanmedian(np.abs(s - med))) * _MAD_TO_SIGMA or 1e-6
+    shadow = max(0.0, med - _SIGMA * mad)
+    clipped = np.clip((s - shadow) / max(1e-6, 1.0 - shadow), 0.0, 1.0)
+    med2 = float(np.nanmedian(clipped)) or 1e-6
+    return shadow, _mtf_midtones(med2, target)
+
+
+def stretch_v3_params(data: np.ndarray, target: float = _TARGET_BG):
+    """stretch_v2_params with the normalised MAD; the same five values.
+
+    A copy, not a call into version 2 with a factor: version 2 replays through
+    stretch_v2_params and must stay byte-identical."""
+    d = np.asarray(data, dtype=np.float32)
+    peak = d[..., 0]
+    for c in range(1, d.shape[2]):
+        peak = np.maximum(peak, d[..., c])
+    with np.errstate(invalid="ignore"):
+        data_mask = peak > _DATA_EPS
+    h, w = d.shape[:2]
+    s = _sample(d)
+    s_data = _sample(data_mask)
+    step = (1 if s.shape[:2] == (h, w)
+            else int(np.sqrt(h * w / _SAMPLE_TARGET)) + 1)      # _sample's stride
+    nch = d.shape[2]
+    if not s_data.any():
+        return [0.0] * nch, 0.0, 0.0, 0.5, data_mask
+
+    s_sky = _sky_samples(s, s_data, d, data_mask, step)
+    meds = [float(np.median(s[..., c][s_sky])) for c in range(nch)]
+    ref = float(np.mean(meds))
+
+    vals = s[s_data] - (np.asarray(meds, np.float32) - ref)        # (N, C)
+    mad = (max(float(np.median(np.abs(vals[:, c] - ref))) for c in range(nch))
+           * _MAD_TO_SIGMA) or 1e-6
+    shadow = max(0.0, ref - _SIGMA * mad)
+    clipped = np.clip((vals - shadow) / max(1e-6, 1.0 - shadow), 0.0, 1.0)
+    m = _mtf_midtones(float(np.median(clipped)) or 1e-6, target)
+    return meds, ref, shadow, m, data_mask
+
+
+# NEVER REMOVE OR CHANGE THIS FUNCTION. Every Stretch saved with "version": 3
+# replays through it.
+def _neutral_stretch_v3(data: np.ndarray, target: float = _TARGET_BG) -> np.ndarray:
+    """STRETCH VERSION 3: version 2 exactly, with the black point _SIGMA
+    NORMALISED MADs below the sky (see _MAD_TO_SIGMA for the measurement).
+
+    Mono, deliberately: version 2 hands a mono frame to version 1, whose black
+    point has the same raw-MAD defect, so version 3 gives mono the normalised
+    MAD as well, through its own statistic rather than an edit to version 1. A
+    mono frame has no sky colour, so there is still nothing to neutralise."""
+    d = np.asarray(data, dtype=np.float32)
+    if d.ndim == 2:
+        shadow, m = _v3_channel_params(d, target)
+        return _apply_params(d, shadow, m)
+    meds, ref, shadow, m, data_mask = stretch_v3_params(d, target)
+    shift = (np.asarray(meds, np.float32) - np.float32(ref)).astype(np.float32)
+    with np.errstate(invalid="ignore"):
+        out = _apply_params(d - shift, shadow, m)
+    if not data_mask.all():
+        out[~data_mask] = 0.0
+    return out
+
+
+# NEVER REMOVE OR CHANGE THIS FUNCTION. Every UNLINKED Stretch saved with
+# "version": 3 replays through it.
+def _unlinked_stretch_v3(data: np.ndarray, target: float = _TARGET_BG) -> np.ndarray:
+    """unlinked_stretch with the normalised MAD per channel; otherwise the
+    same, borders and all. A mono frame has one channel, so linked and unlinked
+    are the same stretch: version 3's linked one."""
+    d = np.asarray(data, dtype=np.float32)
+    if d.ndim == 2:
+        return _neutral_stretch_v3(d, target)
+    out = np.empty_like(d, dtype=np.float32)
+    for ch in range(d.shape[2]):
+        shadow, m = _v3_channel_params(d[..., ch], target)
+        out[..., ch] = _apply_params(d[..., ch], shadow, m)
+    return np.clip(out, 0.0, 1.0)
+
+
 def autostretch(img: AstroImage, *, linked: bool = True) -> np.ndarray:
     # Display-only: lift the background to a fixed target for a clear preview.
     #
@@ -399,4 +531,4 @@ def autostretch(img: AstroImage, *, linked: bool = True) -> np.ndarray:
     # WITHOUT the stretch inventing a colour cast of its own — see
     # neutral_stretch. Matches the committed stretch, so the preview equals the
     # exported result at every step.
-    return (neutral_stretch if linked else unlinked_stretch)(img.data, _TARGET_BG)
+    return (neutral_stretch if linked else versioned_unlinked_stretch)(img.data, _TARGET_BG)

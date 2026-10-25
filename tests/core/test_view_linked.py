@@ -9,7 +9,8 @@ behaviour so no existing call site changes.
 """
 import numpy as np
 
-from nocturne.core.autostretch import autostretch, neutral_stretch, unlinked_stretch
+from nocturne.core.autostretch import (autostretch, neutral_stretch,
+                                       versioned_unlinked_stretch)
 from nocturne.core.export import display_data
 from nocturne.core.image import AstroImage
 
@@ -25,7 +26,8 @@ def _linear():
 
 def test_the_view_switch_reaches_the_pixels():
     img = _linear()
-    assert np.array_equal(autostretch(img, linked=False), unlinked_stretch(img.data))
+    assert np.array_equal(autostretch(img, linked=False),
+                          versioned_unlinked_stretch(img.data))
     assert np.array_equal(autostretch(img), neutral_stretch(img.data))
 
 

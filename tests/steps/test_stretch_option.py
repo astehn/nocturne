@@ -56,5 +56,7 @@ def test_the_step_honours_the_mechanism():
     d[..., 0] = np.clip(0.02 + (d[..., 0] - 0.02) * 2.67, 0, 1)
     img = AstroImage(d, is_linear=True)
 
+    # Versioned: an option with no version replays as version 1.
     got = StretchStep().apply(img, {"amount": 0.3, "linked": False})
-    assert np.array_equal(got.data, apply_stretch(img, 0.3, linked=False).data)
+    assert np.array_equal(got.data, apply_stretch(img, 0.3, linked=False,
+                                                  version=1).data)

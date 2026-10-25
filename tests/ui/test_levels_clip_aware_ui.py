@@ -553,3 +553,101 @@ def test_a_fresh_levels_panel_has_no_empty_gap(qtbot, tmp_path):
     Auto never stopped must not open with a blank line above Black point."""
     win = _at_levels(qtbot, tmp_path)
     assert not win._panel.auto_note.sizePolicy().retainSizeWhenHidden()
+
+
+# --- Auto with no room counts as no change (stretch-v3 spec B) ---------------
+
+NO_ROOM_NOTE = ("Auto left the black point at 0: there is nothing to take without "
+                "crushing a colour.")
+
+
+def _force_auto(monkeypatch, win, black, candidate=0.041, stopped=True):
+    from nocturne.core import levels as L
+    from nocturne.core.levels import AutoBlack
+    # Patch the search itself so the cache the note reads is filled the real way
+    # (both names: the panel calls main_window's, a commit resolves through core's).
+    f = lambda *a, **k: AutoBlack(black, candidate, stopped)
+    monkeypatch.setattr(mw, "auto_black", f)
+    monkeypatch.setattr(L, "auto_black", f)
+    win._levels_auto_cache = None
+
+
+def test_auto_with_no_room_changes_nothing(qtbot, tmp_path, monkeypatch):
+    win = _at_levels(qtbot, tmp_path)
+    p = win._panel
+    _force_auto(monkeypatch, win, 0.00064)
+    before = (p.black_slider.value(), p.gamma_slider.value(), p.white_slider.value())
+    apply_before = p.apply_btn.isEnabled()
+    pending_before = win._levels_pending
+    shown = win._displayed.data.copy()
+    win._on_levels_auto()
+    qtbot.wait(300)
+    assert np.array_equal(win._displayed.data, shown), "the canvas changed"
+    assert (p.black_slider.value(), p.gamma_slider.value(),
+            p.white_slider.value()) == before
+    assert before[0] == 0
+    assert not p.auto_btn.isChecked() and win._levels_auto is False
+    assert p.apply_btn.isEnabled() == apply_before
+    assert not win._has_pending()
+    assert not p.auto_note.isHidden() and p.auto_note.text() == NO_ROOM_NOTE
+    assert win._levels_pending == p.commit_option()
+    assert "auto" not in win._levels_pending
+    assert pending_before is None or win._levels_pending == pending_before
+
+
+def test_auto_with_no_room_returns_a_dragged_black_to_identity(qtbot, tmp_path, monkeypatch):
+    win = _at_levels(qtbot, tmp_path)
+    p = win._panel
+    p.black_slider.setValue(50)
+    p.blue_slider.setValue(-15)
+    _force_auto(monkeypatch, win, 0.00064)
+    win._on_levels_auto()
+    assert p.black_slider.value() == 0 and not p.auto_btn.isChecked()
+    assert p.blue_slider.value() == -15, "the user's colour offset was dropped"
+    assert win._levels_pending["offsets"] == [0.0, 0.0, -0.015]
+    assert p.auto_note.text() == NO_ROOM_NOTE
+
+
+def test_auto_stopped_at_one_step_still_selects_auto(qtbot, tmp_path, monkeypatch):
+    win = _at_levels(qtbot, tmp_path)
+    p = win._panel
+    _force_auto(monkeypatch, win, 0.031)
+    win._on_levels_auto()
+    assert p.auto_btn.isChecked() and win._levels_auto is True
+    assert not p.auto_note.isHidden()
+    assert p.auto_note.text() == ("Auto stopped at 0.031 so no colour is crushed past "
+                                  "the warning limit. Drag Black point right to go "
+                                  "darker on purpose.")
+    assert p.black_slider.value() == 31
+
+
+def test_nothing_to_take_at_all_also_counts_as_no_change(qtbot, tmp_path, monkeypatch):
+    """Not stopped: Auto's own candidate is 0 (a bright field, background already
+    at the floor). Selecting it committed a step that changed nothing."""
+    for black in (0.0, 0.0004):
+        win = _at_levels(qtbot, tmp_path)
+        p = win._panel
+        _force_auto(monkeypatch, win, black, candidate=black, stopped=False)
+        win._on_levels_auto()
+        assert not p.auto_btn.isChecked() and win._levels_auto is False, black
+        assert not win._has_pending(), black
+        assert p.auto_note.text() == NO_ROOM_NOTE, black
+
+
+def test_a_committed_tiny_auto_is_left_alone(qtbot, tmp_path, monkeypatch):
+    """Auto Enhance, a preset or an older project committed Auto with a sub-step
+    black. Revisiting says so in plain words (not "stopped at 0.000"), and
+    pressing Auto again changes nothing."""
+    from nocturne.core.levels import new_levels_option
+    win = _at_levels(qtbot, tmp_path)
+    _force_auto(monkeypatch, win, 0.00064)
+    win.apply_current(new_levels_option(auto=True))
+    win._go_to_id("stretch", user_initiated=False)
+    win._go_to_id("levels", user_initiated=False)
+    p = win._panel
+    assert p.auto_btn.isChecked() and p.auto_note.text() == NO_ROOM_NOTE
+    assert not win._has_pending()
+    p.auto_btn.setChecked(not p.auto_btn.isChecked())   # Qt toggles before clicked
+    win._on_levels_auto()
+    assert p.auto_btn.isChecked() and win._levels_auto is True
+    assert not win._has_pending() and not p.apply_btn.isEnabled()

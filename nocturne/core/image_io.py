@@ -22,6 +22,14 @@ from .image import AstroImage
 #
 # Ten times above every linear measurement and four times below every stretched
 # one, and stable across linked and unlinked stretches alike.
+#
+# RE-MEASURED 2026-10-25 for stretch version 3 (black point from the normalised
+# MAD, so less sky is crushed and the curve is gentler): amount 0.00 on eight of
+# his masters (the four above plus IC 1805, IC 63 drizzle, M 45, M 33, NGC 6992),
+# p99.9 linear 0.025-0.043; stretched v3 linked 0.536-0.911, unlinked 0.633-0.927
+# (v2 linked was 0.604-0.936). The margin narrows from ~4x to ~2.7x at the dark
+# end and still holds; a frame of pure noise with no stars or nebula at all is
+# the one shape that can fall under it (synthetic: 0.193), not a real master.
 LINEAR_P999_MAX = 0.20
 
 
