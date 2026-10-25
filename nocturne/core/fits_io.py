@@ -255,10 +255,12 @@ def format_capture_span(start, end=None) -> str:
 def format_integration(seconds: float) -> str:
     """Human total integration: 2900 -> '48m 20s', 8100 -> '2h 15m', 20 -> '20s'."""
     s = int(round(seconds))
-    h, rem = divmod(s, 3600)
-    m, sec = divmod(rem, 60)
-    if h:
+    if s >= 3600:
+        # Rounded to the minute, not cut: 76.7 min read "1h 16m" while the
+        # master's own file name said 77min (stacker.master_filename rounds).
+        h, m = divmod(int(round(s / 60)), 60)
         return f"{h}h {m:02d}m"
+    m, sec = divmod(s, 60)
     if m:
         return f"{m}m {sec:02d}s"
     return f"{sec}s"
