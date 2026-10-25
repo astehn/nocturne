@@ -25,3 +25,36 @@ def test_set_image_populates_and_paints(qtbot):
     assert view._hist is not None
     from PySide6.QtGui import QPixmap
     view.render(QPixmap(view.size()))   # paintEvent runs without error
+
+
+def _render(view):
+    from PySide6.QtGui import QImage
+    out = QImage(view.size(), QImage.Format.Format_RGB32)
+    view.render(out)
+    return out
+
+
+def test_a_peak_all_three_channels_share_is_drawn_neutral_not_blue(qtbot):
+    """Blue was drawn last over red and green, so a spike every channel shares
+    (the black-point spike in bin 0) always looked like a blue one (2026-10-25)."""
+    view = HistogramView()
+    qtbot.addWidget(view)
+    view.resize(256, 120)
+    counts = np.full(256, 10, dtype=np.int64)
+    counts[:40] = 1000                       # the same tall block in every channel
+    view._hist = {"r": counts.copy(), "g": counts.copy(), "b": counts.copy()}
+    c = _render(view).pixelColor(15, 100)    # inside the shared fill, off the grid lines
+    spread = max(c.red(), c.green(), c.blue()) - min(c.red(), c.green(), c.blue())
+    assert spread <= 12, (c.red(), c.green(), c.blue())
+
+
+def test_a_peak_one_channel_has_alone_keeps_its_colour(qtbot):
+    view = HistogramView()
+    qtbot.addWidget(view)
+    view.resize(256, 120)
+    low = np.full(256, 10, dtype=np.int64)
+    red = low.copy()
+    red[:40] = 1000
+    view._hist = {"r": red, "g": low.copy(), "b": low.copy()}
+    c = _render(view).pixelColor(15, 60)
+    assert c.red() > c.green() + 30 and c.red() > c.blue() + 30, (c.red(), c.green(), c.blue())

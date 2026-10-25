@@ -8,6 +8,7 @@ from ..core.histogram import histogram
 from .theme import BG_0, BORDER
 
 _COLORS = {"r": "#ff5555", "g": "#55ff55", "b": "#5599ff", "l": "#cccccc"}
+_FILLS = {"r": "#ff0000", "g": "#00ff00", "b": "#0000ff", "l": "#cccccc"}
 
 # The height the histogram had on every window before 2026-09-25, and still
 # gets whenever the window has the room (SidePanel._rebalance).
@@ -89,9 +90,14 @@ class HistogramView(QWidget):
         if not self._hist:
             return
         peak = max(int(c.max()) for c in self._hist.values()) or 1
+        # ADDED, not stacked: drawn over each other the last channel (blue)
+        # covered the others, so the bin-0 spike every channel shares always
+        # read as a blue one (2026-10-25). Pure primaries in the fills sum to a
+        # neutral grey where all three overlap; coincident outlines sum to white.
+        p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Plus)
         for key, counts in self._hist.items():
             col = QColor(_COLORS[key])
-            fill = QColor(col)
+            fill = QColor(_FILLS[key])
             fill.setAlpha(70)
             poly = QPolygonF([QPointF(x, y) for x, y in
                               _polygon_points(counts, w, h, peak)])
