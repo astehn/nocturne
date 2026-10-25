@@ -2,6 +2,19 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.56.0] — 2026-10-25
+
+A stretch that no longer crushes the sky, and a histogram that shows its colours honestly.
+
+### Changed
+- Stretch sets its black point the way PixInsight and Siril do, so far less of the sky goes to pure black: Unlinked used to send about 2–3% of the sky to black and now sends under 0.3%. The sky looks slightly lighter and the contrast a little lower; raise Aggressiveness if you want more. Projects and recipes saved earlier keep their old stretch. A project saved with this version and opened in an older Nocturne uses the old stretch for an Unlinked step.
+- The histogram adds its colours together, so where all three channels overlap the curve is grey. A peak every channel shares no longer looks blue.
+- Panels no longer suggest installing or switching to another star tool. They say which star detection ran.
+
+### Fixed
+- Levels: when Auto black point has nothing to take, it leaves the picture alone and says so. Before, it made a change too small to see and still turned on Apply.
+- Integration times over an hour round to the nearest minute (76.7 minutes showed as 1 h 16 m) and now match the master's file name.
+
 ## [0.55.0] — 2026-10-21
 
 Big stacks that finish, gallery sends that bring their plate solve, and a fuller provenance report.
