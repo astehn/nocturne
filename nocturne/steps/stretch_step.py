@@ -50,7 +50,9 @@ def parse_stretch_linked(option) -> bool:
 
 
 def parse_stretch_version(option) -> int:
-    """The linked stretch's version an option was made with. Absent means 1:
+    """The stretch version an option was made with (linked and, since version
+    3, unlinked: unlinked options recorded as 1 or 2 replay the one unlinked
+    stretch there was then). Absent means 1:
     every option written before 2026-10-11 predates version 2, and must replay
     as what it produced. See autostretch.STRETCH_VERSION."""
     from ..core.autostretch import STRETCH_V1

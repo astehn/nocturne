@@ -273,6 +273,10 @@ def _same_levels(a, b) -> bool:
     return _same_option(tuple(parse_levels_option(a)), tuple(parse_levels_option(b)))
 
 
+_AUTO_NO_ROOM = ("Auto left the black point at 0: there is nothing to take without "
+                 "crushing a colour.")
+
+
 def _floor_black(black: float) -> int:
     """Auto's black on the slider grid, rounded DOWN: Auto's own value is
     continuous and sits just under the clipping limit, so a shown number
@@ -6334,7 +6338,12 @@ class MainWindow(QMainWindow):
         if note is not None:
             cached = self._levels_cached_auto(new_levels_option(auto=True)) if on else None
             stopped = cached is not None and cached.stopped
-            if stopped:
+            if stopped and _floor_black(cached.black) == 0:
+                # A committed Auto that took less than one step (Auto Enhance,
+                # a preset, a project from before the no-room rule): "stopped
+                # at 0.000" read as a contradiction.
+                note.setText(_AUTO_NO_ROOM)
+            elif stopped:
                 note.setText(
                     f"Auto stopped at {_floor_black(cached.black) / BLACK_STEPS:.3f} so no "
                     "colour is crushed past the warning limit. Drag Black point "
@@ -6466,18 +6475,28 @@ class MainWindow(QMainWindow):
         # exact underneath, so the preview, the commit and a later midtones
         # nudge all use Auto's value, not the slider's.
         panel = self._panel
-        if decided.stopped and decided.black < 1.0 / BLACK_STEPS:
-            # No room: the darkest colour already sits at the warning limit, so
-            # Auto's black is below the slider's first step and selecting it
-            # would "change" a picture it leaves alone (his IC 63: note said
-            # 0.000, crushed still rose 2.2 -> 2.3 %, Apply lit up). Auto
-            # counts as no change: identity, not selected, and say why.
+        if _floor_black(decided.black) == 0:
+            # No room: Auto's black shows as 0.000 on the slider, so selecting
+            # it would "change" a picture it leaves alone (his IC 63: note said
+            # 0.000, crushed still rose 2.2 -> 2.3 %, Apply lit up). Stopped at
+            # the warning limit or nothing to take at all (candidate 0), the
+            # same: identity, not selected, and say why.
+            committed = parse_levels_option(self._committed_option("levels"))
+            if committed.auto and committed.version == AUTO_VERSION:
+                # Already committed as Auto (Auto Enhance, a preset, an older
+                # project): pressing it again must not turn its sub-step black
+                # into a pending "change". Keep the Auto it has.
+                panel.set_levels_values(decided.black, 1.0, 1.0, panel.levels_offsets())
+                self._set_levels_auto(True)
+                self._levels_pending = self._levels_commit_option(panel.commit_option())
+                self._render_levels_preview()
+                self._sync_step_controls()
+                return
             panel.set_levels_values(0.0, 1.0, 1.0, panel.levels_offsets())
             self._set_levels_auto(False)
             note = getattr(panel, "auto_note", None)
             if note is not None:
-                note.setText("Auto left the black point at 0: this picture's darkest "
-                             "colour is already at the warning limit.")
+                note.setText(_AUTO_NO_ROOM)
                 note.setVisible(True)
             self._levels_pending = self._levels_commit_option(panel.commit_option())
             self._render_levels_preview()
