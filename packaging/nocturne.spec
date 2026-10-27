@@ -174,7 +174,7 @@ app = _MAC and BUNDLE(
     coll,
     name="Nocturne.app",
     icon=ICON,
-    bundle_identifier="com.nocturne.app",
+    bundle_identifier="com.nocturneastro.Nocturne",
     info_plist={
         "CFBundleName": "Nocturne",
         "CFBundleDisplayName": "Nocturne",
