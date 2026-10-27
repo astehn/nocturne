@@ -115,5 +115,7 @@ runs/
 /packaging/deploy.py
 /packaging/deploy.example.toml
 /packaging/make_icons.py
+/packaging/make_dmg_background.py
+/packaging/dmg/
 /tests/test_deploy.py
 /tests/test_benchmark_stacking.py
