@@ -111,17 +111,12 @@ def _read_any(path: str, shipped: bool) -> NRModel | None:
     return None
 
 
-def discover(dirs=None) -> list[NRModel]:
-    """Every post-stretch model on disk, earlier dirs first, natural order within.
-
-    Reads only the JSON beside each file, or an .nnr's public header — no model
-    load — so listing stays cheap enough to do whenever a panel is built. The
-    first model with an id wins; within one folder an .nnr beats an .onnx.
-    """
+def _candidates(dirs=None) -> list[NRModel]:
+    """Every readable model, in priority order: earlier dirs first, natural
+    order within, an .nnr before an .onnx with the same id. Duplicates kept."""
     shipped_dir = os.path.abspath(SHIPPED_DIR)
     if dirs is None:
         dirs = [SHIPPED_DIR, TRAY_DIR]
-    seen: set[str] = set()
     out: list[NRModel] = []
     for d in dirs:
         try:
@@ -131,11 +126,29 @@ def discover(dirs=None) -> list[NRModel]:
         shipped = os.path.abspath(d) == shipped_dir
         found = [m for m in (_read_any(os.path.join(d, n), shipped) for n in names)
                  if m is not None]
-        for m in sorted(found, key=lambda m: (_natural(m.id), m.kind != "nnr")):
-            if m.id not in seen:
-                seen.add(m.id)
-                out.append(m)
+        # Path last, so two files with one id order the same on any filesystem.
+        out += sorted(found, key=lambda m: (_natural(m.id), m.kind != "nnr", m.path))
     return out
+
+
+def _first_per_id(models) -> list[NRModel]:
+    seen: set[str] = set()
+    out = []
+    for m in models:
+        if m.id not in seen:
+            seen.add(m.id)
+            out.append(m)
+    return out
+
+
+def discover(dirs=None) -> list[NRModel]:
+    """Every post-stretch model on disk, earlier dirs first, natural order within.
+
+    Reads only the JSON beside each file, or an .nnr's public header — no model
+    load — so listing stays cheap enough to do whenever a panel is built. The
+    first model with an id wins; within one folder an .nnr beats an .onnx.
+    """
+    return _first_per_id(_candidates(dirs))
 
 
 def runtime_available() -> bool:
@@ -150,23 +163,31 @@ def runtime_available() -> bool:
 
 
 def engine_available() -> bool:
-    return nr_engine.load() is not None
+    return nr_engine.usable()
 
 
 def available() -> list[NRModel]:
-    """What Noise Reduction may offer: on disk AND runnable in this build."""
+    """What Noise Reduction may offer: on disk AND runnable in this build.
+
+    The id is claimed by the first RUNNABLE model, not the first on disk: an
+    .nnr this process cannot open (no engine, or a release engine in a source
+    run) must not hide the tray .onnx of the same id that it can.
+    """
+    return _first_per_id(_runnable(_candidates()))
+
+
+def _runnable(models) -> list[NRModel]:
     engine, ort = engine_available(), runtime_available()
-    return [m for m in discover() if (engine if m.kind == "nnr" else ort)]
+    return [m for m in models if (engine if m.kind == "nnr" else ort)]
 
 
 def find(model_id: str) -> NRModel | None:
-    """The model with this id, or None. An .nnr without the engine counts as
-    absent — nothing here could run it, so "not installed" is the honest word.
-    A tray .onnx is still found without onnxruntime, so the caller can say
-    which runtime is missing."""
-    engine = engine_available()
-    return next((m for m in discover()
-                 if m.id == model_id and (engine or m.kind != "nnr")), None)
+    """The model with this id that would run, else a tray .onnx with it (so the
+    caller can say onnxruntime is missing), else None. An .nnr that cannot run
+    counts as absent — "not installed" is the honest word for it."""
+    same = [m for m in _candidates() if m.id == model_id]
+    return next(iter(_runnable(same)), None) or next(
+        (m for m in same if m.kind == "onnx"), None)
 
 
 def engine_label(model_id: str, *, bare: bool = False) -> str:
@@ -230,7 +251,7 @@ class _OnnxRunner:
 def _session(model: NRModel):
     """Something with `run(tile) -> noise` for either kind of model file."""
     if model.kind == "nnr":
-        engine = nr_engine.load()
+        engine = nr_engine.load() if nr_engine.usable() else None
         if engine is None:
             raise FileNotFoundError(not_installed(model.id))
         # An EngineError here carries the engine's own sentence; it goes up as is.

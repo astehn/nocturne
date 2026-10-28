@@ -72,8 +72,8 @@ def test_the_shipped_donors_are_credited():
 
 
 def test_about_shows_credit_line(monkeypatch):
-    """Each runnable NR model is credited, beside a link to the model licence
-    that actually ships — the models are not GPL, and About must say so."""
+    """Each runnable NR model is credited, beside the model licence that
+    actually ships — the models are not GPL, and About must say so."""
     from nocturne.core import nr_models
     from nocturne.ui.about import NR_LICENCE
     models = [nr_models.NRModel("v23.0", "Freja", "/m/freja.nnr", True, kind="nnr",
@@ -81,8 +81,15 @@ def test_about_shows_credit_line(monkeypatch):
     monkeypatch.setattr(nr_models, "available", lambda: models)
     html = about_html()
     assert "Trained on donated subs &amp; more" in html      # escaped, not markup
-    assert f"href='{NR_LICENCE.as_uri()}'" in html
+    assert NR_LICENCE.name in html
     assert NR_LICENCE.is_file()
+
+
+def test_about_does_not_put_tray_models_under_the_model_licence(monkeypatch):
+    from nocturne.core import nr_models
+    tray = nr_models.NRModel("v9", "Dev", "/t/v9.onnx", False, credit="dev only")
+    monkeypatch.setattr(nr_models, "available", lambda: [tray])
+    assert "Nocturne NR" not in about_html()
 
 
 def test_about_has_no_nr_section_without_models(monkeypatch):

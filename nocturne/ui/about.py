@@ -48,7 +48,9 @@ def _nr_section() -> str:
     models, and a licence for nothing is noise.
     """
     from ..core import nr_models
-    models = nr_models.available()
+    # Only .nnr: a tray .onnx in a source run is a development file, not
+    # something this licence was written for.
+    models = [m for m in nr_models.available() if m.kind == "nnr"]
     if not models:
         return ""
     rows = "".join(f"<li><b>{html.escape(m.name)}</b> — {html.escape(m.credit)}</li>"
@@ -56,9 +58,8 @@ def _nr_section() -> str:
     return (
         "<h3>✦ Nocturne NR</h3>"
         "<p>The noise-reduction models are not covered by the GPL: they are "
-        "licensed for use inside Nocturne only, under the "
-        f"<a href='{NR_LICENCE.as_uri()}'>Nocturne NR model licence</a> "
-        "that ships with the app.</p>"
+        "licensed for use inside Nocturne only, under the Nocturne NR model "
+        f"licence, whose full text travels with the app as <b>{NR_LICENCE.name}</b>.</p>"
         + (f"<ul>{rows}</ul>" if rows else "")
     )
 

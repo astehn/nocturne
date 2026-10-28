@@ -7,6 +7,7 @@ and the shipped app has none: everything here must run without it.
 import json
 import os
 import struct
+import sys
 
 import numpy as np
 import pytest
@@ -43,8 +44,12 @@ class _FakeModel:
 
 
 class _FakeEngine:
-    def __init__(self, open_error=None, run_error=None):
+    def __init__(self, open_error=None, run_error=None, variant="dev"):
         self.opened, self.open_error, self.run_error = [], open_error, run_error
+        self.variant = variant
+
+    def version(self):
+        return {"engine": "1.0.0", "variant": self.variant}
 
     def open(self, path):
         self.opened.append(path)
@@ -204,3 +209,85 @@ def test_recipe_runs_an_nnr_model_without_onnxruntime(shipped, monkeypatch):
 
 def _option(engine):
     return {"engine": engine, "level": "medium"}
+
+
+def _tray_onnx(tmp_path, mid="v23.0"):
+    tray = tmp_path / "tray"
+    tray.mkdir(exist_ok=True)
+    (tray / f"{mid}.onnx").write_bytes(b"unread")
+    (tray / f"{mid}.json").write_text(json.dumps(
+        {"space": "stretched", "inputs": 3, "tile": 256, "id": mid}), encoding="utf-8")
+    return tray / f"{mid}.onnx"
+
+
+@pytest.mark.parametrize("engine", [None, _FakeEngine(variant="release")])
+def test_an_unrunnable_nnr_does_not_hide_the_tray_onnx(shipped, tmp_path, monkeypatch, engine):
+    """A release drops v23.0.nnr into the checkout he also runs from source; his
+    tray v23.0.onnx must stay the one that runs, by listing and by recipe."""
+    from nocturne.recipe import _nr_plan
+    _nnr(shipped / "freja.nnr", GOOD)
+    onnx = _tray_onnx(tmp_path)
+    _engine(monkeypatch, engine)
+    monkeypatch.setattr(nr_models, "runtime_available", lambda: True)
+    assert [(m.kind, m.path) for m in nr_models.available()] == [("onnx", str(onnx))]
+    assert nr_models.find("v23.0").path == str(onnx)
+    assert _nr_plan("Noise Reduction", "nr:v23.0").outcome == "run"
+
+
+def test_without_onnxruntime_the_tray_onnx_still_names_the_missing_runtime(
+        shipped, tmp_path, monkeypatch):
+    from nocturne.recipe import _nr_plan
+    _nnr(shipped / "freja.nnr", GOOD)
+    _tray_onnx(tmp_path)
+    _engine(monkeypatch, None)
+    monkeypatch.setattr(nr_models, "runtime_available", lambda: False)
+    assert nr_models.available() == []
+    assert "needs onnxruntime" in _nr_plan("Noise Reduction", "nr:v23.0").reason
+
+
+def test_a_release_engine_is_not_offered_in_a_source_run(shipped, monkeypatch):
+    """It loads, then refuses every model outside the bundle: offering its
+    models would fail on the first tile (and Auto Enhance picks them itself)."""
+    _nnr(shipped / "freja.nnr", GOOD)
+    _engine(monkeypatch, _FakeEngine(variant="release"))
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert nr_engine.usable() is False
+    assert nr_models.available() == [] and nr_models.find("v23.0") is None
+
+
+def test_a_release_engine_is_offered_in_the_frozen_app(shipped, monkeypatch):
+    _nnr(shipped / "freja.nnr", GOOD)
+    _engine(monkeypatch, _FakeEngine(variant="release"))
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert nr_engine.usable() is True
+    assert [m.kind for m in nr_models.available()] == ["nnr"]
+
+
+def test_a_dev_engine_is_offered_from_source(shipped, monkeypatch):
+    _nnr(shipped / "freja.nnr", GOOD)
+    _engine(monkeypatch, _FakeEngine(variant="dev"))
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert nr_engine.usable() is True
+    assert [m.kind for m in nr_models.available()] == ["nnr"]
+
+
+def test_an_engine_whose_version_fails_is_not_usable(monkeypatch):
+    class _Broken(_FakeEngine):
+        def version(self):
+            raise EngineError("could not read engine version (code -4)")
+    _engine(monkeypatch, _Broken())
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert nr_engine.usable() is False
+
+
+def test_denoise_never_opens_a_model_on_an_unusable_engine(shipped, monkeypatch):
+    """A model picked earlier (a saved recipe, a panel built before the engine
+    changed) still reports "not installed" rather than the engine's refusal."""
+    _nnr(shipped / "freja.nnr", GOOD)
+    engine = _engine(monkeypatch, _FakeEngine())
+    [m] = nr_models.available()
+    engine.variant = "release"
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    with pytest.raises(FileNotFoundError, match="^Nocturne NR v23.0 is not installed$"):
+        nr_models.denoise(_img(), 0.75, m)
+    assert engine.opened == []

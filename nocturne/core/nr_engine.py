@@ -144,6 +144,25 @@ def load() -> Engine | None:
         return _cached
 
 
+def usable() -> bool:
+    """Whether opening a model can succeed in this process.
+
+    A release engine opens models only inside the frozen app, so in a source run
+    (a deploy leaves one in assets/engine/) it loads fine and then refuses every
+    model. Offering those would fail on the first tile; only a dev engine runs
+    from source.
+    """
+    engine = load()
+    if engine is None:
+        return False
+    if getattr(sys, "frozen", False):
+        return True
+    try:
+        return engine.version().get("variant") == "dev"
+    except Exception:  # EngineError, bad JSON: not usable, never a crash
+        return False
+
+
 def _load_uncached() -> Engine | None:
     path = os.path.join(ENGINE_DIR, _library_name())
     if not os.path.isfile(path):
