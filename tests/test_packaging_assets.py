@@ -191,25 +191,40 @@ def _vc_dirs(tmp_path, names_a, names_b=()):
     return [str(a), str(b)]
 
 
-def test_a_windows_nr_build_carries_msvcp140_at_the_top_level(tmp_path):
-    """onnxruntime.dll needs MSVCP140 and MSVCP140_1. PyInstaller resolves them
-    from PySide6's DLL directory and so collects them only into _internal\\PySide6
-    (the v0.56.0 build had no top-level msvcp140*.dll at all). The build VM has
-    the runtime system-wide, so --check-nr there cannot tell; the spec places
-    them in _internal itself."""
+_ALL_VC = ["msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll"]
+
+
+def test_a_windows_nr_build_carries_the_vc_runtime_beside_the_engine(tmp_path):
+    """nrengine.dll and onnxruntime.dll import all four (read from their import
+    tables, 2026-10-28). ctypes loads the engine with DLL_LOAD_DIR and the
+    engine loads onnxruntime with ALTERED_SEARCH_PATH: each searches its own
+    folder first and neither reliably searches the top of _internal. So all
+    four go into nrengine/; the build VM has the runtime system-wide, so
+    --check-nr there cannot tell. The msvcp140s also stay at the top, where
+    PyInstaller otherwise leaves them only under PySide6 (v0.56.0)."""
     ns = _spec_ns()
-    dirs = _vc_dirs(tmp_path, ["msvcp140.dll", "msvcp140_1.dll"], ["msvcp140_1.dll"])
+    dirs = _vc_dirs(tmp_path, _ALL_VC, ["msvcp140_1.dll"])
     got = ns["_vc_runtime"]([("x/nrengine.dll", "nrengine")], True, dirs)
-    assert got == [(os.path.join(dirs[0], "msvcp140.dll"), "."),
-                   (os.path.join(dirs[0], "msvcp140_1.dll"), ".")]
+    a = dirs[0]
+    assert got == [(os.path.join(a, "msvcp140.dll"), "nrengine"),
+                   (os.path.join(a, "msvcp140.dll"), "."),
+                   (os.path.join(a, "msvcp140_1.dll"), "nrengine"),
+                   (os.path.join(a, "msvcp140_1.dll"), "."),
+                   (os.path.join(a, "vcruntime140.dll"), "nrengine"),
+                   (os.path.join(a, "vcruntime140_1.dll"), "nrengine")]
 
 
 def test_the_vc_runtime_falls_back_to_the_next_directory(tmp_path):
     ns = _spec_ns()
-    dirs = _vc_dirs(tmp_path, ["msvcp140.dll"], ["msvcp140_1.dll"])
+    dirs = _vc_dirs(tmp_path, ["msvcp140.dll", "vcruntime140.dll"],
+                    ["msvcp140_1.dll", "vcruntime140_1.dll"])
     got = ns["_vc_runtime"]([("x/nrengine.dll", "nrengine")], True, dirs)
-    assert got == [(os.path.join(dirs[0], "msvcp140.dll"), "."),
-                   (os.path.join(dirs[1], "msvcp140_1.dll"), ".")]
+    assert [(os.path.basename(os.path.dirname(src)), os.path.basename(src), dest)
+            for src, dest in got if dest == "nrengine"] == [
+        (os.path.basename(dirs[0]), "msvcp140.dll", "nrengine"),
+        (os.path.basename(dirs[1]), "msvcp140_1.dll", "nrengine"),
+        (os.path.basename(dirs[0]), "vcruntime140.dll", "nrengine"),
+        (os.path.basename(dirs[1]), "vcruntime140_1.dll", "nrengine")]
 
 
 def test_the_vc_runtime_is_only_added_for_a_windows_nr_build(tmp_path):
@@ -225,12 +240,14 @@ def test_the_spec_feeds_the_vc_runtime_into_the_binaries():
 
 
 def test_the_windows_build_refuses_an_nr_build_without_the_vc_runtime():
-    """The gate that holds the line: only the four runtime DLLs at the top of
-    _internal prove a machine without the VC++ redistributable can load NR."""
+    """The gate that holds the line: only the four runtime DLLs beside the
+    engine in _internal\\nrengine prove a machine without the VC++
+    redistributable can load NR."""
     ps1 = (ROOT / "packaging" / "build_windows.ps1").read_text(encoding="utf-8")
     block = ps1[ps1.index('if ($env:NOCTURNE_REQUIRE_NR -eq "1")'):ps1.index("# The installer, only after")]
+    loop = block[block.index("foreach ($dll in"):block.index("}\n    }\n")]
     for dll in ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
-        assert f'"{dll}"' in block, dll
-    assert "dist\\Nocturne\\_internal" in block
+        assert f'"{dll}"' in loop, dll
+    assert "dist\\Nocturne\\_internal\\nrengine\\$dll" in loop
     # the cheap file check first, so a missing DLL names itself
     assert block.index("foreach ($dll in") < block.index('Invoke-Selftest $Exe "--check-nr"')
