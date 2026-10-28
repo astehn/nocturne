@@ -22,6 +22,7 @@ _SOURCE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 
 
 def _default_dir() -> str:
+    """Frozen apps carry the engine beside the bundle; source runs use assets/."""
     if getattr(sys, "frozen", False):
         return os.path.join(getattr(sys, "_MEIPASS", ""), "nrengine")
     return _SOURCE_DIR
@@ -31,14 +32,16 @@ def _default_dir() -> str:
 ENGINE_DIR = _default_dir()
 
 TILE_SHAPE = (1, 3, 256, 256)
-_TEXT_CAP = 4096
+_TEXT_CAP = 4096          # version strings and open() error sentences
+_INFO_CAP = 64 * 1024 + 1  # info() echoes a header, which nnr allows up to 64 KiB
 
 
 class EngineError(RuntimeError):
-    pass
+    """Anything the engine refuses; callers show it, they do not branch on it."""
 
 
 def _library_name() -> str:
+    """The platform's file name; the engine is one flat C library per OS."""
     if sys.platform == "darwin":
         return "libnrengine.dylib"
     if sys.platform.startswith("win"):
@@ -63,8 +66,8 @@ class EngineModel:
         self._lock = threading.Lock()
 
     def info(self) -> dict:
-        buf = ctypes.create_string_buffer(_TEXT_CAP)
-        rc = self._lib.nr_info(self._handle, buf, _TEXT_CAP)
+        buf = ctypes.create_string_buffer(_INFO_CAP)
+        rc = self._lib.nr_info(self._handle, buf, _INFO_CAP)
         if rc != 0:
             raise EngineError(f"could not read model info (code {rc})")
         return json.loads(buf.value.decode("utf-8"))
@@ -75,7 +78,7 @@ class EngineModel:
             raise EngineError(f"tile must be shaped {TILE_SHAPE}, got {tile.shape}")
         if tile.dtype != np.float32:
             raise EngineError(f"tile must be float32, got {tile.dtype}")
-        tile = np.ascontiguousarray(tile, dtype=np.float32)
+        tile = np.ascontiguousarray(tile)
         out = np.empty(TILE_SHAPE, dtype=np.float32)
         rc = self._lib.nr_run(
             self._handle,
@@ -94,6 +97,8 @@ class EngineModel:
 
 
 class Engine:
+    """The loaded library; binds the C signatures once so a bad pointer width cannot truncate."""
+
     def __init__(self, lib):
         self._lib = lib
         lib.nr_version.argtypes = [ctypes.c_char_p, ctypes.c_size_t]
@@ -144,6 +149,8 @@ def _load_uncached() -> Engine | None:
     if not os.path.isfile(path):
         return None
     try:
+        if hasattr(os, "add_dll_directory"):  # Windows: find onnxruntime.dll beside it
+            os.add_dll_directory(ENGINE_DIR)
         return Engine(ctypes.CDLL(path))
     except Exception as exc:  # OSError, AttributeError on a missing symbol
         _log.warning("NR engine present but not loadable: %s", exc)

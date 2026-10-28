@@ -33,6 +33,7 @@ def read_header(path: str) -> dict | None:
         if len(raw) != hlen:
             return None
         header = json.loads(raw.decode("utf-8"))
-    except (OSError, ValueError, struct.error):
+    # RecursionError: ~60k nested '[' fits the length cap but overflows the parser.
+    except (OSError, ValueError, struct.error, RecursionError):
         return None
     return header if isinstance(header, dict) else None

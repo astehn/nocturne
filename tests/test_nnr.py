@@ -46,3 +46,21 @@ def test_missing_file_and_non_object_json(tmp_path):
     raw = b"[1,2]"
     p.write_bytes(b"NNR1" + struct.pack("<HHI", 1, 1, len(raw)) + raw)
     assert nnr.read_header(str(p)) is None
+
+
+def test_deeply_nested_header_is_none(tmp_path):
+    p = tmp_path / "m.nnr"
+    raw = b"[" * 60_000
+    p.write_bytes(b"NNR1" + struct.pack("<HHI", 1, 1, len(raw)) + raw + b"\0" * 10)
+    assert nnr.read_header(str(p)) is None
+
+
+def test_bad_utf8_wrong_format_and_empty_are_none(tmp_path):
+    p = tmp_path / "m.nnr"
+    raw = b"\xff\xfe{"
+    p.write_bytes(b"NNR1" + struct.pack("<HHI", 1, 1, len(raw)) + raw)
+    assert nnr.read_header(str(p)) is None
+    _write(p, {"id": "a"}, fmt=2)
+    assert nnr.read_header(str(p)) is None
+    p.write_bytes(b"")
+    assert nnr.read_header(str(p)) is None

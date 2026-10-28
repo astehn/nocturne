@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import pytest
 
@@ -62,3 +63,24 @@ def test_run_returns_new_array_and_reports_code():
     lib.nr_run = lambda h, i, o: -3
     with pytest.raises(nr_engine.EngineError):
         m.run(t)
+
+
+def test_info_buffer_holds_a_large_header():
+    big = {"id": "x", "pad": "y" * 20_000}
+
+    class Lib:
+        def nr_info(self, h, buf, cap):
+            data = json.dumps(big).encode()
+            if len(data) + 1 > cap:
+                return -2
+            buf.value = data
+            return 0
+
+    assert nr_engine.EngineModel(Lib(), 1).info() == big
+
+
+def test_run_accepts_non_contiguous_float32():
+    m, lib = _model()
+    t = np.zeros((1, 3, 256, 512), np.float32)[..., ::2]
+    assert not t.flags.c_contiguous
+    assert m.run(t).shape == (1, 3, 256, 256) and lib.calls == 1
