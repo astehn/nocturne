@@ -1576,15 +1576,40 @@ def test_auto_enhance_help_says_denoise_never_uses_graxpert(monkeypatch):
                                           ("graxpert", "rcastro")):
         s = Settings(graxpert_path=gx, rcastro_path=rc, denoise_engine=pref)
         assert _auto_denoise_engine(s) != "graxpert"
-    # Users can't have a Nocturne NR model until one ships, so the help names
-    # only the engines they can have (2026-10-13: "people can wonder what that
-    # is"). Put the model wording back when NR is released.
-    assert "NoiseXTerminator if" in b and "built-in denoise" in b
-    assert "Nocturne NR" not in b
+    # Nocturne NR ships with the app (Gullveig, 2026-10-28), so the help names it
+    # in the order _auto_denoise_engine actually picks, checked below.
+    assert ("The engine is NoiseXTerminator when RC-Astro is set up and is the "
+            "<b>Preferred denoise engine</b> in Settings, otherwise <b>Nocturne NR</b>") in b
+    assert ("it is NoiseXTerminator if RC-Astro is set up, else "
+            "Nocturne\u2019s own built-in denoise") in b
+    shipped = nr_models.NRModel("v23.0", "Gullveig", "/x/v23.0.nnr", True, kind="nnr")
+    monkeypatch.setattr(nr_models, "available", lambda: [shipped])
+    assert _auto_denoise_engine(Settings(rcastro_path=_RUNNABLE)) == "rcastro"
+    assert _auto_denoise_engine(Settings(rcastro_path=_RUNNABLE,
+                                         denoise_engine="graxpert")) == "nr:v23.0"
+    assert _auto_denoise_engine(Settings()) == "nr:v23.0"
+    monkeypatch.setattr(nr_models, "available", lambda: [])
+    assert _auto_denoise_engine(Settings(rcastro_path=_RUNNABLE)) == "rcastro"
+    assert _auto_denoise_engine(Settings()) == "free"
     test_model = nr_models.NRModel("v21.5", "Ullr (v21.5)", "/x/v21.5.onnx", False)
     monkeypatch.setattr(nr_models, "available", lambda: [test_model])
     assert _auto_denoise_engine(Settings()) == "free"
     assert _auto_denoise_engine(Settings(denoise_engine="nr:v21.5")) == "nr:v21.5"
+
+
+def test_noise_reduction_help_names_nocturne_nr_as_an_engine():
+    """Four engines, Nocturne NR among them, picked in the Engine box by a label
+    the window really builds — and no ranking of it against the others."""
+    from nocturne.core import nr_models
+    from nocturne.ui.main_window import nr_engine_choices
+    b = _body("noise_sharpen")
+    assert "Three engines" not in b and "Four engines can do it" in b
+    assert "<b>Nocturne NR</b>, which comes with Nocturne" in b
+    label = next(iter(nr_engine_choices(
+        [nr_models.NRModel("v23.0", "Gullveig", "/x/v23.0.nnr", True, kind="nnr")])))
+    assert f"<i>{label}</i>" in b
+    assert "runs here, after Stretch" in b
+    assert "<b>About</b> has the terms" in b
 
 
 def test_auto_enhance_help_says_a_failed_stage_is_named(_no_nr_models):
