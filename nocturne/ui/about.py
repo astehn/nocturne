@@ -55,11 +55,21 @@ def _nr_section() -> str:
         return ""
     rows = "".join(f"<li><b>{html.escape(m.name)}</b> — {html.escape(m.credit)}</li>"
                    for m in models if m.credit)
+    # The text itself, not a pointer to it: on macOS the file sits inside
+    # Nocturne.app/Contents, where nobody will look, and this licence is the
+    # models' stated legal protection — the user has to be able to read it.
+    try:
+        text = NR_LICENCE.read_text(encoding="utf-8").strip()
+    except OSError:
+        text = ""
+    terms = (f"<p>{html.escape(text)}</p>" if text else
+             f"<p>The full text travels with the app as <b>{NR_LICENCE.name}</b>.</p>")
     return (
         "<h3>✦ Nocturne NR</h3>"
         "<p>The noise-reduction models are not covered by the GPL: they are "
         "licensed for use inside Nocturne only, under the Nocturne NR model "
-        f"licence, whose full text travels with the app as <b>{NR_LICENCE.name}</b>.</p>"
+        "licence:</p>"
+        + terms
         + (f"<ul>{rows}</ul>" if rows else "")
     )
 
