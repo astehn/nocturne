@@ -176,3 +176,61 @@ def test_upx_stays_off():
     assert "upx=False" in coll and "strip=False" in coll
     assert "upx_exclude=[os.path.basename(src) for src, _ in _nr_engine()]" in coll
     assert "upx=True" not in src and "strip=True" not in src
+
+
+# --- the VC++ runtime beside a Windows NR build (2026-10-28) -----------------
+
+def _vc_dirs(tmp_path, names_a, names_b=()):
+    a, b = tmp_path / "PySide6", tmp_path / "System32"
+    a.mkdir()
+    b.mkdir()
+    for n in names_a:
+        (a / n).write_bytes(b"pyside")
+    for n in names_b:
+        (b / n).write_bytes(b"system")
+    return [str(a), str(b)]
+
+
+def test_a_windows_nr_build_carries_msvcp140_at_the_top_level(tmp_path):
+    """onnxruntime.dll needs MSVCP140 and MSVCP140_1. PyInstaller resolves them
+    from PySide6's DLL directory and so collects them only into _internal\\PySide6
+    (the v0.56.0 build had no top-level msvcp140*.dll at all). The build VM has
+    the runtime system-wide, so --check-nr there cannot tell; the spec places
+    them in _internal itself."""
+    ns = _spec_ns()
+    dirs = _vc_dirs(tmp_path, ["msvcp140.dll", "msvcp140_1.dll"], ["msvcp140_1.dll"])
+    got = ns["_vc_runtime"]([("x/nrengine.dll", "nrengine")], True, dirs)
+    assert got == [(os.path.join(dirs[0], "msvcp140.dll"), "."),
+                   (os.path.join(dirs[0], "msvcp140_1.dll"), ".")]
+
+
+def test_the_vc_runtime_falls_back_to_the_next_directory(tmp_path):
+    ns = _spec_ns()
+    dirs = _vc_dirs(tmp_path, ["msvcp140.dll"], ["msvcp140_1.dll"])
+    got = ns["_vc_runtime"]([("x/nrengine.dll", "nrengine")], True, dirs)
+    assert got == [(os.path.join(dirs[0], "msvcp140.dll"), "."),
+                   (os.path.join(dirs[1], "msvcp140_1.dll"), ".")]
+
+
+def test_the_vc_runtime_is_only_added_for_a_windows_nr_build(tmp_path):
+    ns = _spec_ns()
+    dirs = _vc_dirs(tmp_path, ["msvcp140.dll", "msvcp140_1.dll"])
+    assert ns["_vc_runtime"]([], True, dirs) == []
+    assert ns["_vc_runtime"]([("x/libnrengine.so", "nrengine")], False, dirs) == []
+
+
+def test_the_spec_feeds_the_vc_runtime_into_the_binaries():
+    src = SPEC.read_text(encoding="utf-8")
+    assert "binaries += _vc_runtime(binaries, _WIN_BUILD," in src
+
+
+def test_the_windows_build_refuses_an_nr_build_without_the_vc_runtime():
+    """The gate that holds the line: only the four runtime DLLs at the top of
+    _internal prove a machine without the VC++ redistributable can load NR."""
+    ps1 = (ROOT / "packaging" / "build_windows.ps1").read_text(encoding="utf-8")
+    block = ps1[ps1.index('if ($env:NOCTURNE_REQUIRE_NR -eq "1")'):ps1.index("# The installer, only after")]
+    for dll in ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+        assert f'"{dll}"' in block, dll
+    assert "dist\\Nocturne\\_internal" in block
+    # the cheap file check first, so a missing DLL names itself
+    assert block.index("foreach ($dll in") < block.index('Invoke-Selftest $Exe "--check-nr"')

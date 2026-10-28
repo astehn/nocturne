@@ -100,8 +100,37 @@ def _nr_engine():
             if not n.startswith(".") and os.path.isfile(os.path.join(engine, n))]
 
 
+def _vc_runtime(nr_binaries, win, search_dirs):
+    """MSVCP140 and MSVCP140_1 at the top of _internal, for a Windows NR build.
+
+    The engine and onnxruntime.dll link the dynamic VC++ runtime. PyInstaller
+    resolves those imports from PySide6's DLL directory and collects them only
+    into _internal/PySide6 (the v0.56.0 build had no top-level msvcp140*.dll),
+    and the build VM has the runtime installed system-wide, so --check-nr there
+    passes either way. vcruntime140 and vcruntime140_1 already sit at the top,
+    brought by python3*.dll. build_windows.ps1 checks all four.
+    """
+    if not (win and nr_binaries):
+        return []
+    out = []
+    for name in ("msvcp140.dll", "msvcp140_1.dll"):
+        for d in search_dirs:
+            if os.path.isfile(os.path.join(d, name)):
+                out.append((os.path.join(d, name), "."))
+                break
+    return out
+
+
 datas = _assets()                                # icons/svg/splash/fonts/NR models
 binaries = _nr_engine()
+_WIN_BUILD = sys.platform == "win32"
+if _WIN_BUILD:
+    import PySide6                               # the copies the app already loads first
+    _vc_dirs = [os.path.dirname(PySide6.__file__),
+                os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")]
+else:
+    _vc_dirs = []
+binaries += _vc_runtime(binaries, _WIN_BUILD, _vc_dirs)
 hiddenimports = ["PySide6.QtSvg"]                # SVG icon rendering
 
 # certifi's cacert.pem must travel with the app. Without it the bundle falls
