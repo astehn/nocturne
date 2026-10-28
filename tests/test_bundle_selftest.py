@@ -255,11 +255,17 @@ class _FakeModel:
 
 
 class _FakeEngine:
-    def __init__(self, variant="release", out=lambda t: t * 0.1, open_error=None):
+    def __init__(self, variant="release", out=lambda t: t * 0.1, open_error=None,
+                 version_error=None):
         self._variant, self._out, self._open_error = variant, out, open_error
+        self._version_error = version_error
         self.opened = []
+        self.models = []
 
     def version(self):
+        if self._version_error:
+            from nocturne.core.nr_engine import EngineError
+            raise EngineError(self._version_error)
         return {"variant": self._variant, "engine": "1.0.0"}
 
     def open(self, path):
@@ -267,7 +273,8 @@ class _FakeEngine:
             from nocturne.core.nr_engine import EngineError
             raise EngineError(self._open_error)
         self.opened.append(path)
-        return _FakeModel(self._out)
+        self.models.append(_FakeModel(self._out))
+        return self.models[-1]
 
 
 def _nr_check(monkeypatch, capsys, tmp_path, engine, models=("v23.0",)):
@@ -299,6 +306,41 @@ def test_check_nr_ok_is_0(monkeypatch, capsys, tmp_path):
     assert code == 0, out
     assert "NR ok  v23.0 Gullveig" in out
     assert engine.opened == [str(tmp_path / "v23.0.nnr")]
+    assert all(m.closed for m in engine.models)
+
+
+def test_check_nr_closes_a_model_whose_tile_failed(monkeypatch, capsys, tmp_path):
+    engine = _FakeEngine(out=lambda t: t * float("nan"))
+    code, out = _nr_check(monkeypatch, capsys, tmp_path, engine)
+    assert code == 5, out
+    assert engine.models and all(m.closed for m in engine.models)
+
+
+def test_check_nr_an_unreadable_engine_version_is_3(monkeypatch, capsys, tmp_path):
+    code, out = _nr_check(monkeypatch, capsys, tmp_path, _FakeEngine(version_error="boom"))
+    assert code == 3, out
+    assert "UNREADABLE" in out
+
+
+def test_check_nr_a_model_the_app_would_not_list_is_5(monkeypatch, capsys, tmp_path):
+    (tmp_path / "junk.nnr").write_bytes(b"not an nnr file")
+    code, out = _nr_check(monkeypatch, capsys, tmp_path, _FakeEngine())
+    assert code == 5, out
+    assert "junk.nnr: not a model this build lists" in out
+
+
+def test_check_nr_tells_missing_from_unloadable(monkeypatch, capsys, tmp_path):
+    """A library that is there but will not load (a missing libstdc++ symbol on
+    Linux) must not send whoever reads the gate looking for a missing file."""
+    from nocturne.core import nr_engine
+    monkeypatch.setattr(nr_engine, "ENGINE_DIR", str(tmp_path))
+    code, out = _nr_check(monkeypatch, capsys, tmp_path, None)
+    assert code == 3 and "MISSING" in out and "NOT LOADABLE" not in out
+    (tmp_path / nr_engine._library_name()).write_bytes(b"\0")
+    import nocturne.__main__ as entry
+    code = entry._check_nr()
+    out = capsys.readouterr().out
+    assert code == 3 and "PRESENT BUT NOT LOADABLE" in out
 
 
 def test_check_nr_a_model_the_engine_refuses_is_5(monkeypatch, capsys, tmp_path):

@@ -227,7 +227,9 @@ def _check_nr() -> int:
     print(f"frozen        : {getattr(sys, 'frozen', False)}")
     engine = nr_engine.load()
     if engine is None:
-        print(f"nr engine     : MISSING ({nr_engine.ENGINE_DIR})")
+        lib = os.path.join(nr_engine.ENGINE_DIR, nr_engine._library_name())
+        state = "PRESENT BUT NOT LOADABLE" if os.path.isfile(lib) else "MISSING"
+        print(f"nr engine     : {state} ({lib})")
         return 3
     try:
         version = engine.version()

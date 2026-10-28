@@ -115,6 +115,11 @@ def _nr_tree(tmp_path):
     nr.mkdir(parents=True)
     (nr / "v23.0.nnr").write_bytes(b"NNR1")
     (nr / "notes.json").write_text("{}")
+    (nr / "old").mkdir()
+    (nr / "old" / "v22.0.onnx").write_bytes(b"plain")   # nested: the subfolder hole
+    (nr / "old" / "v22.0.json").write_text("{}")
+    (tmp_path / "stray").mkdir()
+    (tmp_path / "stray" / "edge.ONNX").write_bytes(b"plain")
     return tmp_path
 
 
@@ -146,6 +151,15 @@ def test_only_encrypted_models_and_the_licence_ship(tmp_path):
     assert not any(n == "notes.json" for n, _ in got)
 
 
+def test_no_plain_model_ships_from_anywhere_in_assets(tmp_path):
+    """A plain .onnx is exactly what the encryption exists to keep out of the
+    public download — in models/nr, a subfolder of it, or anywhere else."""
+    entries = _spec_ns_at(_nr_tree(tmp_path))["_assets"]()
+    names = [os.path.basename(s) for s, _ in entries]
+    assert not any(n.lower().endswith(".onnx") for n in names), names
+    assert "v22.0.json" not in names
+
+
 def test_a_source_build_without_nr_still_builds(tmp_path):
     (tmp_path / "icons").mkdir()
     (tmp_path / "icons" / "x.svg").write_text("<svg/>")
@@ -155,7 +169,10 @@ def test_a_source_build_without_nr_still_builds(tmp_path):
 
 
 def test_upx_stays_off():
-    """The engine hashes onnxruntime's code section before loading it."""
+    """The engine hashes onnxruntime before loading it — the whole file on Linux
+    and Windows, so strip would break it as surely as UPX."""
     src = SPEC.read_text(encoding="utf-8")
-    assert re.search(r"^coll = COLLECT\(.*upx=False", src, re.M)
-    assert "upx=True" not in src
+    coll = src[src.index("coll = COLLECT("):src.index("app = ")]
+    assert "upx=False" in coll and "strip=False" in coll
+    assert "upx_exclude=[os.path.basename(src) for src, _ in _nr_engine()]" in coll
+    assert "upx=True" not in src and "strip=True" not in src

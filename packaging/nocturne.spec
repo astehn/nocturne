@@ -68,8 +68,13 @@ def _assets():
         for name in files:
             if name.startswith("."):
                 continue
-            if root == nr_models and not name.endswith(".nnr"):
-                continue                     # only the encrypted models ship
+            # A plain model must never reach the public download, wherever it
+            # sits; under models/nr only the encrypted .nnr ships, subfolders too.
+            if name.lower().endswith(".onnx"):
+                continue
+            in_nr = root == nr_models or root.startswith(nr_models + os.sep)
+            if in_nr and not name.endswith(".nnr"):
+                continue
             full = os.path.join(root, name)
             rel = os.path.relpath(root, ASSETS)
             dest = "nocturne/assets" if rel == "." else f"nocturne/assets/{rel}"
@@ -192,10 +197,14 @@ exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Nocturne",
           # nocturne/ui/open_requests.py now handles, at launch AND while running.
           argv_emulation=False,
           **(_windows_exe_kwargs() if _WIN else {}))
-# upx=False is PyInstaller's default, written out because it must stay so: the
-# NR engine checks onnxruntime's code section by hash before loading it, and a
-# packed library would no longer match.
-coll = COLLECT(exe, a.binaries, a.datas, name="Nocturne", upx=False)
+# upx=False and strip=False are PyInstaller's defaults, written out because
+# they must stay so: the NR engine hashes onnxruntime before loading it. On macOS
+# the hash covers __TEXT,__text and the dependency basenames, so PyInstaller's
+# re-signing survives; on Linux and Windows it covers the WHOLE FILE, so strip,
+# UPX or Authenticode-signing onnxruntime.dll (a 1.0 signing concern) breaks it.
+# upx_exclude names the engine files too, so turning UPX on cannot reach them.
+coll = COLLECT(exe, a.binaries, a.datas, name="Nocturne", upx=False, strip=False,
+               upx_exclude=[os.path.basename(src) for src, _ in _nr_engine()])
 app = _MAC and BUNDLE(
     coll,
     name="Nocturne.app",
