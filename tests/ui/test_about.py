@@ -69,3 +69,23 @@ def test_the_shipped_donors_are_credited():
     assert "Matt Boylan" in page and "Alvaro Vaquero" in page
     assert "Be the first to lend your light" not in page
     assert "&quot;big rig&quot;" in page, "a donor's quotes are escaped as text"
+
+
+def test_about_shows_credit_line(monkeypatch):
+    """Each runnable NR model is credited, beside a link to the model licence
+    that actually ships — the models are not GPL, and About must say so."""
+    from nocturne.core import nr_models
+    from nocturne.ui.about import NR_LICENCE
+    models = [nr_models.NRModel("v23.0", "Freja", "/m/freja.nnr", True, kind="nnr",
+                                credit="Trained on donated subs & more")]
+    monkeypatch.setattr(nr_models, "available", lambda: models)
+    html = about_html()
+    assert "Trained on donated subs &amp; more" in html      # escaped, not markup
+    assert f"href='{NR_LICENCE.as_uri()}'" in html
+    assert NR_LICENCE.is_file()
+
+
+def test_about_has_no_nr_section_without_models(monkeypatch):
+    from nocturne.core import nr_models
+    monkeypatch.setattr(nr_models, "available", lambda: [])
+    assert "Nocturne NR" not in about_html()

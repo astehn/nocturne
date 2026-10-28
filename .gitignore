@@ -87,6 +87,10 @@ nocturne/assets/models/*
 # test passes because the file is sitting here, and a fresh clone is broken.
 !nocturne/assets/models/denoise_*.onnx
 !nocturne/assets/models/denoise_*.json
+# Nocturne NR: the engine library and its encrypted .nnr models are delivered
+# per build by the NR project, never committed to this public repo.
+nocturne/assets/engine/
+nocturne/assets/models/nr/
 
 # Internal audits (local-only, like docs/audit and docs/superpowers)
 /docs/*_AUDIT_*.md

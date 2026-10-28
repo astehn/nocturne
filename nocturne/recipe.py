@@ -518,9 +518,11 @@ def _nr_plan(name: str, engine) -> StepPlan | None:
     if not (isinstance(engine, str) and engine.startswith(nr_models.PREFIX)):
         return None
     model_id = engine[len(nr_models.PREFIX):]
-    if nr_models.find(model_id) is None:
+    model = nr_models.find(model_id)
+    if model is None:
         return StepPlan(name, "fail", "", nr_models.not_installed(model_id))
-    if not nr_models.runtime_available():
+    # An .nnr runs on the engine, which find() has already confirmed.
+    if model.kind == "onnx" and not nr_models.runtime_available():
         return StepPlan(name, "fail", "", "Nocturne NR needs onnxruntime, which this "
                                           "build does not include")
     return StepPlan(name, "run", nr_models.engine_label(model_id), "")

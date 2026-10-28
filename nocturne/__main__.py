@@ -179,6 +179,7 @@ def _check_tools() -> int:
         if not seeded:
             bad.append("sep")
     print(f"onnxruntime   : {nr_models.runtime_available()}")
+    print(f"nr engine     : {nr_models.engine_available()}")
     starnet = found.get("starnet_path")
     if starnet:
         from .tools.starnet import StarNet

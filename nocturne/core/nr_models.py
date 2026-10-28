@@ -7,8 +7,13 @@ written from the code that trained and judged the models: the app must feed
 exactly what training saw, or the judged quality is not what the user gets.
 Every number below is the contract's, not a choice made here.
 
+Two kinds of model file: a signed, encrypted `.nnr` run by the Nocturne NR
+engine (what the app ships), and a plain `.onnx` + `.json` from the testing tray,
+run by Python onnxruntime (development only). Both feed `denoise` through the
+same `run(tile) -> noise`, so the arithmetic cannot differ between them.
+
 Pure — no Qt. onnxruntime is imported lazily, because the installed app does not
-carry it yet and a model is offered only where it can actually run.
+carry it, and a model is offered only where it can actually run.
 """
 from __future__ import annotations
 
@@ -20,6 +25,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from . import nnr, nr_engine
 from .image import AstroImage
 from .tasks import current as _current_token
 from .tasks import report_progress
@@ -47,8 +53,10 @@ STEP = TILE - OVERLAP
 class NRModel:
     id: str          # stable; what history and recipes store
     name: str        # display name; may change between deliveries
-    path: str        # the .onnx
+    path: str        # the .onnx or .nnr
     shipped: bool
+    kind: str = "onnx"   # "nnr" runs through the engine, "onnx" through onnxruntime
+    credit: str = ""     # the model's own credit line, shown in About
 
 
 def _natural(s: str):
@@ -75,11 +83,40 @@ def _read(onnx_path: str, shipped: bool) -> NRModel | None:
     return NRModel(mid, name, onnx_path, shipped)
 
 
+def _read_nnr(path: str, shipped: bool) -> NRModel | None:
+    """Same contract as `_read`, from the file's public header. A contract this
+    build does not know is skipped silently: a newer model is not an error."""
+    h = nnr.read_header(path)
+    if h is None:
+        return None
+    contract = h.get("contract")
+    # type() not isinstance: True == 1, and an unhashable value must not raise.
+    if (type(contract) is not int or contract not in nnr.SUPPORTED_CONTRACTS
+            or h.get("space") != "stretched" or h.get("inputs") != 3
+            or h.get("tile") != TILE):
+        return None
+    stem = os.path.basename(path)[:-len(".nnr")]
+    mid, name, credit = h.get("id"), h.get("name"), h.get("credit_line")
+    mid = mid if isinstance(mid, str) and mid else stem
+    name = name if isinstance(name, str) and name else mid
+    credit = credit if isinstance(credit, str) else ""
+    return NRModel(mid, name, path, shipped, kind="nnr", credit=credit)
+
+
+def _read_any(path: str, shipped: bool) -> NRModel | None:
+    if path.endswith(".nnr"):
+        return _read_nnr(path, shipped)
+    if path.endswith(".onnx"):
+        return _read(path, shipped)
+    return None
+
+
 def discover(dirs=None) -> list[NRModel]:
     """Every post-stretch model on disk, earlier dirs first, natural order within.
 
-    Reads only the JSON beside each file — no ONNX load — so listing stays cheap
-    enough to do whenever a panel is built. The first model with an id wins.
+    Reads only the JSON beside each file, or an .nnr's public header — no model
+    load — so listing stays cheap enough to do whenever a panel is built. The
+    first model with an id wins; within one folder an .nnr beats an .onnx.
     """
     shipped_dir = os.path.abspath(SHIPPED_DIR)
     if dirs is None:
@@ -92,9 +129,9 @@ def discover(dirs=None) -> list[NRModel]:
         except OSError:
             continue
         shipped = os.path.abspath(d) == shipped_dir
-        found = [m for m in (_read(os.path.join(d, n), shipped)
-                             for n in names if n.endswith(".onnx")) if m is not None]
-        for m in sorted(found, key=lambda m: _natural(m.id)):
+        found = [m for m in (_read_any(os.path.join(d, n), shipped) for n in names)
+                 if m is not None]
+        for m in sorted(found, key=lambda m: (_natural(m.id), m.kind != "nnr")):
             if m.id not in seen:
                 seen.add(m.id)
                 out.append(m)
@@ -112,13 +149,24 @@ def runtime_available() -> bool:
     return True
 
 
+def engine_available() -> bool:
+    return nr_engine.load() is not None
+
+
 def available() -> list[NRModel]:
     """What Noise Reduction may offer: on disk AND runnable in this build."""
-    return discover() if runtime_available() else []
+    engine, ort = engine_available(), runtime_available()
+    return [m for m in discover() if (engine if m.kind == "nnr" else ort)]
 
 
 def find(model_id: str) -> NRModel | None:
-    return next((m for m in discover() if m.id == model_id), None)
+    """The model with this id, or None. An .nnr without the engine counts as
+    absent — nothing here could run it, so "not installed" is the honest word.
+    A tray .onnx is still found without onnxruntime, so the caller can say
+    which runtime is missing."""
+    engine = engine_available()
+    return next((m for m in discover()
+                 if m.id == model_id and (engine or m.kind != "nnr")), None)
 
 
 def engine_label(model_id: str, *, bare: bool = False) -> str:
@@ -145,17 +193,51 @@ _SESSIONS: dict = {}
 _SESSIONS_LOCK = threading.Lock()
 
 
-def _session(path: str):
-    """One InferenceSession per model file; building one costs more than a tile."""
+def _cached(path: str, build):
+    """One open model per file version; opening costs more than a tile. Entries
+    are never closed: a denoise on another thread may still be using one."""
     st = os.stat(path)
     key = (path, st.st_mtime_ns, st.st_size)
     with _SESSIONS_LOCK:
         sess = _SESSIONS.get(key)
         if sess is None:
-            import onnxruntime as ort
-            sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+            sess = build(path)
             _SESSIONS[key] = sess
         return sess
+
+
+def _ort_session(path: str):
+    def build(p):
+        import onnxruntime as ort
+        return ort.InferenceSession(p, providers=["CPUExecutionProvider"])
+    return _cached(path, build)
+
+
+class _OnnxRunner:
+    """An onnxruntime session behind the engine's `run(tile) -> noise` shape."""
+
+    def __init__(self, sess, model_id: str):
+        inp = sess.get_inputs()[0]
+        if list(inp.shape) != [1, 3, TILE, TILE]:
+            raise RuntimeError(f"Nocturne NR {model_id}: expected a 1×3×256×256 input, "
+                               f"the model takes {inp.shape}")
+        self._sess, self._name = sess, inp.name
+
+    def run(self, tile: np.ndarray) -> np.ndarray:
+        return self._sess.run(None, {self._name: tile})[0]
+
+
+def _session(model: NRModel):
+    """Something with `run(tile) -> noise` for either kind of model file."""
+    if model.kind == "nnr":
+        engine = nr_engine.load()
+        if engine is None:
+            raise FileNotFoundError(not_installed(model.id))
+        # An EngineError here carries the engine's own sentence; it goes up as is.
+        return _cached(model.path, engine.open)
+    if not runtime_available():
+        raise RuntimeError("Nocturne NR needs onnxruntime, which this build does not include")
+    return _OnnxRunner(_ort_session(model.path), model.id)
 
 
 def _feather() -> np.ndarray:
@@ -188,14 +270,8 @@ def denoise(img: AstroImage, strength: float, model: NRModel) -> AstroImage:
         raise FileNotFoundError(not_installed(model.id))
     if strength <= 0:
         return AstroImage(img.data.copy(), is_linear=False, metadata=dict(img.metadata))
-    if not runtime_available():
-        raise RuntimeError("Nocturne NR needs onnxruntime, which this build does not include")
 
-    sess = _session(model.path)
-    inp = sess.get_inputs()[0]
-    if list(inp.shape) != [1, 3, TILE, TILE]:
-        raise RuntimeError(f"Nocturne NR {model.id}: expected a 1×3×256×256 input, "
-                           f"the model takes {inp.shape}")
+    runner = _session(model)
 
     src = np.ascontiguousarray(img.data, np.float32)
     mono = src.ndim == 2
@@ -219,8 +295,8 @@ def denoise(img: AstroImage, strength: float, model: NRModel) -> AstroImage:
             if token is not None:
                 token.check()
             patch = src[y0:y0 + TILE, x0:x0 + TILE]
-            noise = sess.run(None, {inp.name: np.ascontiguousarray(
-                patch.transpose(2, 0, 1)[None])})[0][0]
+            noise = runner.run(np.ascontiguousarray(
+                patch.transpose(2, 0, 1)[None]))[0]
             out[y0:y0 + TILE, x0:x0 + TILE] += (patch - strength * noise.transpose(1, 2, 0)) * win
             wsum[y0:y0 + TILE, x0:x0 + TILE] += win
             done += 1
