@@ -149,6 +149,35 @@ if ($tools.Code -ne 0) {
     Fail "the build's tool check failed (exit $($tools.Code)) -- see above"
 }
 
+# Nocturne NR, only for a release that is meant to carry it (the deploy sets
+# NOCTURNE_REQUIRE_NR=1 after copying the engine and models in). A source build
+# has neither, and must still build. 3 = no engine, 4 = dev engine, 5 = a model
+# would not open or run.
+if ($env:NOCTURNE_REQUIRE_NR -eq "1") {
+    # The VC++ runtime the engine and onnxruntime.dll link, BESIDE them in
+    # _internal\nrengine: the engine is loaded with DLL_LOAD_DIR and loads
+    # onnxruntime with ALTERED_SEARCH_PATH, so their own folder is the one place
+    # a machine WITHOUT the redistributable is sure to look. This VM has the
+    # runtime installed system-wide, so --check-nr below passes either way and
+    # cannot prove the bundle carries it; only these files can.
+    foreach ($dll in "msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll") {
+        if (-not (Test-Path (Join-Path $Repo "dist\Nocturne\_internal\nrengine\$dll"))) {
+            Fail "the build does not carry $dll in dist\Nocturne\_internal\nrengine -- NR would not load on a machine without the VC++ runtime"
+        }
+    }
+    foreach ($dll in "msvcp140.dll", "msvcp140_1.dll") {
+        if (-not (Test-Path (Join-Path $Repo "dist\Nocturne\_internal\$dll"))) {
+            Fail "the build does not carry $dll in dist\Nocturne\_internal"
+        }
+    }
+    Write-Output "  vcrt     msvcp140, msvcp140_1, vcruntime140, vcruntime140_1 in _internal\nrengine"
+    $nr = Invoke-Selftest $Exe "--check-nr"
+    $nr.Output | ForEach-Object { Write-Output "  nr       $_" }
+    if ($nr.Code -ne 0) {
+        Fail "the build's Nocturne NR engine or models do not work (exit $($nr.Code)) -- see above"
+    }
+}
+
 # The installer, only after every gate above has passed.
 if (-not $Iscc) {
     $Iscc = @(

@@ -672,3 +672,7 @@ may consider it more useful to permit linking proprietary applications with
 the library.  If this is what you want to do, use the GNU Lesser General
 Public License instead of this License.  But first, please read
 <https://www.gnu.org/licenses/why-not-lgpl.html>.
+
+                    ADDITIONAL PERMISSION (GPL-3 SECTION 7)
+
+Additional permission under GNU GPL version 3 section 7: if you modify this Program, or any covered work, by linking or combining it with the Nocturne NR engine (or a modified version of that library), containing parts covered by the terms of its own licence, the licensors of this Program grant you additional permission to convey the resulting work.

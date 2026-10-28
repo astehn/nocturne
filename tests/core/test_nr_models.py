@@ -321,7 +321,7 @@ def test_a_model_whose_graph_is_not_three_by_256_is_refused(tmp_path, monkeypatc
     class _Sess:
         def get_inputs(self):
             return [_In()]
-    monkeypatch.setattr(nr_models, "_session", lambda path: _Sess())
+    monkeypatch.setattr(nr_models, "_ort_session", lambda path: _Sess())
     with pytest.raises(RuntimeError, match="1×3×256×256"):
         nr_models.denoise(_stretched(300, 300), 0.75, model)
 

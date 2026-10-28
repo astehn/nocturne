@@ -246,3 +246,40 @@ def test_recording_what_ran_leaves_the_applied_step_settled(qtbot, tmp_path, mon
     assert win._controls_match_commit("noise_sharpen")
     assert not win._has_pending()
     assert win._panel.engine_box.currentText() == "Nocturne NR — Odin"
+
+
+def test_an_engine_that_will_not_start_says_so_where_the_user_looks(
+        qtbot, tmp_path, monkeypatch, tray):
+    """The shipped model is present but the engine will not load (a missing
+    VC++ runtime on Windows): the step names that cause, and a revisited step's
+    box does not call the model "not installed"."""
+    import struct
+    import sys
+    from nocturne.core import nr_engine
+    _tools(monkeypatch, rc=False, gx=False)
+    shipped = tmp_path / "shipped"
+    shipped.mkdir()
+    raw = json.dumps({**STRETCHED, "id": "v23.0", "name": "Freja", "contract": 1}).encode()
+    (shipped / "v23.0.nnr").write_bytes(b"NNR1" + struct.pack("<HHI", 1, 1, len(raw)) + raw
+                                        + b"\0" * 64)
+    monkeypatch.setattr(nr_models, "SHIPPED_DIR", str(shipped))
+    eng = tmp_path / "engine"
+    eng.mkdir()
+    (eng / nr_engine._library_name()).write_bytes(b"not a library")
+    monkeypatch.setattr(nr_engine, "ENGINE_DIR", str(eng))
+    monkeypatch.setattr(nr_engine, "_cached", nr_engine._UNSET)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    try:
+        win = _at_noise_reduction(qtbot, tmp_path)
+        win.apply_current({"engine": "nr:v23.0", "level": "strong"})
+        reason = nr_engine.load_error()
+        assert reason
+        assert f"Nocturne NR could not start: {reason}" in win._warning.text()
+        assert "not installed" not in win._warning.text()
+        # A step committed earlier with this model, revisited now.
+        monkeypatch.setattr(win, "_committed_option",
+                            lambda sid: {"engine": "nr:v23.0", "level": "strong"})
+        assert win._missing_nr_choice({}) == ("Nocturne NR — v23.0 (could not start)",
+                                              "nr:v23.0")
+    finally:
+        monkeypatch.setattr(nr_engine, "_cached", nr_engine._UNSET)

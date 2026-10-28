@@ -78,6 +78,17 @@ if ! dist/Nocturne/Nocturne --check-codecs; then
   exit 1
 fi
 
+# Nocturne NR, only for a release that is meant to carry it (the deploy sets
+# NOCTURNE_REQUIRE_NR=1 after copying the engine and models in). A source build
+# has neither, and must still build. 3 = no engine, 4 = dev engine, 5 = a model
+# would not open or run.
+if [ "${NOCTURNE_REQUIRE_NR:-0}" = "1" ]; then
+  if ! dist/Nocturne/Nocturne --check-nr; then
+    echo "the build's Nocturne NR engine or models do not work — see above" >&2
+    exit 1
+  fi
+fi
+
 tar -czf "dist/${NAME}.tar.gz" -C dist Nocturne
 echo "  artifact dist/${NAME}.tar.gz  ($(du -h "dist/${NAME}.tar.gz" | cut -f1))"
 echo "  sha256   $(sha256sum "dist/${NAME}.tar.gz" | cut -d' ' -f1)"

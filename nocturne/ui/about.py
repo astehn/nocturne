@@ -9,6 +9,8 @@ import nocturne
 from .. import APP_NAME, APP_TAGLINE, __version__, version_label
 
 _DATA = Path(__file__).resolve().parent.parent / "assets" / "contributors.json"
+# The models are not GPL; their terms travel with the app like the font licences.
+NR_LICENCE = Path(__file__).resolve().parent.parent / "assets" / "NR-MODEL-LICENCE.txt"
 
 _FALLBACK = {
     "creator": {"name": "Andreas Stehn",
@@ -37,6 +39,39 @@ def load_contributors(path: str | None = None) -> dict:
 
 def _rows(items: list) -> str:
     return "".join(f"<li><b>{it['name']}</b> — {it['what']}</li>" for it in items)
+
+
+def _nr_section() -> str:
+    """Credits for the NR models this build can actually run, and their licence.
+
+    Empty when there are none: a source checkout without the engine ships no
+    models, and a licence for nothing is noise.
+    """
+    from ..core import nr_models
+    # Only .nnr: a tray .onnx in a source run is a development file, not
+    # something this licence was written for.
+    models = [m for m in nr_models.available() if m.kind == "nnr"]
+    if not models:
+        return ""
+    rows = "".join(f"<li><b>{html.escape(m.name)}</b> — {html.escape(m.credit)}</li>"
+                   for m in models if m.credit)
+    # The text itself, not a pointer to it: on macOS the file sits inside
+    # Nocturne.app/Contents, where nobody will look, and this licence is the
+    # models' stated legal protection — the user has to be able to read it.
+    try:
+        text = NR_LICENCE.read_text(encoding="utf-8").strip()
+    except OSError:
+        text = ""
+    terms = (f"<p>{html.escape(text)}</p>" if text else
+             f"<p>The full text travels with the app as <b>{NR_LICENCE.name}</b>.</p>")
+    return (
+        "<h3>✦ Nocturne NR</h3>"
+        "<p>The noise-reduction models are not covered by the GPL: they are "
+        "licensed for use inside Nocturne only, under the Nocturne NR model "
+        "licence:</p>"
+        + terms
+        + (f"<ul>{rows}</ul>" if rows else "")
+    )
 
 
 def about_html(data: dict | None = None) -> str:
@@ -74,7 +109,8 @@ def about_html(data: dict | None = None) -> str:
         "looks the same on any machine. All five under the "
         "<b>SIL Open Font License</b>, whose full text travels with them:</p>"
         f"<ul>{_rows(data.get('fonts', []))}</ul>"
-        "<h3>✦ Plays nicely with</h3>"
+        + _nr_section()
+        + "<h3>✦ Plays nicely with</h3>"
         f"<ul>{_rows(data.get('works_with', []))}</ul>"
         "<h3>✦ Photon Donors</h3>"
         "<p>The absolute legends who lent their light for testing:</p>"

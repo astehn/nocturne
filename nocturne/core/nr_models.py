@@ -7,8 +7,13 @@ written from the code that trained and judged the models: the app must feed
 exactly what training saw, or the judged quality is not what the user gets.
 Every number below is the contract's, not a choice made here.
 
+Two kinds of model file: a signed, encrypted `.nnr` run by the Nocturne NR
+engine (what the app ships), and a plain `.onnx` + `.json` from the testing tray,
+run by Python onnxruntime (development only). Both feed `denoise` through the
+same `run(tile) -> noise`, so the arithmetic cannot differ between them.
+
 Pure — no Qt. onnxruntime is imported lazily, because the installed app does not
-carry it yet and a model is offered only where it can actually run.
+carry it, and a model is offered only where it can actually run.
 """
 from __future__ import annotations
 
@@ -20,12 +25,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from . import nnr, nr_engine
 from .image import AstroImage
 from .tasks import current as _current_token
 from .tasks import report_progress
 
-# Models that ship inside the app (none yet; the folder need not exist). They
-# win over a tray model with the same id, so a release never runs a stale copy.
+# Models that ship inside the app (the folder need not exist in a source
+# checkout). They win over a tray model with the same id, so a release never
+# runs a stale copy.
 _REAL_SHIPPED_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                  "assets", "models", "nr")
 SHIPPED_DIR = _REAL_SHIPPED_DIR
@@ -47,8 +54,10 @@ STEP = TILE - OVERLAP
 class NRModel:
     id: str          # stable; what history and recipes store
     name: str        # display name; may change between deliveries
-    path: str        # the .onnx
+    path: str        # the .onnx or .nnr
     shipped: bool
+    kind: str = "onnx"   # "nnr" runs through the engine, "onnx" through onnxruntime
+    credit: str = ""     # the model's own credit line, shown in About
 
 
 def _natural(s: str):
@@ -75,16 +84,40 @@ def _read(onnx_path: str, shipped: bool) -> NRModel | None:
     return NRModel(mid, name, onnx_path, shipped)
 
 
-def discover(dirs=None) -> list[NRModel]:
-    """Every post-stretch model on disk, earlier dirs first, natural order within.
+def _read_nnr(path: str, shipped: bool) -> NRModel | None:
+    """Same contract as `_read`, from the file's public header. A contract this
+    build does not know is skipped silently: a newer model is not an error."""
+    h = nnr.read_header(path)
+    if h is None:
+        return None
+    contract = h.get("contract")
+    # type() not isinstance: True == 1, and an unhashable value must not raise.
+    if (type(contract) is not int or contract not in nnr.SUPPORTED_CONTRACTS
+            or h.get("space") != "stretched" or h.get("inputs") != 3
+            or h.get("tile") != TILE):
+        return None
+    stem = os.path.basename(path)[:-len(".nnr")]
+    mid, name, credit = h.get("id"), h.get("name"), h.get("credit_line")
+    mid = mid if isinstance(mid, str) and mid else stem
+    name = name if isinstance(name, str) and name else mid
+    credit = credit if isinstance(credit, str) else ""
+    return NRModel(mid, name, path, shipped, kind="nnr", credit=credit)
 
-    Reads only the JSON beside each file — no ONNX load — so listing stays cheap
-    enough to do whenever a panel is built. The first model with an id wins.
-    """
+
+def _read_any(path: str, shipped: bool) -> NRModel | None:
+    if path.endswith(".nnr"):
+        return _read_nnr(path, shipped)
+    if path.endswith(".onnx"):
+        return _read(path, shipped)
+    return None
+
+
+def _candidates(dirs=None) -> list[NRModel]:
+    """Every readable model, in priority order: earlier dirs first, natural
+    order within, an .nnr before an .onnx with the same id. Duplicates kept."""
     shipped_dir = os.path.abspath(SHIPPED_DIR)
     if dirs is None:
         dirs = [SHIPPED_DIR, TRAY_DIR]
-    seen: set[str] = set()
     out: list[NRModel] = []
     for d in dirs:
         try:
@@ -92,13 +125,31 @@ def discover(dirs=None) -> list[NRModel]:
         except OSError:
             continue
         shipped = os.path.abspath(d) == shipped_dir
-        found = [m for m in (_read(os.path.join(d, n), shipped)
-                             for n in names if n.endswith(".onnx")) if m is not None]
-        for m in sorted(found, key=lambda m: _natural(m.id)):
-            if m.id not in seen:
-                seen.add(m.id)
-                out.append(m)
+        found = [m for m in (_read_any(os.path.join(d, n), shipped) for n in names)
+                 if m is not None]
+        # Path last, so two files with one id order the same on any filesystem.
+        out += sorted(found, key=lambda m: (_natural(m.id), m.kind != "nnr", m.path))
     return out
+
+
+def _first_per_id(models) -> list[NRModel]:
+    seen: set[str] = set()
+    out = []
+    for m in models:
+        if m.id not in seen:
+            seen.add(m.id)
+            out.append(m)
+    return out
+
+
+def discover(dirs=None) -> list[NRModel]:
+    """Every post-stretch model on disk, earlier dirs first, natural order within.
+
+    Reads only the JSON beside each file, or an .nnr's public header — no model
+    load — so listing stays cheap enough to do whenever a panel is built. The
+    first model with an id wins; within one folder an .nnr beats an .onnx.
+    """
+    return _first_per_id(_candidates(dirs))
 
 
 def runtime_available() -> bool:
@@ -112,13 +163,32 @@ def runtime_available() -> bool:
     return True
 
 
+def engine_available() -> bool:
+    return nr_engine.usable()
+
+
 def available() -> list[NRModel]:
-    """What Noise Reduction may offer: on disk AND runnable in this build."""
-    return discover() if runtime_available() else []
+    """What Noise Reduction may offer: on disk AND runnable in this build.
+
+    The id is claimed by the first RUNNABLE model, not the first on disk: an
+    .nnr this process cannot open (no engine, or a release engine in a source
+    run) must not hide the tray .onnx of the same id that it can.
+    """
+    return _first_per_id(_runnable(_candidates()))
+
+
+def _runnable(models) -> list[NRModel]:
+    engine, ort = engine_available(), runtime_available()
+    return [m for m in models if (engine if m.kind == "nnr" else ort)]
 
 
 def find(model_id: str) -> NRModel | None:
-    return next((m for m in discover() if m.id == model_id), None)
+    """The model with this id that would run, else a tray .onnx with it (so the
+    caller can say onnxruntime is missing), else None. An .nnr that cannot run
+    counts as absent — "not installed" is the honest word for it."""
+    same = [m for m in _candidates() if m.id == model_id]
+    return next(iter(_runnable(same)), None) or next(
+        (m for m in same if m.kind == "onnx"), None)
 
 
 def engine_label(model_id: str, *, bare: bool = False) -> str:
@@ -141,21 +211,71 @@ def not_installed(model_id: str) -> str:
     return f"Nocturne NR {model_id} is not installed"
 
 
+def start_failure(model_id: str) -> str:
+    """The engine's own reason when this id's .nnr is here but the engine would
+    not load, else "". Saying "not installed" then sends the user looking for
+    a model that is right there."""
+    reason = nr_engine.load_error()
+    if reason and any(m.kind == "nnr" and m.id == model_id for m in _candidates()):
+        return reason
+    return ""
+
+
+def unavailable(model_id: str) -> str:
+    """Why a model with this id cannot run, in the user's words."""
+    reason = start_failure(model_id)
+    return f"Nocturne NR could not start: {reason}" if reason else not_installed(model_id)
+
+
 _SESSIONS: dict = {}
 _SESSIONS_LOCK = threading.Lock()
 
 
-def _session(path: str):
-    """One InferenceSession per model file; building one costs more than a tile."""
+def _cached(path: str, build):
+    """One open model per file version; opening costs more than a tile. Entries
+    are never closed: a denoise on another thread may still be using one."""
     st = os.stat(path)
     key = (path, st.st_mtime_ns, st.st_size)
     with _SESSIONS_LOCK:
         sess = _SESSIONS.get(key)
         if sess is None:
-            import onnxruntime as ort
-            sess = ort.InferenceSession(path, providers=["CPUExecutionProvider"])
+            sess = build(path)
             _SESSIONS[key] = sess
         return sess
+
+
+def _ort_session(path: str):
+    def build(p):
+        import onnxruntime as ort
+        return ort.InferenceSession(p, providers=["CPUExecutionProvider"])
+    return _cached(path, build)
+
+
+class _OnnxRunner:
+    """An onnxruntime session behind the engine's `run(tile) -> noise` shape."""
+
+    def __init__(self, sess, model_id: str):
+        inp = sess.get_inputs()[0]
+        if list(inp.shape) != [1, 3, TILE, TILE]:
+            raise RuntimeError(f"Nocturne NR {model_id}: expected a 1×3×256×256 input, "
+                               f"the model takes {inp.shape}")
+        self._sess, self._name = sess, inp.name
+
+    def run(self, tile: np.ndarray) -> np.ndarray:
+        return self._sess.run(None, {self._name: tile})[0]
+
+
+def _session(model: NRModel):
+    """Something with `run(tile) -> noise` for either kind of model file."""
+    if model.kind == "nnr":
+        engine = nr_engine.load() if nr_engine.usable() else None
+        if engine is None:
+            raise FileNotFoundError(unavailable(model.id))
+        # An EngineError here carries the engine's own sentence; it goes up as is.
+        return _cached(model.path, engine.open)
+    if not runtime_available():
+        raise RuntimeError("Nocturne NR needs onnxruntime, which this build does not include")
+    return _OnnxRunner(_ort_session(model.path), model.id)
 
 
 def _feather() -> np.ndarray:
@@ -188,14 +308,8 @@ def denoise(img: AstroImage, strength: float, model: NRModel) -> AstroImage:
         raise FileNotFoundError(not_installed(model.id))
     if strength <= 0:
         return AstroImage(img.data.copy(), is_linear=False, metadata=dict(img.metadata))
-    if not runtime_available():
-        raise RuntimeError("Nocturne NR needs onnxruntime, which this build does not include")
 
-    sess = _session(model.path)
-    inp = sess.get_inputs()[0]
-    if list(inp.shape) != [1, 3, TILE, TILE]:
-        raise RuntimeError(f"Nocturne NR {model.id}: expected a 1×3×256×256 input, "
-                           f"the model takes {inp.shape}")
+    runner = _session(model)
 
     src = np.ascontiguousarray(img.data, np.float32)
     mono = src.ndim == 2
@@ -219,8 +333,8 @@ def denoise(img: AstroImage, strength: float, model: NRModel) -> AstroImage:
             if token is not None:
                 token.check()
             patch = src[y0:y0 + TILE, x0:x0 + TILE]
-            noise = sess.run(None, {inp.name: np.ascontiguousarray(
-                patch.transpose(2, 0, 1)[None])})[0][0]
+            noise = runner.run(np.ascontiguousarray(
+                patch.transpose(2, 0, 1)[None]))[0]
             out[y0:y0 + TILE, x0:x0 + TILE] += (patch - strength * noise.transpose(1, 2, 0)) * win
             wsum[y0:y0 + TILE, x0:x0 + TILE] += win
             done += 1

@@ -227,3 +227,154 @@ def test_the_tools_check_returns_before_a_window_is_created():
     src = (ROOT / "nocturne" / "__main__.py").read_text(encoding="utf-8")
     body = src.split("def main()")[1]
     assert body.index('"--check-tools" in sys.argv') < body.index("QApplication(sys.argv)")
+
+
+# --- --check-nr ------------------------------------------------------------
+
+def _nnr_file(folder, mid="v23.0", name="Gullveig"):
+    import json
+    import struct
+    raw = json.dumps({"contract": 1, "space": "stretched", "inputs": 3, "tile": 256,
+                      "id": mid, "name": name}).encode("utf-8")
+    path = folder / f"{mid}.nnr"
+    path.write_bytes(b"NNR1" + struct.pack("<HHI", 1, 1, len(raw)) + raw + b"\0" * 32)
+    return path
+
+
+class _FakeModel:
+    def __init__(self, out):
+        self._out = out
+        self.closed = False
+
+    def run(self, tile):
+        assert tile.shape == (1, 3, 256, 256) and tile.dtype.name == "float32"
+        return self._out(tile)
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeEngine:
+    def __init__(self, variant="release", out=lambda t: t * 0.1, open_error=None,
+                 version_error=None):
+        self._variant, self._out, self._open_error = variant, out, open_error
+        self._version_error = version_error
+        self.opened = []
+        self.models = []
+
+    def version(self):
+        if self._version_error:
+            from nocturne.core.nr_engine import EngineError
+            raise EngineError(self._version_error)
+        return {"variant": self._variant, "engine": "1.0.0"}
+
+    def open(self, path):
+        if self._open_error:
+            from nocturne.core.nr_engine import EngineError
+            raise EngineError(self._open_error)
+        self.opened.append(path)
+        self.models.append(_FakeModel(self._out))
+        return self.models[-1]
+
+
+def _nr_check(monkeypatch, capsys, tmp_path, engine, models=("v23.0",)):
+    import nocturne.__main__ as entry
+    from nocturne.core import nr_engine, nr_models
+    for mid in models:
+        _nnr_file(tmp_path, mid)
+    monkeypatch.setattr(nr_models, "SHIPPED_DIR", str(tmp_path))
+    monkeypatch.setattr(nr_engine, "load", lambda: engine)
+    code = entry._check_nr()
+    return code, capsys.readouterr().out
+
+
+def test_check_nr_missing_engine_is_3(monkeypatch, capsys, tmp_path):
+    code, out = _nr_check(monkeypatch, capsys, tmp_path, None)
+    assert code == 3, out
+
+
+def test_check_nr_dev_engine_is_4(monkeypatch, capsys, tmp_path):
+    """A dev engine opens models from any process. Shipping one would hand out the
+    models to anyone who copies the folder, so it fails the build outright."""
+    code, out = _nr_check(monkeypatch, capsys, tmp_path, _FakeEngine(variant="dev"))
+    assert code == 4, out
+
+
+def test_check_nr_ok_is_0(monkeypatch, capsys, tmp_path):
+    engine = _FakeEngine()
+    code, out = _nr_check(monkeypatch, capsys, tmp_path, engine)
+    assert code == 0, out
+    assert "NR ok  v23.0 Gullveig" in out
+    assert engine.opened == [str(tmp_path / "v23.0.nnr")]
+    assert all(m.closed for m in engine.models)
+
+
+def test_check_nr_closes_a_model_whose_tile_failed(monkeypatch, capsys, tmp_path):
+    engine = _FakeEngine(out=lambda t: t * float("nan"))
+    code, out = _nr_check(monkeypatch, capsys, tmp_path, engine)
+    assert code == 5, out
+    assert engine.models and all(m.closed for m in engine.models)
+
+
+def test_check_nr_an_unreadable_engine_version_is_3(monkeypatch, capsys, tmp_path):
+    code, out = _nr_check(monkeypatch, capsys, tmp_path, _FakeEngine(version_error="boom"))
+    assert code == 3, out
+    assert "UNREADABLE" in out
+
+
+def test_check_nr_a_model_the_app_would_not_list_is_5(monkeypatch, capsys, tmp_path):
+    (tmp_path / "junk.nnr").write_bytes(b"not an nnr file")
+    code, out = _nr_check(monkeypatch, capsys, tmp_path, _FakeEngine())
+    assert code == 5, out
+    assert "junk.nnr: not a model this build lists" in out
+
+
+def test_check_nr_tells_missing_from_unloadable(monkeypatch, capsys, tmp_path):
+    """A library that is there but will not load (a missing libstdc++ symbol on
+    Linux) must not send whoever reads the gate looking for a missing file."""
+    from nocturne.core import nr_engine
+    monkeypatch.setattr(nr_engine, "ENGINE_DIR", str(tmp_path))
+    code, out = _nr_check(monkeypatch, capsys, tmp_path, None)
+    assert code == 3 and "MISSING" in out and "NOT LOADABLE" not in out
+    (tmp_path / nr_engine._library_name()).write_bytes(b"\0")
+    import nocturne.__main__ as entry
+    code = entry._check_nr()
+    out = capsys.readouterr().out
+    assert code == 3 and "PRESENT BUT NOT LOADABLE" in out
+
+
+def test_check_nr_a_model_the_engine_refuses_is_5(monkeypatch, capsys, tmp_path):
+    engine = _FakeEngine(open_error="Nocturne NR runs only inside Nocturne.")
+    code, out = _nr_check(monkeypatch, capsys, tmp_path, engine)
+    assert code == 5, out
+    assert "runs only inside Nocturne" in out
+
+
+@pytest.mark.parametrize("bad", [
+    lambda t: t * float("nan"),                       # not finite
+    lambda t: t * 0.0,                                # all zero: nothing ran
+    lambda t: t[:, :, :128],                          # wrong shape
+])
+def test_check_nr_a_tile_that_comes_back_wrong_is_5(monkeypatch, capsys, tmp_path, bad):
+    """Teeth: an output that comes back is not an output that worked."""
+    code, out = _nr_check(monkeypatch, capsys, tmp_path, _FakeEngine(out=bad))
+    assert code == 5, out
+
+
+def test_check_nr_every_bundled_model_is_run(monkeypatch, capsys, tmp_path):
+    engine = _FakeEngine()
+    code, out = _nr_check(monkeypatch, capsys, tmp_path, engine, models=("v23.0", "v24.0"))
+    assert code == 0, out
+    assert len(engine.opened) == 2
+
+
+def test_check_nr_an_engine_with_no_models_is_5(monkeypatch, capsys, tmp_path):
+    """A build that requires NR and carries the engine but no model offers nothing."""
+    code, out = _nr_check(monkeypatch, capsys, tmp_path, _FakeEngine(), models=())
+    assert code == 5, out
+
+
+def test_the_nr_check_returns_before_a_window_is_created():
+    src = (ROOT / "nocturne" / "__main__.py").read_text(encoding="utf-8")
+    body = src.split("def main()")[1]
+    assert body.index('"--check-nr" in sys.argv') < body.index("QApplication(sys.argv)")

@@ -69,3 +69,44 @@ def test_the_shipped_donors_are_credited():
     assert "Matt Boylan" in page and "Alvaro Vaquero" in page
     assert "Be the first to lend your light" not in page
     assert "&quot;big rig&quot;" in page, "a donor's quotes are escaped as text"
+
+
+def test_about_shows_credit_line(monkeypatch):
+    """Each runnable NR model is credited, beside the model licence that
+    actually ships — the models are not GPL, and About must say so."""
+    from nocturne.core import nr_models
+    from nocturne.ui.about import NR_LICENCE
+    models = [nr_models.NRModel("v23.0", "Freja", "/m/freja.nnr", True, kind="nnr",
+                                credit="Trained on donated subs & more")]
+    monkeypatch.setattr(nr_models, "available", lambda: models)
+    html = about_html()
+    assert "Trained on donated subs &amp; more" in html      # escaped, not markup
+    assert NR_LICENCE.is_file()
+    # The licence itself is on the page, word for word, not just its file name:
+    # inside a macOS bundle nobody finds the file.
+    import html as _html
+    text = NR_LICENCE.read_text(encoding="utf-8").strip()
+    assert _html.escape(text) in html
+
+
+def test_about_names_the_licence_file_when_it_cannot_be_read(monkeypatch, tmp_path):
+    from nocturne.core import nr_models
+    from nocturne.ui import about
+    models = [nr_models.NRModel("v23.0", "Freja", "/m/freja.nnr", True, kind="nnr",
+                                credit="c")]
+    monkeypatch.setattr(nr_models, "available", lambda: models)
+    monkeypatch.setattr(about, "NR_LICENCE", tmp_path / "NR-MODEL-LICENCE.txt")
+    assert "NR-MODEL-LICENCE.txt" in about_html()
+
+
+def test_about_does_not_put_tray_models_under_the_model_licence(monkeypatch):
+    from nocturne.core import nr_models
+    tray = nr_models.NRModel("v9", "Dev", "/t/v9.onnx", False, credit="dev only")
+    monkeypatch.setattr(nr_models, "available", lambda: [tray])
+    assert "Nocturne NR" not in about_html()
+
+
+def test_about_has_no_nr_section_without_models(monkeypatch):
+    from nocturne.core import nr_models
+    monkeypatch.setattr(nr_models, "available", lambda: [])
+    assert "Nocturne NR" not in about_html()

@@ -179,6 +179,7 @@ def _check_tools() -> int:
         if not seeded:
             bad.append("sep")
     print(f"onnxruntime   : {nr_models.runtime_available()}")
+    print(f"nr engine     : {nr_models.engine_available()}")
     starnet = found.get("starnet_path")
     if starnet:
         from .tools.starnet import StarNet
@@ -200,6 +201,79 @@ def _check_tools() -> int:
             bad.append("starnet")
     print(f"tools         : {'OK' if not bad else 'BROKEN ' + ', '.join(bad)}")
     return 2 if bad else 0
+
+
+def _check_nr() -> int:
+    """Open every bundled .nnr model with the bundled engine and run one tile.
+
+    Exit codes, so a release that is meant to carry NR can be gated on them:
+
+        0  a release engine loaded, and every bundled model opened and ran.
+        3  no engine in this build (or it would not load).
+        4  the engine is a dev build, which opens models in any process.
+        5  a model failed to open or run, or there is no model at all.
+
+    Only the frozen app can answer this: a release engine refuses every model
+    outside Nocturne's own bundle, so from source a working build and a broken
+    one look the same. One seeded tile proves the model runs on this build's
+    onnxruntime — finite, the right shape, not all zero. Bit-exact parity with
+    the training-side model is proven in the NR engine project, not here, so
+    the public repo carries no expected outputs.
+    """
+    import numpy as np
+
+    from .core import nr_engine, nr_models
+
+    print(f"frozen        : {getattr(sys, 'frozen', False)}")
+    engine = nr_engine.load()
+    if engine is None:
+        lib = os.path.join(nr_engine.ENGINE_DIR, nr_engine._library_name())
+        state = "PRESENT BUT NOT LOADABLE" if os.path.isfile(lib) else "MISSING"
+        print(f"nr engine     : {state} ({lib})")
+        return 3
+    try:
+        version = engine.version()
+    except Exception as exc:                       # noqa: BLE001 - reporting tool
+        print(f"nr engine     : UNREADABLE {type(exc).__name__}: {exc}")
+        return 3
+    variant = version.get("variant")
+    print(f"nr engine     : {variant} {version.get('engine', '')}".rstrip())
+    if variant != "release":
+        return 4
+    try:
+        names = sorted(n for n in os.listdir(nr_models.SHIPPED_DIR) if n.endswith(".nnr"))
+    except OSError:
+        names = []
+    if not names:
+        print(f"NR FAILED  no bundled model in {nr_models.SHIPPED_DIR}")
+        return 5
+    tile = np.random.default_rng(23).uniform(0.05, 0.6, nr_engine.TILE_SHAPE).astype(np.float32)
+    bad = False
+    for name in names:
+        path = os.path.join(nr_models.SHIPPED_DIR, name)
+        model = nr_models._read_nnr(path, True)
+        if model is None:
+            print(f"NR FAILED  {name}: not a model this build lists")
+            bad = True
+            continue
+        try:
+            opened = engine.open(path)
+            try:
+                out = np.asarray(opened.run(tile))
+            finally:
+                opened.close()
+            if out.shape != nr_engine.TILE_SHAPE:
+                raise ValueError(f"output shaped {out.shape}")
+            if not np.all(np.isfinite(out)):
+                raise ValueError("output is not finite")
+            if not np.any(out):
+                raise ValueError("output is all zero")
+        except Exception as exc:                   # noqa: BLE001 - reporting tool
+            print(f"NR FAILED  {model.id} {model.name}: {exc}")
+            bad = True
+            continue
+        print(f"NR ok  {model.id} {model.name}")
+    return 5 if bad else 0
 
 
 # Height only. The WIDTH is asked of the window itself at startup — see
@@ -313,6 +387,10 @@ def main() -> None:
     # External tools as THIS build sees them, StarNet2 run for real if found.
     if "--check-tools" in sys.argv:
         raise SystemExit(_check_tools())
+
+    # The bundled NR engine and models, run for real — see _check_nr.
+    if "--check-nr" in sys.argv:
+        raise SystemExit(_check_nr())
 
     # A backgrounded stack runs as a child of this same executable, and is
     # dispatched HERE for the same reason --check-network is: the child has no

@@ -98,3 +98,156 @@ def test_every_data_file_ships():
     present = {p.name for p in (ROOT / "nocturne" / "data").iterdir()
                if p.is_file() and not p.name.startswith(".")}
     assert present - listed == set(), f"data files the bundle leaves out: {present - listed}"
+
+
+# --- Nocturne NR -------------------------------------------------------------
+
+def _nr_tree(tmp_path):
+    """A build machine after deploy has copied the engine and a model in."""
+    (tmp_path / "icons").mkdir()
+    (tmp_path / "icons" / "x.svg").write_text("<svg/>")
+    (tmp_path / "NR-MODEL-LICENCE.txt").write_text("licence")
+    eng = tmp_path / "engine"
+    eng.mkdir()
+    (eng / "libnrengine.dylib").write_bytes(b"\0")
+    (eng / "libonnxruntime.1.29.0.dylib").write_bytes(b"\0")
+    nr = tmp_path / "models" / "nr"
+    nr.mkdir(parents=True)
+    (nr / "v23.0.nnr").write_bytes(b"NNR1")
+    (nr / "notes.json").write_text("{}")
+    (nr / "old").mkdir()
+    (nr / "old" / "v22.0.onnx").write_bytes(b"plain")   # nested: the subfolder hole
+    (nr / "old" / "v22.0.json").write_text("{}")
+    (tmp_path / "stray").mkdir()
+    (tmp_path / "stray" / "edge.ONNX").write_bytes(b"plain")
+    return tmp_path
+
+
+def _spec_ns_at(assets):
+    ns = _spec_ns()
+    ns["ASSETS"] = str(assets)
+    return ns
+
+
+def test_the_nr_engine_is_not_shipped_as_data(tmp_path):
+    """As data it lands in Resources, where neither the frozen ENGINE_DIR nor
+    the engine's own inside-the-bundle check would find it."""
+    entries = _spec_ns_at(_nr_tree(tmp_path))["_assets"]()
+    assert not any("engine" in dest or "libnrengine" in src for src, dest in entries)
+
+
+def test_the_nr_engine_ships_as_binaries_side_by_side(tmp_path):
+    """The engine dlopens onnxruntime from its own folder by exact name."""
+    entries = _spec_ns_at(_nr_tree(tmp_path))["_nr_engine"]()
+    assert sorted((os.path.basename(s), d) for s, d in entries) == [
+        ("libnrengine.dylib", "nrengine"), ("libonnxruntime.1.29.0.dylib", "nrengine")]
+
+
+def test_only_encrypted_models_and_the_licence_ship(tmp_path):
+    entries = _spec_ns_at(_nr_tree(tmp_path))["_assets"]()
+    got = {(os.path.basename(s), d) for s, d in entries}
+    assert ("v23.0.nnr", "nocturne/assets/models/nr") in got
+    assert ("NR-MODEL-LICENCE.txt", "nocturne/assets") in got
+    assert not any(n == "notes.json" for n, _ in got)
+
+
+def test_no_plain_model_ships_from_anywhere_in_assets(tmp_path):
+    """A plain .onnx is exactly what the encryption exists to keep out of the
+    public download — in models/nr, a subfolder of it, or anywhere else."""
+    entries = _spec_ns_at(_nr_tree(tmp_path))["_assets"]()
+    names = [os.path.basename(s) for s, _ in entries]
+    assert not any(n.lower().endswith(".onnx") for n in names), names
+    assert "v22.0.json" not in names
+
+
+def test_a_source_build_without_nr_still_builds(tmp_path):
+    (tmp_path / "icons").mkdir()
+    (tmp_path / "icons" / "x.svg").write_text("<svg/>")
+    ns = _spec_ns_at(tmp_path)
+    assert ns["_nr_engine"]() == []
+    assert [os.path.basename(s) for s, _ in ns["_assets"]()] == ["x.svg"]
+
+
+def test_upx_stays_off():
+    """The engine hashes onnxruntime before loading it — the whole file on Linux
+    and Windows, so strip would break it as surely as UPX."""
+    src = SPEC.read_text(encoding="utf-8")
+    coll = src[src.index("coll = COLLECT("):src.index("app = ")]
+    assert "upx=False" in coll and "strip=False" in coll
+    assert "upx_exclude=[os.path.basename(src) for src, _ in _nr_engine()]" in coll
+    assert "upx=True" not in src and "strip=True" not in src
+
+
+# --- the VC++ runtime beside a Windows NR build (2026-10-28) -----------------
+
+def _vc_dirs(tmp_path, names_a, names_b=()):
+    a, b = tmp_path / "PySide6", tmp_path / "System32"
+    a.mkdir()
+    b.mkdir()
+    for n in names_a:
+        (a / n).write_bytes(b"pyside")
+    for n in names_b:
+        (b / n).write_bytes(b"system")
+    return [str(a), str(b)]
+
+
+_ALL_VC = ["msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll"]
+
+
+def test_a_windows_nr_build_carries_the_vc_runtime_beside_the_engine(tmp_path):
+    """nrengine.dll and onnxruntime.dll import all four (read from their import
+    tables, 2026-10-28). ctypes loads the engine with DLL_LOAD_DIR and the
+    engine loads onnxruntime with ALTERED_SEARCH_PATH: each searches its own
+    folder first and neither reliably searches the top of _internal. So all
+    four go into nrengine/; the build VM has the runtime system-wide, so
+    --check-nr there cannot tell. The msvcp140s also stay at the top, where
+    PyInstaller otherwise leaves them only under PySide6 (v0.56.0)."""
+    ns = _spec_ns()
+    dirs = _vc_dirs(tmp_path, _ALL_VC, ["msvcp140_1.dll"])
+    got = ns["_vc_runtime"]([("x/nrengine.dll", "nrengine")], True, dirs)
+    a = dirs[0]
+    assert got == [(os.path.join(a, "msvcp140.dll"), "nrengine"),
+                   (os.path.join(a, "msvcp140.dll"), "."),
+                   (os.path.join(a, "msvcp140_1.dll"), "nrengine"),
+                   (os.path.join(a, "msvcp140_1.dll"), "."),
+                   (os.path.join(a, "vcruntime140.dll"), "nrengine"),
+                   (os.path.join(a, "vcruntime140_1.dll"), "nrengine")]
+
+
+def test_the_vc_runtime_falls_back_to_the_next_directory(tmp_path):
+    ns = _spec_ns()
+    dirs = _vc_dirs(tmp_path, ["msvcp140.dll", "vcruntime140.dll"],
+                    ["msvcp140_1.dll", "vcruntime140_1.dll"])
+    got = ns["_vc_runtime"]([("x/nrengine.dll", "nrengine")], True, dirs)
+    assert [(os.path.basename(os.path.dirname(src)), os.path.basename(src), dest)
+            for src, dest in got if dest == "nrengine"] == [
+        (os.path.basename(dirs[0]), "msvcp140.dll", "nrengine"),
+        (os.path.basename(dirs[1]), "msvcp140_1.dll", "nrengine"),
+        (os.path.basename(dirs[0]), "vcruntime140.dll", "nrengine"),
+        (os.path.basename(dirs[1]), "vcruntime140_1.dll", "nrengine")]
+
+
+def test_the_vc_runtime_is_only_added_for_a_windows_nr_build(tmp_path):
+    ns = _spec_ns()
+    dirs = _vc_dirs(tmp_path, ["msvcp140.dll", "msvcp140_1.dll"])
+    assert ns["_vc_runtime"]([], True, dirs) == []
+    assert ns["_vc_runtime"]([("x/libnrengine.so", "nrengine")], False, dirs) == []
+
+
+def test_the_spec_feeds_the_vc_runtime_into_the_binaries():
+    src = SPEC.read_text(encoding="utf-8")
+    assert "binaries += _vc_runtime(binaries, _WIN_BUILD," in src
+
+
+def test_the_windows_build_refuses_an_nr_build_without_the_vc_runtime():
+    """The gate that holds the line: only the four runtime DLLs beside the
+    engine in _internal\\nrengine prove a machine without the VC++
+    redistributable can load NR."""
+    ps1 = (ROOT / "packaging" / "build_windows.ps1").read_text(encoding="utf-8")
+    block = ps1[ps1.index('if ($env:NOCTURNE_REQUIRE_NR -eq "1")'):ps1.index("# The installer, only after")]
+    loop = block[block.index("foreach ($dll in"):block.index("}\n    }\n")]
+    for dll in ("msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll"):
+        assert f'"{dll}"' in loop, dll
+    assert "dist\\Nocturne\\_internal\\nrengine\\$dll" in loop
+    # the cheap file check first, so a missing DLL names itself
+    assert block.index("foreach ($dll in") < block.index('Invoke-Selftest $Exe "--check-nr"')
