@@ -149,6 +149,18 @@ if ($tools.Code -ne 0) {
     Fail "the build's tool check failed (exit $($tools.Code)) -- see above"
 }
 
+# Nocturne NR, only for a release that is meant to carry it (the deploy sets
+# NOCTURNE_REQUIRE_NR=1 after copying the engine and models in). A source build
+# has neither, and must still build. 3 = no engine, 4 = dev engine, 5 = a model
+# would not open or run.
+if ($env:NOCTURNE_REQUIRE_NR -eq "1") {
+    $nr = Invoke-Selftest $Exe "--check-nr"
+    $nr.Output | ForEach-Object { Write-Output "  nr       $_" }
+    if ($nr.Code -ne 0) {
+        Fail "the build's Nocturne NR engine or models do not work (exit $($nr.Code)) -- see above"
+    }
+}
+
 # The installer, only after every gate above has passed.
 if (-not $Iscc) {
     $Iscc = @(

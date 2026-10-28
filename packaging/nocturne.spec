@@ -61,10 +61,15 @@ def _assets():
     while an unnoticed 150 MB one just makes the download slower.
     """
     out = []
-    for root, _dirs, files in os.walk(ASSETS):
+    nr_models = os.path.join(ASSETS, "models", "nr")   # gitignored; deploy fills it
+    for root, dirs, files in os.walk(ASSETS):
+        if root == ASSETS and "engine" in dirs:
+            dirs.remove("engine")            # binaries, not data: see _nr_engine()
         for name in files:
             if name.startswith("."):
                 continue
+            if root == nr_models and not name.endswith(".nnr"):
+                continue                     # only the encrypted models ship
             full = os.path.join(root, name)
             rel = os.path.relpath(root, ASSETS)
             dest = "nocturne/assets" if rel == "." else f"nocturne/assets/{rel}"
@@ -72,8 +77,26 @@ def _assets():
     return _prune(out)
 
 
-datas = _assets()                                # icons/svg/splash/fonts/our model
-binaries = []
+def _nr_engine():
+    """The NR engine and its onnxruntime, as BINARIES into nrengine/.
+
+    That is sys._MEIPASS/nrengine, where nr_engine.ENGINE_DIR looks when frozen
+    (Contents/Frameworks/nrengine on macOS). The engine dlopens onnxruntime from
+    its own folder by exact file name, so the two must land side by side; and a
+    release engine opens models only when it sits inside the bundle. Copied as
+    data they would go to Resources instead, which is neither. Absent on a
+    source builder's machine — the folder is gitignored and filled by deploy —
+    and then the build simply carries no NR.
+    """
+    engine = os.path.join(ASSETS, "engine")           # gitignored; deploy fills it
+    if not os.path.isdir(engine):
+        return []
+    return [(os.path.join(engine, n), "nrengine") for n in sorted(os.listdir(engine))
+            if not n.startswith(".") and os.path.isfile(os.path.join(engine, n))]
+
+
+datas = _assets()                                # icons/svg/splash/fonts/NR models
+binaries = _nr_engine()
 hiddenimports = ["PySide6.QtSvg"]                # SVG icon rendering
 
 # certifi's cacert.pem must travel with the app. Without it the bundle falls
@@ -169,7 +192,10 @@ exe = EXE(pyz, a.scripts, [], exclude_binaries=True, name="Nocturne",
           # nocturne/ui/open_requests.py now handles, at launch AND while running.
           argv_emulation=False,
           **(_windows_exe_kwargs() if _WIN else {}))
-coll = COLLECT(exe, a.binaries, a.datas, name="Nocturne")
+# upx=False is PyInstaller's default, written out because it must stay so: the
+# NR engine checks onnxruntime's code section by hash before loading it, and a
+# packed library would no longer match.
+coll = COLLECT(exe, a.binaries, a.datas, name="Nocturne", upx=False)
 app = _MAC and BUNDLE(
     coll,
     name="Nocturne.app",

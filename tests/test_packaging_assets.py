@@ -98,3 +98,64 @@ def test_every_data_file_ships():
     present = {p.name for p in (ROOT / "nocturne" / "data").iterdir()
                if p.is_file() and not p.name.startswith(".")}
     assert present - listed == set(), f"data files the bundle leaves out: {present - listed}"
+
+
+# --- Nocturne NR -------------------------------------------------------------
+
+def _nr_tree(tmp_path):
+    """A build machine after deploy has copied the engine and a model in."""
+    (tmp_path / "icons").mkdir()
+    (tmp_path / "icons" / "x.svg").write_text("<svg/>")
+    (tmp_path / "NR-MODEL-LICENCE.txt").write_text("licence")
+    eng = tmp_path / "engine"
+    eng.mkdir()
+    (eng / "libnrengine.dylib").write_bytes(b"\0")
+    (eng / "libonnxruntime.1.29.0.dylib").write_bytes(b"\0")
+    nr = tmp_path / "models" / "nr"
+    nr.mkdir(parents=True)
+    (nr / "v23.0.nnr").write_bytes(b"NNR1")
+    (nr / "notes.json").write_text("{}")
+    return tmp_path
+
+
+def _spec_ns_at(assets):
+    ns = _spec_ns()
+    ns["ASSETS"] = str(assets)
+    return ns
+
+
+def test_the_nr_engine_is_not_shipped_as_data(tmp_path):
+    """As data it lands in Resources, where neither the frozen ENGINE_DIR nor
+    the engine's own inside-the-bundle check would find it."""
+    entries = _spec_ns_at(_nr_tree(tmp_path))["_assets"]()
+    assert not any("engine" in dest or "libnrengine" in src for src, dest in entries)
+
+
+def test_the_nr_engine_ships_as_binaries_side_by_side(tmp_path):
+    """The engine dlopens onnxruntime from its own folder by exact name."""
+    entries = _spec_ns_at(_nr_tree(tmp_path))["_nr_engine"]()
+    assert sorted((os.path.basename(s), d) for s, d in entries) == [
+        ("libnrengine.dylib", "nrengine"), ("libonnxruntime.1.29.0.dylib", "nrengine")]
+
+
+def test_only_encrypted_models_and_the_licence_ship(tmp_path):
+    entries = _spec_ns_at(_nr_tree(tmp_path))["_assets"]()
+    got = {(os.path.basename(s), d) for s, d in entries}
+    assert ("v23.0.nnr", "nocturne/assets/models/nr") in got
+    assert ("NR-MODEL-LICENCE.txt", "nocturne/assets") in got
+    assert not any(n == "notes.json" for n, _ in got)
+
+
+def test_a_source_build_without_nr_still_builds(tmp_path):
+    (tmp_path / "icons").mkdir()
+    (tmp_path / "icons" / "x.svg").write_text("<svg/>")
+    ns = _spec_ns_at(tmp_path)
+    assert ns["_nr_engine"]() == []
+    assert [os.path.basename(s) for s, _ in ns["_assets"]()] == ["x.svg"]
+
+
+def test_upx_stays_off():
+    """The engine hashes onnxruntime's code section before loading it."""
+    src = SPEC.read_text(encoding="utf-8")
+    assert re.search(r"^coll = COLLECT\(.*upx=False", src, re.M)
+    assert "upx=True" not in src
