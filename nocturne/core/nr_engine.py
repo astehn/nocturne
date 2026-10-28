@@ -131,6 +131,7 @@ class Engine:
 
 _UNSET = object()
 _cached = _UNSET
+_error = ""               # why the cached None is None, when the library was there
 _cache_lock = threading.Lock()
 
 
@@ -142,6 +143,16 @@ def load() -> Engine | None:
             return _cached
         _cached = _load_uncached()
         return _cached
+
+
+def load_error() -> str:
+    """Why a present engine would not load ("" when it loaded or is absent).
+
+    The user must not read "not installed" when the file is right there and
+    something else stopped it — on Windows, a missing VC++ runtime.
+    """
+    load()
+    return _error if _cached is None else ""
 
 
 def usable() -> bool:
@@ -164,6 +175,8 @@ def usable() -> bool:
 
 
 def _load_uncached() -> Engine | None:
+    global _error
+    _error = ""
     path = os.path.join(ENGINE_DIR, _library_name())
     if not os.path.isfile(path):
         return None
@@ -173,4 +186,5 @@ def _load_uncached() -> Engine | None:
         return Engine(ctypes.CDLL(path))
     except Exception as exc:  # OSError, AttributeError on a missing symbol
         _log.warning("NR engine present but not loadable: %s", exc)
+        _error = str(exc) or type(exc).__name__
         return None

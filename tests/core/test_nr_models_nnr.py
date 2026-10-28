@@ -291,3 +291,48 @@ def test_denoise_never_opens_a_model_on_an_unusable_engine(shipped, monkeypatch)
     with pytest.raises(FileNotFoundError, match="^Nocturne NR v23.0 is not installed$"):
         nr_models.denoise(_img(), 0.75, m)
     assert engine.opened == []
+
+
+@pytest.fixture
+def broken_engine(tmp_path, monkeypatch):
+    """The engine file is there but will not load — on Windows, what a missing
+    VC++ runtime looks like. Goes through the real load(), not a fake."""
+    d = tmp_path / "engine"
+    d.mkdir()
+    (d / nr_engine._library_name()).write_bytes(b"not a library")
+    monkeypatch.setattr(nr_engine, "ENGINE_DIR", str(d))
+    monkeypatch.setattr(nr_engine, "_cached", nr_engine._UNSET)
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    yield
+    monkeypatch.setattr(nr_engine, "_cached", nr_engine._UNSET)
+
+
+def test_a_present_engine_that_will_not_load_says_so(shipped, broken_engine):
+    """Not "not installed": the model is right there, and that sentence would
+    send the user to reinstall a model rather than to the real cause."""
+    from nocturne.recipe import _nr_plan
+    from nocturne.steps.noise_sharpen import NoiseSharpenStep
+    _nnr(shipped / "freja.nnr", GOOD)
+    reason = nr_engine.load_error()
+    assert reason
+    want = f"Nocturne NR could not start: {reason}"
+    assert nr_models.unavailable("v23.0") == want
+    assert _nr_plan("Noise Reduction", "nr:v23.0").reason == want
+    with pytest.raises(FileNotFoundError) as exc:
+        NoiseSharpenStep().apply(_img(), _option("nr:v23.0"))
+    assert str(exc.value) == want
+
+
+def test_a_broken_engine_without_its_model_is_still_not_installed(shipped, broken_engine):
+    """The engine's failure is not this model's story when the model is not here."""
+    assert nr_engine.load_error()
+    assert nr_models.unavailable("v23.0") == nr_models.not_installed("v23.0")
+
+
+def test_an_absent_engine_has_no_load_error(shipped, tmp_path, monkeypatch):
+    _nnr(shipped / "freja.nnr", GOOD)
+    monkeypatch.setattr(nr_engine, "ENGINE_DIR", str(tmp_path / "absent"))
+    monkeypatch.setattr(nr_engine, "_cached", nr_engine._UNSET)
+    assert nr_engine.load_error() == ""
+    assert nr_models.unavailable("v23.0") == nr_models.not_installed("v23.0")
+    monkeypatch.setattr(nr_engine, "_cached", nr_engine._UNSET)

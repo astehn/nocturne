@@ -147,7 +147,7 @@ class NoiseSharpenStep(Step):
             # No fallback: this engine asks about ONE model, and quietly running
             # NoiseXTerminator instead would answer a different question.
             if model is None:
-                raise FileNotFoundError(nr_models.not_installed(model_id))
+                raise FileNotFoundError(nr_models.unavailable(model_id))
             result = nr_models.denoise(img, _NR_LEVELS[level], model)
             self.last_engine = nr_models.LOG_PREFIX + model_id
             return result

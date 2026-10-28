@@ -4520,8 +4520,9 @@ class MainWindow(QMainWindow):
         engine = committed.get("engine") if isinstance(committed, dict) else None
         if (isinstance(engine, str) and engine.startswith(nr_models.PREFIX)
                 and engine not in installed.values()):
-            return (f"Nocturne NR — {engine[len(nr_models.PREFIX):]} (not installed)",
-                    engine)
+            mid = engine[len(nr_models.PREFIX):]
+            state = "could not start" if nr_models.start_failure(mid) else "not installed"
+            return (f"Nocturne NR — {mid} ({state})", engine)
         return None
 
     def _denoise_engine_label(self, stage_id: str, choices, nr_engines=None) -> str | None:

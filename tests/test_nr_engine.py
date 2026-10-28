@@ -84,3 +84,13 @@ def test_run_accepts_non_contiguous_float32():
     t = np.zeros((1, 3, 256, 512), np.float32)[..., ::2]
     assert not t.flags.c_contiguous
     assert m.run(t).shape == (1, 3, 256, 256) and lib.calls == 1
+
+
+def test_load_error_names_the_cause_only_for_a_present_engine(tmp_path, monkeypatch):
+    monkeypatch.setattr(nr_engine, "ENGINE_DIR", str(tmp_path / "absent"))
+    assert nr_engine.load_error() == ""
+    monkeypatch.setattr(nr_engine, "_cached", nr_engine._UNSET)
+    (tmp_path / nr_engine._library_name()).write_bytes(b"not a library")
+    monkeypatch.setattr(nr_engine, "ENGINE_DIR", str(tmp_path))
+    assert nr_engine.load() is None
+    assert nr_engine.load_error()

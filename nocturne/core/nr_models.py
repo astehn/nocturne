@@ -30,8 +30,9 @@ from .image import AstroImage
 from .tasks import current as _current_token
 from .tasks import report_progress
 
-# Models that ship inside the app (none yet; the folder need not exist). They
-# win over a tray model with the same id, so a release never runs a stale copy.
+# Models that ship inside the app (the folder need not exist in a source
+# checkout). They win over a tray model with the same id, so a release never
+# runs a stale copy.
 _REAL_SHIPPED_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                  "assets", "models", "nr")
 SHIPPED_DIR = _REAL_SHIPPED_DIR
@@ -210,6 +211,22 @@ def not_installed(model_id: str) -> str:
     return f"Nocturne NR {model_id} is not installed"
 
 
+def start_failure(model_id: str) -> str:
+    """The engine's own reason when this id's .nnr is here but the engine would
+    not load, else "". Saying "not installed" then sends the user looking for
+    a model that is right there."""
+    reason = nr_engine.load_error()
+    if reason and any(m.kind == "nnr" and m.id == model_id for m in _candidates()):
+        return reason
+    return ""
+
+
+def unavailable(model_id: str) -> str:
+    """Why a model with this id cannot run, in the user's words."""
+    reason = start_failure(model_id)
+    return f"Nocturne NR could not start: {reason}" if reason else not_installed(model_id)
+
+
 _SESSIONS: dict = {}
 _SESSIONS_LOCK = threading.Lock()
 
@@ -253,7 +270,7 @@ def _session(model: NRModel):
     if model.kind == "nnr":
         engine = nr_engine.load() if nr_engine.usable() else None
         if engine is None:
-            raise FileNotFoundError(not_installed(model.id))
+            raise FileNotFoundError(unavailable(model.id))
         # An EngineError here carries the engine's own sentence; it goes up as is.
         return _cached(model.path, engine.open)
     if not runtime_available():
