@@ -794,7 +794,7 @@ _TOPIC_LIST = (
        "<p>Pick <b>light</b>, <b>medium</b> or <b>strong</b> and Apply. Medium is "
        "the default and is where most images want to sit.</p>"
        "<p>Nocturne NR is chosen in the <b>Engine</b> box, under the name of its "
-       "model — for example <i>Nocturne NR — Gullveig</i>. It was trained on "
+       "model — for example <i>Nocturne NR — Jord</i>. It was trained on "
        "stretched images, so it runs here, after Stretch, and nowhere earlier. Its "
        "models are licensed for use inside Nocturne only; <b>About</b> has the "
        "terms.</p>"

@@ -1576,18 +1576,18 @@ def test_auto_enhance_help_says_denoise_never_uses_graxpert(monkeypatch):
                                           ("graxpert", "rcastro")):
         s = Settings(graxpert_path=gx, rcastro_path=rc, denoise_engine=pref)
         assert _auto_denoise_engine(s) != "graxpert"
-    # Nocturne NR ships with the app (Gullveig, 2026-10-28), so the help names it
+    # Nocturne NR ships with the app (Jord, from 2026-10-29), so the help names it
     # in the order _auto_denoise_engine actually picks, checked below.
     assert ("The engine is NoiseXTerminator when RC-Astro is set up and is the "
             "<b>Preferred denoise engine</b> in Settings, otherwise <b>Nocturne NR</b>") in b
     assert ("it is NoiseXTerminator if RC-Astro is set up, else "
             "Nocturne\u2019s own built-in denoise") in b
-    shipped = nr_models.NRModel("v23.0", "Gullveig", "/x/v23.0.nnr", True, kind="nnr")
+    shipped = nr_models.NRModel("v23.1", "Jord", "/x/v23.1.nnr", True, kind="nnr")
     monkeypatch.setattr(nr_models, "available", lambda: [shipped])
     assert _auto_denoise_engine(Settings(rcastro_path=_RUNNABLE)) == "rcastro"
     assert _auto_denoise_engine(Settings(rcastro_path=_RUNNABLE,
-                                         denoise_engine="graxpert")) == "nr:v23.0"
-    assert _auto_denoise_engine(Settings()) == "nr:v23.0"
+                                         denoise_engine="graxpert")) == "nr:v23.1"
+    assert _auto_denoise_engine(Settings()) == "nr:v23.1"
     monkeypatch.setattr(nr_models, "available", lambda: [])
     assert _auto_denoise_engine(Settings(rcastro_path=_RUNNABLE)) == "rcastro"
     assert _auto_denoise_engine(Settings()) == "free"
@@ -1606,7 +1606,7 @@ def test_noise_reduction_help_names_nocturne_nr_as_an_engine():
     assert "Three engines" not in b and "Four engines can do it" in b
     assert "<b>Nocturne NR</b>, which comes with Nocturne" in b
     label = next(iter(nr_engine_choices(
-        [nr_models.NRModel("v23.0", "Gullveig", "/x/v23.0.nnr", True, kind="nnr")])))
+        [nr_models.NRModel("v23.1", "Jord", "/x/v23.1.nnr", True, kind="nnr")])))
     assert f"<i>{label}</i>" in b
     assert "runs here, after Stretch" in b
     assert "<b>About</b> has the terms" in b
