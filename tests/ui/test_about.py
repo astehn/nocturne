@@ -120,4 +120,4 @@ def test_the_model_licence_forbids_training_on_results_and_frees_the_pictures():
     text = NR_LICENCE.read_text(encoding="utf-8")
     assert ("You may not use images processed with the models to train, fine-tune or test "
             "any other noise-reduction or machine-learning model") in text
-    assert "The pictures you make with them are yours to keep, share and sell." in text
+    assert "Apart from that, the pictures you make with them are yours to keep, share and sell." in text

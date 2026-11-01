@@ -67,7 +67,8 @@ def _nr_section() -> str:
     return (
         "<h3>✦ Nocturne NR</h3>"
         "<p>The noise-reduction models are not covered by the GPL: they are "
-        "licensed for use inside Nocturne only, under the Nocturne NR model "
+        "licensed only for use inside Nocturne and the Nocturne NR plugin for "
+        "Photoshop, under the Nocturne NR model "
         "licence:</p>"
         + terms
         + (f"<ul>{rows}</ul>" if rows else "")
