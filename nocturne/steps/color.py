@@ -134,6 +134,16 @@ class ColorStep(Step):
         gr, gg, gb = spcc.gains
         self.last_message = (f"Photometric colour — {spcc.n_matched} stars matched · "
                              f"gains R {gr:.2f} · G {gg:.2f} · B {gb:.2f}")
+        # Two sources now, so say which one answered: otherwise nobody can tell
+        # whether our own copy is being used. getattr, because a fake or an
+        # older caller may hand back a plain list.
+        source = getattr(gaia, "source", None)
+        if source:
+            self.last_message += f" · from {source}"
+            failure = getattr(gaia, "mirror_failure", None)
+            if failure:
+                from ..tools.gaia import MIRROR_LABEL
+                self.last_message += f" ({MIRROR_LABEL} didn't answer: {failure})"
         return apply_gains(img, spcc.gains)
 
 
