@@ -170,6 +170,20 @@ _CAPTURE_CARDS = (("exposure", "EXPTIME"), ("gain", "GAIN"), ("target", "OBJECT"
                   ("creator", "CREATOR"), ("filter", "FILTER"), ("trimmed", "TRIMMED"))
 
 
+def _card_value(value):
+    """A value astropy will write, or None. It refuses anything but printable
+    ASCII, which failed the whole export: "Ångström" -> "Angstrom", a line
+    break -> a space; NaN and inf write no card."""
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, str):
+        value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+        value = " ".join("".join(c if c.isprintable() else " " for c in value).split())
+    if value is None or value == "" or (isinstance(value, float) and not math.isfinite(value)):
+        return None
+    return value
+
+
 def capture_cards(meta: dict) -> dict:
     """The capture's own header, for a FITS export.
 
@@ -183,19 +197,11 @@ def capture_cards(meta: dict) -> dict:
     source = meta.get("source_cards") or {}   # absent in projects saved before 2026-11-01
     cards = {}
     for key, card in _CAPTURE_CARDS:
-        value = meta.get(key)
-        if isinstance(value, np.generic):
-            value = value.item()
-        if isinstance(value, str):
-            # astropy refuses anything but printable ASCII, which failed the
-            # whole export: "Ångström" -> "Angstrom", a line break -> a space.
-            value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
-            value = " ".join("".join(c if c.isprintable() else " " for c in value).split())
-        if value is None or value == "" or (isinstance(value, float) and not math.isfinite(value)):
-            continue
-        cards[source.get(key, card)] = value
-    ra, dec = meta.get("ra"), meta.get("dec")
-    if ra not in (None, "") and dec not in (None, ""):
+        value = _card_value(meta.get(key))
+        if value is not None:
+            cards[source.get(key, card)] = value
+    ra, dec = _card_value(meta.get("ra")), _card_value(meta.get("dec"))
+    if ra is not None and dec is not None:
         sexagesimal = isinstance(ra, str)
         cards[source.get("ra", "OBJCTRA" if sexagesimal else "RA")] = ra
         cards[source.get("dec", "OBJCTDEC" if sexagesimal else "DEC")] = dec

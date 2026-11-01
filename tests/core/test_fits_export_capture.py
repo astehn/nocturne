@@ -109,3 +109,8 @@ def test_trimmed_round_trips(tmp_path):
     before = load_fits(str(_master(tmp_path, {"STACKCNT": 3, "TRIMMED": True}, "t.fits"))).metadata
     after = load_fits(str(_export(tmp_path, before))).metadata
     assert after["trimmed"] == before["trimmed"]
+
+
+def test_pointing_is_cleaned_like_the_other_cards():
+    assert capture_cards({"ra": "20h59m ", "dec": "+44°18'"}) == {"OBJCTRA": "20h59m", "OBJCTDEC": "+4418'"}
+    assert capture_cards({"ra": float("inf"), "dec": 44.3}) == {}
