@@ -6738,6 +6738,34 @@ def test_an_exported_fits_still_knows_its_camera(qtbot, tmp_path, monkeypatch):
     assert float(back["focal_length"]) == 260.0 and float(back["pixel_size"]) == 2.9
 
 
+def test_an_exported_fits_keeps_its_capture_details(qtbot, tmp_path, monkeypatch):
+    """His cropped 947-frame mosaic exported with 11 of 36 cards (2026-11-01):
+    the reopened export must still say how many frames, how long, when and what."""
+    from nocturne.core.fits_io import load_fits
+    from nocturne.ui import file_dialogs
+    p = tmp_path / "master.fits"
+    hdu = fits.PrimaryHDU((np.random.rand(3, 24, 24) * 1000).astype(np.uint16))
+    for k, v in {"STACKCNT": 947, "EXPTIME": 9470.0, "OBJECT": "NGC 7000", "FILTER": "LP",
+                 "DATE-OBS": "2026-10-17T21:18:07", "DATE-END": "2026-10-18T00:01:12",
+                 "GAIN": 80, "RA": 314.75, "DEC": 44.3, "CREATOR": "ZWO Seestar S30 Pro",
+                 "CRPIX1": 12.0, "CD1_1": -0.0002}.items():
+        hdu.header[k] = v
+    hdu.writeto(str(p))
+    win = _window(qtbot, tmp_path)
+    win.open_fits(str(p))
+    out = tmp_path / "out.fits"
+    monkeypatch.setattr(file_dialogs, "save_file", lambda *a: (str(out), ""))
+    monkeypatch.setattr(win, "_run_busy",
+                        lambda work, on_result, label, err_prefix, **k: on_result(work()))
+    win.export_final("FITS")
+    h = fits.getheader(str(out))
+    assert (h["STACKCNT"], h["EXPTIME"], h["OBJECT"], h["FILTER"]) == (947, 9470.0, "NGC 7000", "LP")
+    assert (h["DATE-OBS"], h["DATE-END"], h["GAIN"]) == ("2026-10-17T21:18:07", "2026-10-18T00:01:12", 80)
+    assert (h["RA"], h["DEC"]) == (314.75, 44.3)
+    assert "CRPIX1" not in h and "CD1_1" not in h      # an unsolved export carries no stale solve
+    assert load_fits(str(out)).metadata["frames"] == 947
+
+
 def test_a_solved_export_carries_both_the_wcs_and_the_camera(qtbot, tmp_path, monkeypatch):
     """The two halves of the header merge: the solve's WCS AND the camera
     cards (review 2026-09-29: the solved path was untested)."""

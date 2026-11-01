@@ -159,6 +159,39 @@ def camera_cards(meta: dict) -> dict:
     return cards
 
 
+# metadata key -> the card it was read from (fits_io._parse_metadata), written back
+# under the same name so a reopened export reads exactly as the original did:
+# EXPTIME stays "total" or "per sub" because STACKCNT and LIVETIME come with it.
+_CAPTURE_CARDS = (("exposure", "EXPTIME"), ("gain", "GAIN"), ("target", "OBJECT"),
+                  ("frames", "STACKCNT"), ("temp", "CCD-TEMP"), ("date", "DATE-OBS"),
+                  ("date_end", "DATE-END"), ("livetime", "LIVETIME"),
+                  ("creator", "CREATOR"), ("filter", "FILTER"), ("trimmed", "TRIMMED"))
+
+
+def capture_cards(meta: dict) -> dict:
+    """The capture's own header, for a FITS export.
+
+    An export wrote only the camera cards, so his cropped 947-frame mosaic
+    reopened without its frame count, exposure, dates, object or pointing
+    (2026-11-01). The source's plate solve (CRPIX, CD…) is NOT carried: after a
+    crop or rotation it describes another patch of sky, so only a solve made on
+    the exported image is written (main_window adds it). The pointing stays as
+    a hint, under its original card names.
+    """
+    cards = {}
+    for key, card in _CAPTURE_CARDS:
+        value = meta.get(key)
+        if value is None or value == "" or (isinstance(value, float) and value != value):
+            continue
+        cards[card] = value.item() if isinstance(value, np.generic) else value
+    ra, dec = meta.get("ra"), meta.get("dec")
+    if ra not in (None, "") and dec not in (None, ""):
+        sexagesimal = isinstance(ra, str)
+        cards["OBJCTRA" if sexagesimal else "RA"] = ra
+        cards["OBJCTDEC" if sexagesimal else "DEC"] = dec
+    return cards
+
+
 _PARTIAL_PREFIX = ".nocturne-partial-"
 # Older than this, a partial master is a leftover: a stack killed during its
 # write (Cancel is a SIGTERM / taskkill /F, so no cleanup runs). A write still
