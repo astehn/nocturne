@@ -141,11 +141,17 @@ def _parse_metadata(header, height: int, width: int) -> dict:
         # (stacker.master_header). The provenance report says it.
         "trimmed": ("TRIMMED",),
     }
+    cards: dict = {}
     for key, candidates in mapping.items():
         for card in candidates:
             if card in header:
                 meta[key] = header[card]
+                cards[key] = card
                 break
+    # Which card each value came from, so a FITS export writes it back under the
+    # same name: DATE (file written) must not come back as DATE-OBS (captured),
+    # nor NCOMBINE as STACKCNT, which marks a master (export.capture_cards).
+    meta["source_cards"] = cards
     solve = solve_cards_from_header(header)
     if solve:
         meta["solve_cards"] = solve

@@ -32,7 +32,7 @@ from ..core.crop import (
 )
 from ..core.enhance import (ENHANCE_OPS, sharpen_nebulosity_layers,
                             star_colour_layers)
-from ..core.export import camera_cards, decimate_for_preview, jpeg_bytes, save_fits, save_png, save_tiff, _to_uint
+from ..core.export import camera_cards, capture_cards, decimate_for_preview, jpeg_bytes, save_fits, save_png, save_tiff, _to_uint
 # The start page thumbnail saved inside a project: twice the card it is
 # drawn in (welcome.py), so it stays sharp on a Retina screen.
 PREVIEW_EDGE = 480
@@ -8120,7 +8120,8 @@ class MainWindow(QMainWindow):
             if not path.lower().endswith((".fits", ".fit")):
                 path += ".fits"
             name = os.path.basename(path)
-            header = camera_cards(img.metadata)
+            header = capture_cards(img.metadata)
+            header.update(camera_cards(img.metadata))
             if solved:
                 header.update(self._solve[1].wcs.to_header())
             save = lambda img, path: save_fits(img, path, header=header or None)
