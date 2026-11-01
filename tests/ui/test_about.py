@@ -110,3 +110,14 @@ def test_about_has_no_nr_section_without_models(monkeypatch):
     from nocturne.core import nr_models
     monkeypatch.setattr(nr_models, "available", lambda: [])
     assert "Nocturne NR" not in about_html()
+
+
+def test_the_model_licence_forbids_training_on_results_and_frees_the_pictures():
+    """His ask 2026-11-01, as NXT's licence does: NR results may not train or
+    test another model. Said with its counterpart, so nobody reads it as a
+    claim on their own pictures."""
+    from nocturne.ui.about import NR_LICENCE
+    text = NR_LICENCE.read_text(encoding="utf-8")
+    assert ("You may not use images processed with the models to train, fine-tune or test "
+            "any other noise-reduction or machine-learning model") in text
+    assert "The pictures you make with them are yours to keep, share and sell." in text
