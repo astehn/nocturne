@@ -76,3 +76,36 @@ def test_sexagesimal_pointing_keeps_its_card_names(tmp_path):
 def test_missing_or_empty_values_write_no_card():
     assert capture_cards({}) == {}
     assert capture_cards({"target": "", "gain": None, "temp": float("nan")}) == {}
+
+
+def test_a_name_with_non_ascii_letters_still_exports(tmp_path):
+    # astropy refuses non-ASCII header text: the export failed outright.
+    meta = {"target": "Ångström Nebula", "filter": "Hα\nline"}
+    cards = capture_cards(meta)
+    assert cards["OBJECT"] == "Angstrom Nebula" and cards["FILTER"] == "H line"
+    img = load_fits(str(_master(tmp_path, {}, "pixels.fits")))
+    save_fits(img, str(tmp_path / "out.fits"), header=cards)
+
+
+def test_infinite_numbers_write_no_card():
+    assert capture_cards({"exposure": float("inf"), "temp": float("-inf")}) == {}
+
+
+def test_a_file_date_is_not_promoted_to_a_capture_date(tmp_path):
+    # DATE is when the FILE was written; the loader falls back to it.
+    meta = load_fits(str(_master(tmp_path, {"DATE": "2026-11-01T12:00:00"}, "d.fits"))).metadata
+    cards = capture_cards(meta)
+    assert cards.get("DATE") == "2026-11-01T12:00:00" and "DATE-OBS" not in cards
+
+
+def test_a_combine_count_does_not_turn_a_file_into_a_master(tmp_path):
+    # STACKCNT is what is_stacked_master reads: written for a file that only
+    # had NCOMBINE, a reopened 2D sub would be taken for a master.
+    src = _master(tmp_path, {"NCOMBINE": 5}, "n.fits")
+    assert capture_cards(load_fits(str(src)).metadata) == {"NCOMBINE": 5}
+
+
+def test_trimmed_round_trips(tmp_path):
+    before = load_fits(str(_master(tmp_path, {"STACKCNT": 3, "TRIMMED": True}, "t.fits"))).metadata
+    after = load_fits(str(_export(tmp_path, before))).metadata
+    assert after["trimmed"] == before["trimmed"]

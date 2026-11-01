@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 import os
+import unicodedata
 
 import numpy as np
 import tifffile
@@ -178,17 +180,25 @@ def capture_cards(meta: dict) -> dict:
     the exported image is written (main_window adds it). The pointing stays as
     a hint, under its original card names.
     """
+    source = meta.get("source_cards") or {}   # absent in projects saved before 2026-11-01
     cards = {}
     for key, card in _CAPTURE_CARDS:
         value = meta.get(key)
-        if value is None or value == "" or (isinstance(value, float) and value != value):
+        if isinstance(value, np.generic):
+            value = value.item()
+        if isinstance(value, str):
+            # astropy refuses anything but printable ASCII, which failed the
+            # whole export: "Ångström" -> "Angstrom", a line break -> a space.
+            value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode()
+            value = " ".join("".join(c if c.isprintable() else " " for c in value).split())
+        if value is None or value == "" or (isinstance(value, float) and not math.isfinite(value)):
             continue
-        cards[card] = value.item() if isinstance(value, np.generic) else value
+        cards[source.get(key, card)] = value
     ra, dec = meta.get("ra"), meta.get("dec")
     if ra not in (None, "") and dec not in (None, ""):
         sexagesimal = isinstance(ra, str)
-        cards["OBJCTRA" if sexagesimal else "RA"] = ra
-        cards["OBJCTDEC" if sexagesimal else "DEC"] = dec
+        cards[source.get("ra", "OBJCTRA" if sexagesimal else "RA")] = ra
+        cards[source.get("dec", "OBJCTDEC" if sexagesimal else "DEC")] = dec
     return cards
 
 
