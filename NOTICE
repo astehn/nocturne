@@ -16,5 +16,14 @@ Nebula catalogues added to the OpenNGC data, each via VizieR (CDS):
 This research has made use of the VizieR catalogue access tool, CDS,
 Strasbourg, France (DOI: 10.26093/cds/vizier).
 
-Gaia DR3 photometry queried live via CDS/VizieR (catalogue I/355). Gaia data
-(c) ESA/Gaia/DPAC, CC BY-NC 3.0 IGO. Service: https://vizier.cds.unistra.fr
+Gaia DR3 photometry is queried live from Nocturne's own copy of the subset it
+uses (https://gaia.nocturneastro.com, built from the ESA Gaia archive), and from
+CDS/VizieR (catalogue I/355, https://vizier.cds.unistra.fr) when that copy does
+not answer. Gaia data (c) ESA/Gaia/DPAC, CC BY-NC 3.0 IGO
+(https://www.cosmos.esa.int/web/gaia-users/license).
+This work has made use of data from the European Space Agency (ESA) mission
+Gaia (https://www.cosmos.esa.int/gaia), processed by the Gaia Data Processing
+and Analysis Consortium (DPAC,
+https://www.cosmos.esa.int/web/gaia/dpac/consortium). Funding for the DPAC has
+been provided by national institutions, in particular the institutions
+participating in the Gaia Multilateral Agreement.

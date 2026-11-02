@@ -215,3 +215,206 @@ def test_a_certificate_error_still_satisfies_older_handlers():
     from nocturne.tools.gaia import GaiaError, GaiaTlsError, GaiaUnreachable
     assert issubclass(GaiaTlsError, GaiaUnreachable)
     assert issubclass(GaiaTlsError, GaiaError)
+
+
+# --- our own copy first, VizieR second (2026-11-01) --------------------------
+# Andreas: "More often than not Gaia does not work when i try it." The night
+# this was decided, all of CDS Strasbourg was unreachable while he recorded a
+# video. gaia.nocturneastro.com answers the same question; VizieR stays as the
+# fallback, unchanged.
+
+_MIRROR_BODY = ("#Nocturne Gaia mirror (Gaia DR3, ESA/Gaia/DPAC)\n\n"
+                "RA_ICRS\tDE_ICRS\tGmag\tBP-RP\ndeg\tdeg\tmag\tmag\n---\t---\t---\t---\n"
+                "274.4\t-14.1\t13.8\t1.0\n274.5\t-14.2\t12.1\t\n")
+_VIZIER_BODY = _VIZIER_HEADER + "274.4\t-14.1\t13.8\t1.0\n274.6\t-14.3\t11.0\t0.5\n"
+
+
+def _refuse(url):
+    raise AssertionError("VizieR must not be asked when the mirror answered")
+
+
+def test_the_mirror_answer_is_used_and_labelled():
+    from nocturne.tools.gaia import MIRROR_LABEL
+    stars = query_field(274.7, -13.8, 0.5, mirror_fetch=lambda u: _MIRROR_BODY,
+                        fetch=_refuse, probe=lambda: None)
+    assert len(stars) == 1                       # the blank BP-RP row still dropped
+    assert stars.source == MIRROR_LABEL == "nocturneastro.com"
+    assert stars.mirror_failure is None
+
+
+def _vizier_after(mirror_fetch):
+    asked = []
+    stars = query_field(274.7, -13.8, 0.5, mirror_fetch=mirror_fetch,
+                        fetch=lambda u: asked.append(u) or _VIZIER_BODY,
+                        probe=lambda: None)
+    return stars, asked
+
+
+def test_a_mirror_failure_falls_through_to_vizier_and_is_recorded():
+    def boom(url):
+        raise OSError("connection refused")
+    stars, asked = _vizier_after(boom)
+    assert len(asked) == 1 and len(stars) == 2
+    assert stars.source == "VizieR"
+    assert "connection refused" in stars.mirror_failure
+
+
+def test_an_empty_mirror_answer_falls_through():
+    """Every field SPCC asks about has stars, so an empty answer from the mirror
+    means a broken mirror, not an empty sky."""
+    body = _MIRROR_BODY.split("274.4")[0]
+    stars, asked = _vizier_after(lambda u: body)
+    assert len(asked) == 1 and stars.source == "VizieR"
+    assert stars.mirror_failure
+
+
+def test_an_unmarked_mirror_answer_falls_through():
+    stars, asked = _vizier_after(lambda u: "<html>Service Unavailable</html>")
+    assert len(asked) == 1 and stars.source == "VizieR"
+    assert "not catalogue data" in stars.mirror_failure
+
+
+def test_a_vizier_marker_does_not_pass_for_the_mirror():
+    """Each source is checked against its own marker: a page that merely says
+    'VizieR' coming back from our host is not our answer."""
+    stars, asked = _vizier_after(lambda u: _VIZIER_BODY)   # VizieR's marker AND rows
+    assert len(asked) == 1 and stars.source == "VizieR"
+    assert "not catalogue data" in stars.mirror_failure
+
+
+def test_the_mirror_path_is_bounded_per_operation_and_in_total(monkeypatch):
+    import nocturne.tools.gaia as gaia
+    seen = []
+    monkeypatch.setattr(gaia, "_fetch", lambda url, timeout, total=None:
+                        seen.append((timeout, total)) or _MIRROR_BODY)
+    gaia._default_mirror_fetch("https://example.invalid/")
+    (timeout, total), = seen
+    assert timeout <= 3 and total is not None and total <= 10
+
+
+def test_a_trickling_server_is_cut_off_at_the_total():
+    """urllib's timeout restarts on every read; a byte every 0.2 s never trips a
+    1 s limit. The total must."""
+    import socket
+    import threading
+    import time
+    from nocturne.tools.gaia import _fetch
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    stop = threading.Event()
+
+    def serve():
+        conn, _ = srv.accept()
+        conn.recv(4096)
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n")
+        end = time.monotonic() + 3     # without the total the read fails, not hangs
+        try:
+            while not stop.is_set() and time.monotonic() < end:
+                conn.sendall(b"#")
+                time.sleep(0.2)
+        except OSError:
+            pass
+        conn.close()
+    threading.Thread(target=serve, daemon=True).start()
+    t0 = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            _fetch(f"http://127.0.0.1:{srv.getsockname()[1]}/", timeout=1, total=0.8)
+    finally:
+        stop.set()
+        srv.close()
+    assert time.monotonic() - t0 < 3
+
+
+def test_a_body_shorter_than_its_content_length_is_refused():
+    """Cut short, an unchunked answer must not parse as fewer stars."""
+    import http.client
+    import socket
+    import threading
+    from nocturne.tools.gaia import _fetch
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+
+    def serve():
+        conn, _ = srv.accept()
+        conn.recv(4096)
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n" + b"#" * 30)
+        conn.close()
+    threading.Thread(target=serve, daemon=True).start()
+    try:
+        with pytest.raises(http.client.IncompleteRead):
+            _fetch(f"http://127.0.0.1:{srv.getsockname()[1]}/", timeout=1, total=5)
+    finally:
+        srv.close()
+
+
+def test_a_tls_fault_on_the_mirror_is_named_even_when_vizier_is_down():
+    """CDS down (why the mirror exists) plus a broken certificate store on this
+    computer must not read as "Couldn't reach Gaia"."""
+    import ssl
+    import urllib.error
+    from nocturne.tools.gaia import GaiaTlsError
+
+    def mirror(url):
+        raise urllib.error.URLError(ssl.SSLCertVerificationError("certificate verify failed"))
+
+    def probe():
+        raise OSError("timed out")
+    with pytest.raises(GaiaTlsError) as e:
+        query_field(10.0, 41.0, 0.5, mirror_fetch=mirror, fetch=_refuse, probe=probe)
+    assert "certificate verify failed" in str(e.value) and "timed out" in str(e.value)
+
+
+def test_when_both_fail_the_vizier_kind_is_raised_with_both_reasons():
+    from nocturne.tools.gaia import GaiaTlsError, GaiaUnreachable
+
+    def mirror(url):
+        raise OSError("mirror down")
+
+    def vizier(url):
+        raise OSError("vizier down")
+    with pytest.raises(GaiaUnreachable) as e:
+        query_field(10.0, 41.0, 0.5, mirror_fetch=mirror, fetch=vizier,
+                    probe=lambda: None)
+    assert not isinstance(e.value, GaiaTlsError)
+    msg = str(e.value)
+    assert "nocturneastro.com" in msg and "mirror down" in msg
+    assert "VizieR" in msg and "vizier down" in msg
+
+
+def test_injecting_only_a_fetch_never_touches_the_mirror(monkeypatch):
+    """Every test written before the mirror existed passes fetch= only. They
+    must stay off the network: asserted by making the real mirror fetch RAISE,
+    not by observing that it happens to work."""
+    import nocturne.tools.gaia as gaia
+
+    def must_not_run(url):
+        raise AssertionError("the default mirror fetch reached the network")
+    monkeypatch.setattr(gaia, "_default_mirror_fetch", must_not_run)
+    stars = gaia.query_field(274.7, -13.8, 0.5, fetch=lambda u: _VIZIER_BODY)
+    assert stars.source == "VizieR" and stars.mirror_failure is None
+
+
+def test_the_real_path_asks_the_mirror_first(monkeypatch):
+    import nocturne.tools.gaia as gaia
+    order = []
+    monkeypatch.setattr(gaia, "_default_mirror_fetch",
+                        lambda u: order.append("mirror") or _MIRROR_BODY)
+    monkeypatch.setattr(gaia, "_default_probe", lambda: order.append("probe"))
+    monkeypatch.setattr(gaia, "_default_fetch", lambda u: order.append("vizier"))
+    stars = gaia.query_field(274.7, -13.8, 0.5)
+    assert order == ["mirror"] and stars.source == "nocturneastro.com"
+
+
+def test_the_mirror_is_asked_the_same_question_on_a_different_host():
+    seen = {}
+    query_field(274.7, -13.8, 0.5, fetch=lambda u: seen.setdefault("v", u) and _VIZIER_BODY,
+                probe=lambda: None)
+    query_field(274.7, -13.8, 0.5, mirror_fetch=lambda u: seen.setdefault("m", u) and _MIRROR_BODY,
+                fetch=_refuse, probe=lambda: None)
+    v, m = seen["v"], seen["m"]
+    assert v.startswith("https://vizier.cds.unistra.fr/viz-bin/asu-tsv?")
+    assert m.startswith("https://gaia.nocturneastro.com/viz-bin/asu-tsv?")
+    assert v.split("?", 1)[1] == m.split("?", 1)[1]
