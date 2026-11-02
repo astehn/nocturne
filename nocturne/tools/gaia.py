@@ -14,6 +14,7 @@ cheaper is real work with real consequences for which stars SPCC calibrates
 against; it is written up in TODO.md rather than guessed at here."""
 from __future__ import annotations
 
+import http.client
 import ssl
 import time
 import urllib.request
@@ -163,6 +164,8 @@ def _fetch(url: str, timeout: float, total: float | None = None) -> str:
             if not block:
                 break
             chunks.append(block)
+        if resp.length:   # read1 does not, unlike read(), refuse a short body
+            raise http.client.IncompleteRead(b"".join(chunks), resp.length)
         return b"".join(chunks).decode("utf-8", errors="replace")
 
 

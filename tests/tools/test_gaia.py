@@ -327,6 +327,29 @@ def test_a_trickling_server_is_cut_off_at_the_total():
     assert time.monotonic() - t0 < 3
 
 
+def test_a_body_shorter_than_its_content_length_is_refused():
+    """Cut short, an unchunked answer must not parse as fewer stars."""
+    import http.client
+    import socket
+    import threading
+    from nocturne.tools.gaia import _fetch
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+
+    def serve():
+        conn, _ = srv.accept()
+        conn.recv(4096)
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n" + b"#" * 30)
+        conn.close()
+    threading.Thread(target=serve, daemon=True).start()
+    try:
+        with pytest.raises(http.client.IncompleteRead):
+            _fetch(f"http://127.0.0.1:{srv.getsockname()[1]}/", timeout=1, total=5)
+    finally:
+        srv.close()
+
+
 def test_a_tls_fault_on_the_mirror_is_named_even_when_vizier_is_down():
     """CDS down (why the mirror exists) plus a broken certificate store on this
     computer must not read as "Couldn't reach Gaia"."""
