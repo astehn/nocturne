@@ -15,6 +15,7 @@ against; it is written up in TODO.md rather than guessed at here."""
 from __future__ import annotations
 
 import ssl
+import time
 import urllib.request
 from dataclasses import dataclass
 from urllib.parse import quote
@@ -139,15 +140,30 @@ _VIZIER_MARKER = "VizieR"
 _MIRROR_MARKER = "Nocturne Gaia mirror"
 
 # The mirror reads a local file and should answer in well under a second, so a
-# dead one must not eat into VizieR's chance. urllib applies this per socket
-# operation (connect, each read), which is why one value covers both.
-_MIRROR_TIMEOUT_S = 5
+# dead or slow one must not eat into VizieR's chance. urllib's timeout is per
+# socket operation, so a server sending a byte every few seconds would never
+# trip it (the final review held a read open past 15 s with a 2 s limit): the
+# total is a separate deadline on the read. Measured live 2026-11-02: 0.14 s on
+# M 16, 0.99 s on the densest 1.2 deg field in the sky. DNS is outside both.
+_MIRROR_TIMEOUT_S = 3
+_MIRROR_TOTAL_S = 10
 
 
-def _fetch(url: str, timeout: float) -> str:
+def _fetch(url: str, timeout: float, total: float | None = None) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": "Nocturne/1.0"})
+    deadline = None if total is None else time.monotonic() + total
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return resp.read().decode("utf-8", errors="replace")
+        if deadline is None:
+            return resp.read().decode("utf-8", errors="replace")
+        chunks = []
+        while True:
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"no complete answer within {total:g} s")
+            block = resp.read1(65536)
+            if not block:
+                break
+            chunks.append(block)
+        return b"".join(chunks).decode("utf-8", errors="replace")
 
 
 def _default_fetch(url: str) -> str:
@@ -155,7 +171,7 @@ def _default_fetch(url: str) -> str:
 
 
 def _default_mirror_fetch(url: str) -> str:
-    return _fetch(url, _MIRROR_TIMEOUT_S)
+    return _fetch(url, _MIRROR_TIMEOUT_S, _MIRROR_TOTAL_S)
 
 
 def query_field(ra_deg: float, dec_deg: float, radius_deg: float, *,
@@ -184,19 +200,31 @@ def query_field(ra_deg: float, dec_deg: float, radius_deg: float, *,
         # Every failure falls through, "no stars" included: no field SPCC asks
         # about is empty to G 15, so an empty answer means a broken mirror.
         try:
-            out = _parse_rows(mirror_fetch(_MIRROR + "?" + query), _MIRROR_MARKER,
-                              mag_min, mag_max, radius_deg)
+            text = mirror_fetch(_MIRROR + "?" + query)
+            # Our server always opens with its marker, so anything else on that
+            # path is not our answer, rows or no rows.
+            if not text.startswith("#" + _MIRROR_MARKER):
+                snippet = " ".join(text.split())[:200] or "(empty response)"
+                raise GaiaBadResponse(f"not catalogue data: {snippet}")
+            out = _parse_rows(text, _MIRROR_MARKER, mag_min, mag_max, radius_deg)
             out.source = MIRROR_LABEL
             return out
         except Exception as exc:                  # noqa: BLE001 — any failure -> VizieR
             mirror_failure = f"{type(exc).__name__}: {exc}"
+            mirror_kind = _unreachable_kind(exc)
     try:
         out = _query_vizier(query, mag_min, mag_max, radius_deg, fetch, probe)
     except GaiaError as exc:
         if mirror_failure is None:
             raise
-        raise type(exc)(f"{MIRROR_LABEL}: {mirror_failure}; "
-                        f"{VIZIER_LABEL}: {exc}") from exc
+        # A certificate fault on this computer shows on the mirror even while
+        # CDS is simply down, the case the mirror exists for. Name it, rather
+        # than "Couldn't reach Gaia" (the v0.21.0 misreport).
+        kind = type(exc)
+        if mirror_kind is GaiaTlsError and isinstance(exc, GaiaUnreachable):
+            kind = GaiaTlsError
+        raise kind(f"{MIRROR_LABEL}: {mirror_failure}; "
+                   f"{VIZIER_LABEL}: {exc}") from exc
     out.mirror_failure = mirror_failure
     return out
 

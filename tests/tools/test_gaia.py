@@ -277,8 +277,71 @@ def test_an_unmarked_mirror_answer_falls_through():
 def test_a_vizier_marker_does_not_pass_for_the_mirror():
     """Each source is checked against its own marker: a page that merely says
     'VizieR' coming back from our host is not our answer."""
-    stars, asked = _vizier_after(lambda u: _VIZIER_HEADER)
-    assert len(asked) == 1 and stars.mirror_failure
+    stars, asked = _vizier_after(lambda u: _VIZIER_BODY)   # VizieR's marker AND rows
+    assert len(asked) == 1 and stars.source == "VizieR"
+    assert "not catalogue data" in stars.mirror_failure
+
+
+def test_the_mirror_path_is_bounded_per_operation_and_in_total(monkeypatch):
+    import nocturne.tools.gaia as gaia
+    seen = []
+    monkeypatch.setattr(gaia, "_fetch", lambda url, timeout, total=None:
+                        seen.append((timeout, total)) or _MIRROR_BODY)
+    gaia._default_mirror_fetch("https://example.invalid/")
+    (timeout, total), = seen
+    assert timeout <= 3 and total is not None and total <= 10
+
+
+def test_a_trickling_server_is_cut_off_at_the_total():
+    """urllib's timeout restarts on every read; a byte every 0.2 s never trips a
+    1 s limit. The total must."""
+    import socket
+    import threading
+    import time
+    from nocturne.tools.gaia import _fetch
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    stop = threading.Event()
+
+    def serve():
+        conn, _ = srv.accept()
+        conn.recv(4096)
+        conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\n\r\n")
+        end = time.monotonic() + 3     # without the total the read fails, not hangs
+        try:
+            while not stop.is_set() and time.monotonic() < end:
+                conn.sendall(b"#")
+                time.sleep(0.2)
+        except OSError:
+            pass
+        conn.close()
+    threading.Thread(target=serve, daemon=True).start()
+    t0 = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            _fetch(f"http://127.0.0.1:{srv.getsockname()[1]}/", timeout=1, total=0.8)
+    finally:
+        stop.set()
+        srv.close()
+    assert time.monotonic() - t0 < 3
+
+
+def test_a_tls_fault_on_the_mirror_is_named_even_when_vizier_is_down():
+    """CDS down (why the mirror exists) plus a broken certificate store on this
+    computer must not read as "Couldn't reach Gaia"."""
+    import ssl
+    import urllib.error
+    from nocturne.tools.gaia import GaiaTlsError
+
+    def mirror(url):
+        raise urllib.error.URLError(ssl.SSLCertVerificationError("certificate verify failed"))
+
+    def probe():
+        raise OSError("timed out")
+    with pytest.raises(GaiaTlsError) as e:
+        query_field(10.0, 41.0, 0.5, mirror_fetch=mirror, fetch=_refuse, probe=probe)
+    assert "certificate verify failed" in str(e.value) and "timed out" in str(e.value)
 
 
 def test_when_both_fail_the_vizier_kind_is_raised_with_both_reasons():
