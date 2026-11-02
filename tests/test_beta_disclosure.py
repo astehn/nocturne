@@ -28,6 +28,13 @@ def test_version_label_carries_the_stage_and_drops_it_when_unset(monkeypatch):
     assert version_label() == nocturne.__version__
 
 
+def test_the_committed_stage_is_a_pre_release_stage():
+    """"beta" on main, "preview" on a closed-preview commit (deploy.py --preview
+    refuses anything else). Either way the app is pre-release and says so; the
+    surface checks below read the stage rather than spelling one out."""
+    assert RELEASE_STAGE in ("beta", "preview")
+
+
 def test_the_notice_names_a_real_risk_rather_than_saying_expect_bugs():
     """A defect found the same day let Batch overwrite the master it was
     reading. Advice a user can act on beats a vague disclaimer."""
@@ -46,24 +53,25 @@ def test_the_splash_shows_the_version_and_leaves_the_artwork_alone(qtbot):
     assert not hasattr(sp, "notice"), "the splash is drawing its own notice again"
 
 
-def test_the_window_title_says_beta_with_and_without_a_project(qtbot, tmp_path):
+def test_the_window_title_says_the_stage_with_and_without_a_project(qtbot, tmp_path):
     """The splash is gone in two seconds; the title bar is what actually makes
     it unmissable for the rest of the session."""
     from nocturne.ui.main_window import MainWindow
+    marker = f"({nocturne.RELEASE_STAGE})"
     win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False, telemetry=False)
     qtbot.addWidget(win)
-    assert "beta" in win.windowTitle().lower(), win.windowTitle()
+    assert marker in win.windowTitle(), win.windowTitle()
     assert nocturne.__version__ in win.windowTitle()
 
     win._source_label = "M42"
     win._update_title()
-    assert "beta" in win.windowTitle().lower(), win.windowTitle()
+    assert marker in win.windowTitle(), win.windowTitle()
     assert "M42" in win.windowTitle()
 
 
-def test_the_about_dialog_says_beta():
+def test_the_about_dialog_says_the_stage():
     from nocturne.ui.about import about_html
-    assert "beta" in about_html().lower()
+    assert f"({nocturne.RELEASE_STAGE})" in about_html()
 
 
 def test_the_readme_says_beta_before_the_fold():
@@ -85,10 +93,11 @@ def test_no_surface_spells_out_beta_on_its_own(monkeypatch, qtbot, tmp_path):
 
     win = MainWindow(settings_path=str(tmp_path / "settings.json"), check_updates=False, telemetry=False)
     qtbot.addWidget(win)
-    assert "beta" not in win.windowTitle().lower(), (
-        "the window title hardcodes 'beta' instead of deriving it")
-    assert "beta" not in about_html().lower(), (
-        "the About dialog hardcodes 'beta' instead of deriving it")
+    for word in ("beta", "preview"):
+        assert word not in win.windowTitle().lower(), (
+            f"the window title hardcodes {word!r} instead of deriving it")
+        assert word not in about_html().lower(), (
+            f"the About dialog hardcodes {word!r} instead of deriving it")
     # The splash is deliberately NOT in this guard: its beta wording is part of
     # the artwork and no code can clear it. See the note beside RELEASE_STAGE --
     # a stable release needs that image swapped by hand.
