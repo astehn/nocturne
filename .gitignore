@@ -117,9 +117,12 @@ runs/
 /docs/*
 !/docs/img/
 /packaging/deploy.py
+/packaging/preview_publish.py
+/packaging/preview.local.json
 /packaging/deploy.example.toml
 /packaging/make_icons.py
 /packaging/make_dmg_background.py
 /packaging/dmg/
 /tests/test_deploy.py
+/tests/test_preview_publish.py
 /tests/test_benchmark_stacking.py
