@@ -224,6 +224,7 @@ def _astap_solver(astap_path: str):
     """
     from ..settings import resolve_binary
     from ..tools.astap import ASTAP, solve_with_scale_fallback
+    from ..tools.base import ToolError
 
     # A macOS .app is a DIRECTORY; exec'ing it gives errno 13. Every other
     # caller in the app resolves it first — this one did not, so a perfectly
@@ -238,6 +239,12 @@ def _astap_solver(astap_path: str):
         except OSError:
             # a binary that vanished mid-run is one panel's problem, not the
             # run's; run_mosaic checks up front that it was there to begin with
+            return None
+        except ToolError:
+            # ASTAP's timeout (SOLVE_TIMEOUT_S). Uncaught, one slow panel threw
+            # away a mosaic whose every panel was already stacked (support case
+            # 2026-11-06, a missing star database). Cancel is not caught here:
+            # Cancelled is a BaseException.
             return None
         if not res.solved or res.wcs is None:
             return None

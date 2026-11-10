@@ -183,3 +183,29 @@ def test_the_real_astap_solver_can_be_built(tmp_path):
     master = tmp_path / "panel.fits"
     write_color_fits(master, make_star_field(shape=(80, 80), seed=5), exptime=10.0)
     assert solve(str(master)) is None
+
+
+def test_a_panel_whose_solve_times_out_is_dropped_not_fatal(tmp_path, monkeypatch):
+    """ASTAP raises ToolError when a solve passes SOLVE_TIMEOUT_S. The solver
+    caught only OSError, so one slow panel aborted the WHOLE mosaic after every
+    panel had been stacked (support case 2026-11-06: a missing D05 database).
+    A timed-out panel is one panel's problem, exactly like an unsolved one."""
+    from nocturne.stacking.mosaic import _astap_solver, solve_panels
+    from nocturne.tools import astap as astap_mod
+    from nocturne.tools.base import ToolError
+    from tests.stacking.synthetic import make_star_field, write_color_fits
+
+    def times_out(self, *a, **k):
+        raise ToolError(["astap"], -1, "", "ASTAP did not finish within 180 s.", 180.0)
+
+    monkeypatch.setattr(astap_mod.ASTAP, "solve", times_out)
+    master = tmp_path / "panel.fits"
+    write_color_fits(master, make_star_field(shape=(80, 80), seed=5), exptime=10.0)
+
+    assert _astap_solver(str(tmp_path / "astap"))(str(master)) is None
+
+    class Stack:
+        master_path = str(master)
+    solved, unsolved = solve_panels([Stack()], str(tmp_path / "astap"))
+    assert solved == []
+    assert unsolved == [(str(master), "panel could not be solved")]
