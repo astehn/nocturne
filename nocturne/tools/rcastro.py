@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 
 import numpy as np
+from astropy.io import fits
 
 from ..core.image import AstroImage
 from ..core.tasks import report_progress
@@ -16,14 +17,19 @@ _IMAGE_EXTS = (".fits", ".fit", ".fts", ".tiff", ".tif", ".xisf", ".png")
 
 
 def _read_corrected(path: str, is_linear: bool, metadata: dict | None = None) -> AstroImage:
-    """Read an RC-Astro FITS output and correct its orientation. RC-Astro uses
-    the FITS bottom-row-first convention, so its output comes back vertically
-    flipped relative to our top-row-first arrays — flip it back. `metadata` is the
-    INPUT image's metadata, carried through (the tool changes pixels, not headers);
-    the output file itself has none, so without this it would be lost."""
+    """Read an RC-Astro FITS output and correct its orientation. Builds up to
+    2.6.9 always wrote TOP-DOWN, flipped relative to the array we sent; 2.6.10+
+    keep the input's row order and declare it in ROWORDER, and our input has no
+    ROWORDER card, so it comes back BOTTOM-UP, i.e. unflipped. An unconditional
+    flip turned every result upside down on 2.6.11 (2026-11-10). Flip only on
+    TOP-DOWN, or when the card is missing (an old build), as RC-Astro's
+    README-DEVS advises. `metadata` is the INPUT image's metadata, carried
+    through (the tool changes pixels, not headers); without it it would be lost."""
     img = read_fits_array(path)
+    roworder = str(fits.getheader(path).get("ROWORDER", "TOP-DOWN")).strip().upper()
+    data = img.data[::-1] if roworder != "BOTTOM-UP" else img.data
     return AstroImage(
-        np.ascontiguousarray(img.data[::-1]), is_linear=is_linear,
+        np.ascontiguousarray(data), is_linear=is_linear,
         metadata=dict(metadata or {}),
     )
 
