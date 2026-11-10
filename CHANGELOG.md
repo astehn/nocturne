@@ -2,6 +2,17 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.57.0] — 2026-11-10
+
+Pictures stay the right way up with the latest RC-Astro tools, FITS exports keep their capture details, and colour calibration no longer depends on one star server.
+
+### Changed
+- Colour calibration (SPCC) asks Nocturne's own copy of the Gaia star catalogue first and VizieR second, so it still works when VizieR is slow or down. The Color step's log says which one answered.
+
+### Fixed
+- With RC-Astro's command-line tools 2.6.10 or newer, every RC-Astro step turned the picture upside down: Deconvolution, Noise Reduction with NoiseXTerminator, and everything that splits off the stars with StarXTerminator (De-green Stars, Star Reduction, Narrowband, Starless Levels). Each of these flipped it again, so the picture kept turning over. Pictures now stay the right way up with old and new RC-Astro versions alike.
+- A FITS export keeps the capture's details: frame count, exposure, dates, object, filter, gain and pointing. Before, only the camera cards were written, so a reopened export no longer knew how many frames it held.
+
 ## [0.56.0] — 2026-10-25
 
 A stretch that no longer crushes the sky, and a histogram that shows its colours honestly.
