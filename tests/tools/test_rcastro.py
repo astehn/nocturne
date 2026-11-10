@@ -173,3 +173,52 @@ def test_rcastro_preserves_input_metadata():
     out = RCAstro("/fake/rc").denoise(img, 0.5, runner=fake_runner)
     assert out.metadata["target"] == "NGC 281"
     assert out.metadata["solve_cards"]["FOCALLEN"] == 160.0
+
+
+def _write_with_roworder(data, path, roworder):
+    from astropy.io import fits
+    hdu = fits.PrimaryHDU(np.transpose(data.astype(np.float32), (2, 0, 1)))
+    hdu.header["ROWORDER"] = roworder
+    hdu.writeto(path, overwrite=True)
+
+
+def _top_bright():
+    disk = np.zeros((6, 6, 3), np.float32)
+    disk[0] = 1.0
+    return disk
+
+
+def test_rcastro_bottom_up_output_is_not_flipped():
+    # RC-Astro 2.6.10+ keeps the input's row order and says so in ROWORDER. Our
+    # input has no ROWORDER card, so it comes back BOTTOM-UP — already in our
+    # order. Flipping it anyway turned every BlurX/NoiseX/StarX result upside
+    # down (2.6.11, measured 2026-11-10 on a real bxt run).
+    img = AstroImage(np.random.rand(6, 6, 3).astype(np.float32))
+    disk = _top_bright()
+
+    def fake(args, **_kw):
+        out_path = args[args.index("-o") + 1]
+        _write_with_roworder(disk, out_path, "BOTTOM-UP")
+        import os
+        _write_with_roworder(disk, os.path.join(os.path.dirname(out_path), "starless-sxt.fits"),
+                             "BOTTOM-UP")
+
+    rc = RCAstro("/fake")
+    out = rc.deconvolve(img, sharpen_stars=0.0, sharpen_nonstellar=0.5, runner=fake)
+    assert np.allclose(out.data, disk, atol=1e-5)
+    assert np.allclose(rc.denoise(img, 0.5, runner=fake).data, disk, atol=1e-5)
+    starless, stars = rc.remove_stars(img, runner=fake)
+    assert np.allclose(starless.data, disk, atol=1e-5)
+    assert np.allclose(stars.data, disk, atol=1e-5)
+
+
+def test_rcastro_top_down_output_is_flipped():
+    img = AstroImage(np.random.rand(6, 6, 3).astype(np.float32))
+    disk = _top_bright()
+
+    def fake(args, **_kw):
+        _write_with_roworder(disk, args[args.index("-o") + 1], "TOP-DOWN")
+
+    out = RCAstro("/fake").deconvolve(
+        img, sharpen_stars=0.0, sharpen_nonstellar=0.5, runner=fake)
+    assert np.allclose(out.data, disk[::-1], atol=1e-5)
