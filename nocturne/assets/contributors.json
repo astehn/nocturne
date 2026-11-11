@@ -14,7 +14,8 @@
     { "name": "SEP", "what": "finding & grading stars" },
     { "name": "colour-demosaicing", "what": "turning Bayer data into colour" },
     { "name": "tifffile", "what": "16-bit TIFFs" },
-    { "name": "Pillow", "what": "image loading & saving" }
+    { "name": "Pillow", "what": "image loading & saving" },
+    { "name": "PyAV / FFmpeg / x264", "what": "the Share video" }
   ],
   "fonts": [
     { "name": "Jost", "what": "geometric sans — the Plate and Matte looks" },

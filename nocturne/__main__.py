@@ -123,6 +123,42 @@ def _check_codecs() -> int:
     return 2 if bad else 0
 
 
+def _check_video() -> int:
+    """Encode a short H.264 clip inside this build and read it back.
+
+    Exit 0 = the Share video can be written, 2 = it cannot and this build must
+    not ship. PyAV's FFmpeg libraries are only ever missing in a bundle, so
+    from source this passes and the check exists for the artifact; any failure,
+    including a missing `av`, is reported as BROKEN rather than a crash.
+    """
+    import tempfile
+
+    import numpy as np
+
+    print(f"frozen        : {getattr(sys, 'frozen', False)}")
+    try:
+        from nocturne.core.video_encode import encode_mp4, probe
+
+        def frames():
+            for i in range(30):
+                f = np.zeros((96, 64, 3), np.uint8)
+                f[:, : (i * 4) % 64, 1] = 255
+                f[i * 3 % 96, :, 0] = 200
+                yield f
+
+        with tempfile.TemporaryDirectory(prefix="nocturne_video_") as tmp:
+            path = os.path.join(tmp, "check.mp4")
+            encode_mp4(frames(), path, (64, 96))
+            info = probe(path)
+        ok = (info["codec"], info["pix_fmt"], info["frames"]) == (
+            "h264", "yuv420p", 30)
+        reason = "" if ok else f"unexpected {info}"
+    except Exception as exc:                      # noqa: BLE001 - reporting tool
+        ok, reason = False, f"{type(exc).__name__}: {exc}"
+    print(f"video         : {'OK' if ok else 'BROKEN ' + reason}")
+    return 0 if ok else 2
+
+
 def _starnet_probe_image():
     """A small frame StarNet2 can work on: a soft gradient plus Gaussian stars,
     non-linear like the stretched image the app hands it. Colour, because a grey
@@ -383,6 +419,11 @@ def main() -> None:
     # release can run it headless on the artifact it is about to publish.
     if "--check-codecs" in sys.argv:
         raise SystemExit(_check_codecs())
+
+    # Same shape for the Share video: PyAV's FFmpeg libraries are in the wheel
+    # but a bundle can lose them. Headless, on the artifact being published.
+    if "--check-video" in sys.argv:
+        raise SystemExit(_check_video())
 
     # External tools as THIS build sees them, StarNet2 run for real if found.
     if "--check-tools" in sys.argv:

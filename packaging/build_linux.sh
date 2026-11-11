@@ -78,6 +78,13 @@ if ! dist/Nocturne/Nocturne --check-codecs; then
   exit 1
 fi
 
+# BLOCKING for the same reason: PyAV's FFmpeg libraries can be missing from a
+# bundle while `import av` still works from source.
+if ! dist/Nocturne/Nocturne --check-video; then
+  echo "the build cannot encode a Share video (H.264) — Save video would fail for every user" >&2
+  exit 1
+fi
+
 # Nocturne NR, only for a release that is meant to carry it (the deploy sets
 # NOCTURNE_REQUIRE_NR=1 after copying the engine and models in). A source build
 # has neither, and must still build. 3 = no engine, 4 = dev engine, 5 = a model

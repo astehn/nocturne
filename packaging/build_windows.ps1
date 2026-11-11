@@ -139,6 +139,14 @@ if ($codecs.Code -ne 0) {
     Fail "the build cannot decode a compressed TIFF -- star separation and opening a user's TIFF would fail for every user"
 }
 
+# BLOCKING. PyAV's FFmpeg libraries can be missing from a bundle while
+# `import av` still works from source.
+$video = Invoke-Selftest $Exe "--check-video"
+$video.Output | ForEach-Object { Write-Output "  video    $_" }
+if ($video.Code -ne 0) {
+    Fail "the build cannot encode a Share video (H.264) -- Save video would fail for every user"
+}
+
 # External tools as the BUILT app sees them. Blocking only on exit 2, which
 # means something checkable here failed: StarNet2 is installed and the split did
 # not work (the subprocess, or the bundle reading back its LZW+predictor TIFF),
