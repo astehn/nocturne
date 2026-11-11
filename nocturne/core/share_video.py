@@ -26,6 +26,7 @@ _PUSH_IN = 1.08          # final zoom; sources are resampled to this much oversi
 _LABEL_IN = 0.3          # seconds for the label to fade in
 _LABEL_OUT = 0.4         # seconds for it to fade out once the wipe starts
 _CARD_IN = 0.6           # seconds for the end card to fade in
+_WORDMARK_SPACING = 0.35  # letter-spacing, in ems
 
 
 @dataclass(frozen=True)
@@ -115,6 +116,24 @@ def _font(size: int, weight: int) -> ImageFont.FreeTypeFont:
     return font
 
 
+def _spaced_widths(text: str, font: ImageFont.FreeTypeFont, spacing_em: float) -> list[float]:
+    return ([font.getlength(c) for c in text] if spacing_em
+            else [font.getlength(text)])
+
+
+def _fit(text: str, size: int, weight: int, max_w: float,
+         spacing_em: float = 0.0) -> ImageFont.FreeTypeFont:
+    """The font at `size`, or the largest smaller one whose drawn width fits
+    `max_w`. A custom wordmark or a long credit ran off a 1080-wide frame."""
+    while True:
+        font = _font(size, weight)
+        widths = _spaced_widths(text, font, spacing_em)
+        width = sum(widths) + font.size * spacing_em * (len(widths) - 1)
+        if width <= max_w or size <= 6:
+            return font
+        size = max(6, min(size - 1, int(size * max_w / width)))
+
+
 def _centered(draw: ImageDraw.ImageDraw, width: int, y: float, text: str,
               font: ImageFont.FreeTypeFont, fill: tuple[int, int, int, int]) -> None:
     draw.text(((width - draw.textlength(text, font=font)) / 2, y), text, font=font, fill=fill)
@@ -146,17 +165,18 @@ def _card_overlay(size: tuple[int, int], card: EndCard, alpha: float) -> Image.I
     d = ImageDraw.Draw(ov)
     a = int(255 * alpha)
 
+    max_w = w - 80 * s
+
     if card.title:
-        font = _font(round(76 * s), 500)
-        if d.textlength(card.title, font=font) >= w - 80 * s:
-            font = _font(round(36 * s), 500)
+        font = _fit(card.title, round(76 * s), 500, max_w)
         _centered(d, w, h - 470 * s, card.title, font, (255, 255, 255, a))
     if card.credit:
-        _centered(d, w, h - 360 * s, card.credit, _font(round(36 * s), 350), (220, 220, 220, a))
+        _centered(d, w, h - 360 * s, card.credit, _fit(card.credit, round(36 * s), 350, max_w),
+                  (220, 220, 220, a))
     if card.wordmark:
-        font = _font(round(64 * s), 300)
-        gap = font.size * 0.35          # letter-spacing drawn per character, not as spaces
-        widths = [d.textlength(c, font=font) for c in card.wordmark]
+        font = _fit(card.wordmark, round(64 * s), 300, max_w, _WORDMARK_SPACING)
+        gap = font.size * _WORDMARK_SPACING   # letter-spacing drawn per character, not as spaces
+        widths = _spaced_widths(card.wordmark, font, _WORDMARK_SPACING)
         x = (w - (sum(widths) + gap * (len(widths) - 1))) / 2
         for c, cw in zip(card.wordmark, widths):
             d.text((x, h - 220 * s), c, font=font, fill=(255, 255, 255, a))

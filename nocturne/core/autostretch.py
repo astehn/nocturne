@@ -80,7 +80,10 @@ def _stretch_params(c: np.ndarray, target: float = _TARGET_BG) -> tuple[float, f
     """
     if not np.isfinite(c).any():
         return 0.0, 0.5          # no statistics to derive from; leave it alone
-    s = _sample(c)
+    return _params_from_sample(_sample(c), target)
+
+
+def _params_from_sample(s: np.ndarray, target: float) -> tuple[float, float]:
     med = float(np.nanmedian(s))
     mad = float(np.nanmedian(np.abs(s - med))) or 1e-6
     shadow = max(0.0, med - _SIGMA * mad)
@@ -99,6 +102,31 @@ def linked_stretch(data: np.ndarray, target: float) -> np.ndarray:
         return np.clip(_apply_params(data, shadow, m), 0.0, 1.0)
     lum = data.mean(axis=2)
     shadow, m = _stretch_params(lum, target)
+    out = np.empty_like(data, dtype=np.float32)
+    for ch in range(data.shape[2]):
+        out[..., ch] = _apply_params(data[..., ch], shadow, m)
+    return np.clip(out, 0.0, 1.0)
+
+
+def linked_stretch_params(data: np.ndarray, target: float) -> tuple[float, float]:
+    """The (shadow, m) linked_stretch derives, without stretching anything, so a
+    crop can be stretched exactly as the whole frame would be
+    (apply_linked_stretch). The luminance is averaged over the strided sample
+    alone — a full-frame luminance is a 532 MB array on a 133 MP mosaic."""
+    if data.ndim == 2:
+        return _stretch_params(data, target)
+    s = _sample(data)       # strides rows and columns, as _sample(lum) would
+    lum = s.mean(axis=2)
+    if not np.isfinite(lum).any():
+        return _stretch_params(data.mean(axis=2), target)   # only the whole frame can tell
+    return _params_from_sample(lum, target)
+
+
+def apply_linked_stretch(data: np.ndarray, params: tuple[float, float]) -> np.ndarray:
+    """linked_stretch with `params` from linked_stretch_params."""
+    shadow, m = params
+    if data.ndim == 2:
+        return np.clip(_apply_params(data, shadow, m), 0.0, 1.0)
     out = np.empty_like(data, dtype=np.float32)
     for ch in range(data.shape[2]):
         out[..., ch] = _apply_params(data[..., ch], shadow, m)
