@@ -47,6 +47,7 @@ PREVIEW_CAP = 1600
 # How often the Save video status reads the encoder's frame count. Five times a
 # second is smooth for a job of tens of seconds and costs nothing.
 _VIDEO_POLL_MS = 200
+_NOTHING_CHANGED = "Nothing has changed since this image was opened"
 from .busy_gate import BusyGate, keep_live
 from .image_view import ImageView
 from .plate_render import ANCHORS, TREATMENTS, plate_overflows
@@ -87,7 +88,8 @@ class ShareDialog(QDialog):
                  annotated_rgb8: np.ndarray | None = None,
                  annotations_on: bool = True, settings_saver=None,
                  *, is_async=None,
-                 before_provider: Callable[[], np.ndarray] | None = None) -> None:
+                 before_provider: Callable[..., np.ndarray] | None = None,
+                 video_ready: bool = True) -> None:
         """`annotated_rgb8` is the same frame with the plate-solve overlay burned
         in, supplied only when a valid solution exists. Sharing an annotated
         image was previously impossible — Share received raw pixels, so the one
@@ -97,9 +99,13 @@ class ShareDialog(QDialog):
         `is_async()` False composes, exports and copies inline — the tests'
         setting, and MainWindow's when its own `_async_enabled` is off.
 
-        `before_provider()` returns the full-frame before image, the same shape
-        as `rgb8`. It is called on the worker, because replaying the opened
-        image costs real time; without one there is no video to offer."""
+        `before_provider(box, token)` returns the before image cropped to `box`
+        (t, b, l, r) in `rgb8`'s coordinates, cropping before it stretches so a
+        133 MP mosaic never holds a full-frame stretched copy. It is called on
+        the worker, because replaying the opened image costs real time; without
+        one there is no video to offer. `video_ready` False leaves the button
+        visible but off: with nothing done since opening, the wipe would run
+        from the finished picture to itself."""
         super().__init__(parent)
         self.setWindowTitle("Share")
         self.setMinimumSize(800, 500)
@@ -431,7 +437,10 @@ class ShareDialog(QDialog):
         self._copy_btn = QPushButton("Copy to clipboard")
         self._copy_btn.clicked.connect(self._do_copy)
         self._video_btn = QPushButton("Save video…")
-        self._video_btn.setToolTip("A before/after wipe of this framing, as an MP4")
+        self._video_ready = video_ready
+        self._video_btn.setToolTip("A before/after wipe of this framing, as an MP4"
+                                   if video_ready else _NOTHING_CHANGED)
+        self._video_btn.setEnabled(video_ready)
         self._video_btn.clicked.connect(self._on_video_clicked)
         self._video_btn.setVisible(before_provider is not None)
         self._video_hint = QLabel("9:16 fills a phone screen")
@@ -987,9 +996,7 @@ class ShareDialog(QDialog):
         # Replaying the before can take seconds before the encoder's first
         # check, so a Cancel pressed meanwhile is honoured here.
         token.check()
-        full_before = provider()
-        token.check()
-        before = np.ascontiguousarray(full_before[t:b, l:r])
+        before = np.ascontiguousarray(provider(crop, token))
         after = np.ascontiguousarray(after_full[t:b, l:r])
         token.check()
         size = video_size(r - l, b - t)
@@ -1002,7 +1009,7 @@ class ShareDialog(QDialog):
         return size
 
     def _do_save_video(self, path: str) -> None:
-        if self._working or self._before_provider is None:
+        if self._working or self._before_provider is None or not self._video_ready:
             return
         name = os.path.basename(path)
         crop = self._current_crop()

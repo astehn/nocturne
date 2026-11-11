@@ -44,7 +44,7 @@ def _preview_source(img):
     return decimate_for_preview(img, PREVIEW_EDGE)
 from ..core.fits_io import format_integration, import_summary, resolve_integration
 from ..core.image_io import load_tiff
-from ..history.before_image import before_rgb8
+from ..history.before_image import before_rgb8, has_processing
 from ..history.project import Project
 from ..history.project_store import NewerVersionError, load_project, save_project
 from ..history.step import Step
@@ -7700,11 +7700,15 @@ class MainWindow(QMainWindow):
             return
         self._clear_warning()
         snap = self.project.current()
+        # Read beside the snapshot, not after the pool round trip: the before
+        # must come from the same state as the after.
+        position = self.project.position
+        video_ready = has_processing(self.project, position)
         data = snap.data
         meta = dict(snap.metadata)
         meta["source_label"] = self._source_label
         if not self._async_enabled:
-            self._open_share(_share_rgb8(data), meta)
+            self._open_share(_share_rgb8(data), meta, None, position, video_ready)
             return
         # The 8-bit copy is made on the pool: 0.11 s of the 0.33 s the window
         # froze opening Share on the 33 MP M 8 drizzle (2026-10-06).
@@ -7719,7 +7723,8 @@ class MainWindow(QMainWindow):
             self._share_pending = False
             # Deferred, never exec()'d inside a worker's slot: the job's
             # cleanup would wait the dialog's whole life behind it.
-            QTimer.singleShot(0, self, lambda: self._open_share(rgb8, meta, gen))
+            QTimer.singleShot(0, self, lambda: self._open_share(rgb8, meta, gen, position,
+                                                                video_ready))
 
         def failed(exc) -> None:
             self._share_pending = False
@@ -7727,7 +7732,7 @@ class MainWindow(QMainWindow):
 
         run_async(self._pool, lambda: _share_rgb8(data), landed, failed)
 
-    def _open_share(self, rgb8, meta, gen=None) -> None:
+    def _open_share(self, rgb8, meta, gen=None, position=None, video_ready=True) -> None:
         """Opens on the picture as it was when Share was pressed. Only a
         replaced workspace drops it: a step started meanwhile lands behind the
         modal dialog harmlessly, and a Share press that silently does nothing
@@ -7739,8 +7744,9 @@ class MainWindow(QMainWindow):
                           annotations_on=self.image_view._annotations is not None,
                           settings_saver=lambda s: save_settings(s, self._settings_path),
                           is_async=lambda: self._async_enabled,
-                          before_provider=lambda p=self.project, at=self.project.position:
-                              before_rgb8(p, at))
+                          before_provider=lambda box, token, p=self.project, at=position:
+                              before_rgb8(p, at, box, token),
+                          video_ready=video_ready)
         dlg.exec()
         if isinstance(dlg, QObject):    # a test's stand-in is not one
             dlg.deleteLater()           # parented, it outlived exec() with two full frames

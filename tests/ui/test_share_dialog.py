@@ -1038,7 +1038,8 @@ def _vdlg(qtbot, rgb8=None, before=None, settings=None, **kw):
     d = ShareDialog(rgb8, {"target": "NGC 7000", "common_name": "North America Nebula",
                            "source_label": "ngc7000.fits"},
                     settings or Settings(handle="me"),
-                    before_provider=lambda: before, **kw)
+                    before_provider=lambda box, token: before[box[0]:box[1], box[2]:box[3]],
+                    **kw)
     qtbot.addWidget(d)
     return d
 
@@ -1162,9 +1163,10 @@ def test_cancel_during_the_before_replay_never_encodes(qtbot, tmp_path, monkeypa
     monkeypatch.setattr(sd, "encode_mp4", lambda *a, **k: encoded.append(1))
     holder = {}
 
-    def provider():
+    def provider(box, token):
         holder["d"]._video_token.cancel()      # Cancel pressed while it replays
-        return _solid(400, 300, (20, 90, 90))
+        t, b, l, r = box
+        return _solid(b - t, r - l, (20, 90, 90))
 
     d = ShareDialog(_rgb(), {"target": "X"}, Settings(), before_provider=provider,
                     is_async=lambda: False)
@@ -1276,3 +1278,48 @@ def test_close_during_render_lands_nowhere(qtbot, tmp_path, monkeypatch):
     qtbot.wait(450)                      # landed signal + two timer periods, if any
     assert seen["cancelled"] is True     # done() cancelled the token
     assert d.status.text() == status
+
+
+def test_the_provider_gets_the_box_and_the_token(qtbot, tmp_path, monkeypatch):
+    """The before is cropped by the provider, before its stretch — a 133 MP
+    mosaic must never hold a full-frame stretched copy."""
+    import nocturne.ui.share_dialog as sd
+    _stub_encode(monkeypatch)
+    monkeypatch.setattr(sd, "render_frames", lambda *a, **k: iter(()))
+    seen = {}
+
+    def provider(box, token):
+        seen["box"], seen["token"] = box, token
+        t, b, l, r = box
+        return _solid(b - t, r - l, (20, 90, 90))
+
+    d = ShareDialog(_rgb(), {"target": "X"}, Settings(), before_provider=provider,
+                    is_async=lambda: False)
+    qtbot.addWidget(d)
+    d._select_shape("1:1")
+    d._do_save_video(str(tmp_path / "p.mp4"))
+    assert seen["box"] == d._current_crop()
+    assert seen["token"] is d._video_token
+
+
+def test_nothing_changed_leaves_save_video_off(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.share_dialog as sd
+    encoded = []
+    monkeypatch.setattr(sd, "encode_mp4", lambda *a, **k: encoded.append(1))
+    d = _vdlg(qtbot, video_ready=False, is_async=lambda: False)
+    d.show()
+    assert d._video_btn.isVisible()
+    assert not d._video_btn.isEnabled()
+    assert d._video_btn.toolTip() == "Nothing has changed since this image was opened"
+    d._do_save_video(str(tmp_path / "n.mp4"))
+    assert encoded == []
+    # an export runs the busy gate; the button must not come back on after it
+    d._work("x", lambda: None, lambda r: None, lambda e: None)
+    qtbot.waitUntil(lambda: not d._working)
+    assert not d._video_btn.isEnabled()
+
+
+def test_video_ready_by_default(qtbot):
+    d = _vdlg(qtbot)
+    assert d._video_btn.isEnabled()
+    assert d._video_btn.toolTip() == "A before/after wipe of this framing, as an MP4"

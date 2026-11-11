@@ -7355,3 +7355,28 @@ def test_a_recrop_of_the_same_size_elsewhere_makes_the_solve_STALE(qtbot, tmp_pa
     win._undo()
     _crop_through_the_panel(win, (2, 18, 3, 19))
     assert win._solve_frame() != frame_b
+
+
+def test_share_offers_no_video_when_nothing_was_done(qtbot, tmp_path, monkeypatch):
+    """A finished picture opened and shared untouched would wipe to itself."""
+    import numpy as np
+
+    import nocturne.ui.main_window as mw
+    from nocturne.core.image import AstroImage
+    got = []
+
+    class _Fake:
+        def __init__(self, *a, video_ready=None, **kw):
+            got.append(video_ready)
+
+        def exec(self):
+            pass
+    monkeypatch.setattr(mw, "ShareDialog", _Fake)
+    win = _window(qtbot, tmp_path)
+    win.open_image(AstroImage(np.full((24, 24, 3), 0.4, np.float32), is_linear=False),
+                   "finished.tif")
+    win._share()
+    (tmp_path / "b").mkdir()
+    win2 = _stretched_window(qtbot, tmp_path / "b")
+    win2._share()
+    assert got == [False, True]
