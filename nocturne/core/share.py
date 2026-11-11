@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 
+import numpy as np
+
+from .export import _to_uint
 from .fits_io import format_capture_span, format_integration, resolve_integration
 
 from .crop import RATIO_SHAPES
@@ -107,3 +110,14 @@ def share_filename(source_label: str | None, aspect_label: str, ext: str = "jpg"
     stem = os.path.splitext(source_label or "share")[0] or "share"
     tag = aspect_label.replace(":", "x")
     return f"{stem}_{tag}.{ext.lstrip('.')}"
+
+
+def to_rgb8(data):
+    """The 8-bit RGB frame Share works from; pure, so the pool can make it.
+
+    One home for the conversion so the Share still and the video's before frame
+    cannot drift apart."""
+    rgb8 = _to_uint(data, 8)
+    if rgb8.ndim == 2:
+        rgb8 = np.stack([rgb8] * 3, axis=2)
+    return rgb8

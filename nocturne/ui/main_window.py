@@ -32,6 +32,7 @@ from ..core.crop import (
 )
 from ..core.enhance import (ENHANCE_OPS, sharpen_nebulosity_layers,
                             star_colour_layers)
+from ..core.share import to_rgb8 as share_to_rgb8
 from ..core.export import camera_cards, capture_cards, decimate_for_preview, jpeg_bytes, save_fits, save_png, save_tiff, _to_uint
 # The start page thumbnail saved inside a project: twice the card it is
 # drawn in (welcome.py), so it stays sharp on a Retina screen.
@@ -423,10 +424,7 @@ def _display(data):
 
 def _share_rgb8(data):
     """The 8-bit RGB frame Share works from; pure, so the pool can make it."""
-    rgb8 = _to_uint(data, 8)
-    if rgb8.ndim == 2:
-        rgb8 = np.stack([rgb8] * 3, axis=2)
-    return rgb8
+    return share_to_rgb8(data)
 
 
 # What a restored solve that no longer fits the picture is stamped with: equal
