@@ -13,6 +13,10 @@ import numpy as np
 from nocturne.core.tasks import CancelToken
 
 
+_BT709 = "ITU709"
+_TV = "MPEG"
+
+
 def encode_mp4(frames: Iterable[np.ndarray], path: str, size: tuple[int, int],
                fps: int = 30, *, total: int | None = None,
                token: CancelToken | None = None,
@@ -34,12 +38,21 @@ def encode_mp4(frames: Iterable[np.ndarray], path: str, size: tuple[int, int],
         stream = container.add_stream("libx264", rate=fps)
         stream.width, stream.height = width, height
         stream.pix_fmt = "yuv420p"
+        # Convert AND tag BT.709 limited range. swscale's untagged default is
+        # BT.601, which players do not assume for HD, so colours would shift.
+        cc = stream.codec_context
+        cc.colorspace = av.video.reformatter.Colorspace.ITU709
+        cc.color_primaries = av.video.reformatter.ColorPrimaries.BT709
+        cc.color_trc = av.video.reformatter.ColorTrc.BT709
+        cc.color_range = av.video.reformatter.ColorRange.MPEG
         stream.options = {"crf": "18", "preset": "medium"}
         for i, arr in enumerate(frames):
             if token is not None:
                 token.check()
             frame = av.VideoFrame.from_ndarray(np.ascontiguousarray(arr),
                                                format="rgb24")
+            frame = frame.reformat(format="yuv420p",
+                                   dst_colorspace=_BT709, dst_color_range=_TV)
             for packet in stream.encode(frame):
                 container.mux(packet)
             if on_progress is not None and total is not None:
@@ -62,6 +75,13 @@ def encode_mp4(frames: Iterable[np.ndarray], path: str, size: tuple[int, int],
         raise
 
 
+def _name(enum, value) -> str:
+    try:
+        return enum(int(value)).name
+    except ValueError:
+        return str(value)
+
+
 def probe(path: str) -> dict:
     """Read an MP4 back: codec, size, pixel format, frame count, duration."""
     import av
@@ -71,5 +91,10 @@ def probe(path: str) -> dict:
         frames = sum(1 for _ in c.decode(s))
         cc = s.codec_context
         dur = float(c.duration / av.time_base) if c.duration else 0.0
-        return {"codec": cc.name, "width": cc.width, "height": cc.height,
+        from av.video import reformatter as r
+        return {"colorspace": _name(r.Colorspace, cc.colorspace),
+                "primaries": _name(r.ColorPrimaries, cc.color_primaries),
+                "trc": _name(r.ColorTrc, cc.color_trc),
+                "range": _name(r.ColorRange, cc.color_range),
+                "codec": cc.name, "width": cc.width, "height": cc.height,
                 "pix_fmt": cc.pix_fmt, "frames": frames, "duration": dur}

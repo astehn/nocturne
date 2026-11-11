@@ -62,3 +62,24 @@ def test_failure_keeps_an_existing_file_untouched(tmp_path):
         encode_mp4(bad(), str(p), (64, 96))
     assert p.read_bytes() == b"old"
     assert not os.path.exists(str(p) + ".part")
+
+
+def test_colour_is_bt709_tagged_and_round_trips(tmp_path):
+    """Convert and tag must agree, or phones shift the colours."""
+    import av
+
+    patch = np.zeros((96, 64, 3), np.uint8)
+    patch[:48] = (200, 60, 30)
+    patch[48:] = (128, 128, 128)
+    p = str(tmp_path / "c.mp4")
+    encode_mp4([patch] * 5, p, (64, 96))
+    info = probe(p)
+    assert (info["colorspace"], info["primaries"], info["trc"], info["range"]) == (
+        "ITU709", "BT709", "BT709", "MPEG")
+    with av.open(p) as c:
+        fr = next(c.decode(video=0))
+        rgb = fr.reformat(format="rgb24", src_colorspace="ITU709",
+                          src_color_range="MPEG").to_ndarray()
+    for y, want in ((24, (200, 60, 30)), (72, (128, 128, 128))):
+        got = rgb[y, 32].astype(int)
+        assert np.abs(got - np.array(want)).max() <= 4, (got, want)
