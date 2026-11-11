@@ -44,6 +44,7 @@ def _preview_source(img):
     return decimate_for_preview(img, PREVIEW_EDGE)
 from ..core.fits_io import format_integration, import_summary, resolve_integration
 from ..core.image_io import load_tiff
+from ..history.before_image import before_rgb8
 from ..history.project import Project
 from ..history.project_store import NewerVersionError, load_project, save_project
 from ..history.step import Step
@@ -7737,7 +7738,8 @@ class MainWindow(QMainWindow):
                           annotated_rgb8=self._annotated_rgb8(rgb8),
                           annotations_on=self.image_view._annotations is not None,
                           settings_saver=lambda s: save_settings(s, self._settings_path),
-                          is_async=lambda: self._async_enabled)
+                          is_async=lambda: self._async_enabled,
+                          before_provider=lambda p=self.project: before_rgb8(p))
         dlg.exec()
         if isinstance(dlg, QObject):    # a test's stand-in is not one
             dlg.deleteLater()           # parented, it outlived exec() with two full frames

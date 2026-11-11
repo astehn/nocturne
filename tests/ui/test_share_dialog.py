@@ -1021,3 +1021,203 @@ def test_a_damaged_saved_opacity_still_opens(qtbot, bad):
     dlg = ShareDialog(_rgb(), {"target": "X"}, Settings(plate_preset="Plate", plate_style=saved))
     qtbot.addWidget(dlg)
     assert dlg._opacity_slider.value() == 100
+
+
+# --- Save video (share-video task 4) ---------------------------------------
+
+def _solid(h, w, value):
+    a = np.zeros((h, w, 3), np.uint8)
+    a[:] = value
+    return a
+
+
+def _vdlg(qtbot, rgb8=None, before=None, settings=None, **kw):
+    rgb8 = _rgb() if rgb8 is None else rgb8
+    before = _solid(*rgb8.shape[:2], (20, 90, 90)) if before is None else before
+    d = ShareDialog(rgb8, {"target": "NGC 7000", "common_name": "North America Nebula",
+                           "source_label": "ngc7000.fits"},
+                    settings or Settings(handle="me"),
+                    before_provider=lambda: before, **kw)
+    qtbot.addWidget(d)
+    return d
+
+
+def _stub_encode(monkeypatch, calls=None):
+    import nocturne.ui.share_dialog as sd
+
+    def fake(frames, path, size, fps=30, *, total=None, token=None, on_progress=None):
+        if calls is not None:
+            calls.append({"path": path, "size": size, "total": total})
+    monkeypatch.setattr(sd, "encode_mp4", fake)
+
+
+def test_save_video_hidden_without_provider(qtbot):
+    d = _dlg(qtbot)
+    d.show()
+    assert not d._video_btn.isVisible()
+    v = _vdlg(qtbot)
+    v.show()
+    assert v._video_btn.isVisible()
+    assert v._video_btn.text() == "Save video…"
+
+
+def test_wordmark_defaults_and_persists(qtbot, tmp_path, monkeypatch):
+    from nocturne.settings import load_settings, save_settings
+    path = tmp_path / "settings.json"
+    s = Settings(handle="me")
+    got = []
+
+    def saver(st):
+        got.append(st.share_wordmark)
+        save_settings(st, str(path))
+
+    d = _vdlg(qtbot, settings=s, settings_saver=saver, is_async=lambda: False)
+    assert d._wordmark_edit.text() == "NOCTURNE"
+    assert d._wordmark_edit.placeholderText() == "Leave empty for none"
+    _stub_encode(monkeypatch)
+    d._wordmark_edit.setText("")
+    d._do_save_video(str(tmp_path / "s.mp4"))
+    assert got and got[-1] == ""
+    assert load_settings(str(path)).share_wordmark == ""
+
+
+def test_wordmark_is_saved_on_close(qtbot):
+    s = Settings(handle="me")
+    got = []
+    d = _vdlg(qtbot, settings=s, settings_saver=lambda st: got.append(st.share_wordmark))
+    d._wordmark_edit.setText("My Obs")
+    d.reject()
+    assert s.share_wordmark == "My Obs" and got[-1] == "My Obs"
+
+
+def test_save_video_writes_the_box_at_1080(qtbot, tmp_path):
+    from nocturne.core.video_encode import probe
+    rgb8 = _solid(320, 180, (200, 120, 60))              # exactly 9:16
+    d = _vdlg(qtbot, rgb8=rgb8, before=_solid(320, 180, (20, 90, 90)),
+              is_async=lambda: False)
+    d._select_shape("9:16")
+    out = tmp_path / "s.mp4"
+    d._do_save_video(str(out))
+    info = probe(str(out))
+    assert info["codec"] == "h264"
+    assert (info["width"], info["height"]) == (1080, 1920)
+    assert info["frames"] == 315
+    assert d.status.text().startswith("Saved s.mp4 — 1080 × 1920 video")
+
+
+def test_video_uses_annotated_source_when_annotations_on(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.share_dialog as sd
+    rgb8 = _rgb()
+    annotated = _solid(400, 300, (250, 10, 10))
+    seen = {}
+
+    def fake_render(before, after, card, size, tl=None):
+        seen["before"], seen["after"], seen["card"] = before, after, card
+        return iter(())
+
+    monkeypatch.setattr(sd, "render_frames", fake_render)
+    _stub_encode(monkeypatch)
+    d = _vdlg(qtbot, rgb8=rgb8, annotated_rgb8=annotated, annotations_on=False,
+              is_async=lambda: False)
+    d._annot_check.setChecked(True)
+    d._select_shape("1:1")
+    t, b, l, r = d._current_crop()
+    d._do_save_video(str(tmp_path / "a.mp4"))
+    assert np.array_equal(seen["after"], annotated[t:b, l:r])
+    assert seen["before"].shape == seen["after"].shape
+    assert seen["card"].title == "NGC 7000 · North America Nebula"
+    assert seen["card"].wordmark == "NOCTURNE"
+
+
+def test_cancel_reports_and_leaves_no_file(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.share_dialog as sd
+    from nocturne.core.tasks import Cancelled
+
+    def cancelled(*a, **k):
+        raise Cancelled()
+
+    monkeypatch.setattr(sd, "encode_mp4", cancelled)
+    d = _vdlg(qtbot, is_async=lambda: False)
+    out = tmp_path / "c.mp4"
+    d._do_save_video(str(out))
+    assert d.status.text().startswith("Video cancelled.")
+    assert "Saved" not in d.status.text()
+    assert not out.exists()
+
+
+def test_failure_says_could_not_save(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.share_dialog as sd
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(sd, "encode_mp4", boom)
+    d = _vdlg(qtbot, is_async=lambda: False)
+    d._do_save_video(str(tmp_path / "f.mp4"))
+    assert d.status.text().startswith("Could not save f.mp4: disk full")
+
+
+def test_hint_shows_only_off_9x16(qtbot):
+    d = _vdlg(qtbot)
+    d.show()
+    d._select_shape("4:5")
+    assert d._video_hint.isVisible()
+    assert d._video_hint.text() == "9:16 fills a phone screen"
+    d._select_shape("9:16")
+    assert not d._video_hint.isVisible()
+
+
+def test_progress_reads_the_workers_counts(qtbot):
+    d = _vdlg(qtbot)
+    d._video_progress = [63, 315]
+    d._tick_video_progress()
+    assert d.status.text().startswith("Rendering video… 20%")
+
+
+def test_cancel_button_stops_a_running_render(qtbot, tmp_path, monkeypatch):
+    import time
+    import nocturne.ui.share_dialog as sd
+    from PySide6.QtCore import QThreadPool
+
+    def slow(frames, path, size, fps=30, *, total=None, token=None, on_progress=None):
+        for i in range(1000):
+            token.check()
+            on_progress(i, total)
+            time.sleep(0.005)
+
+    monkeypatch.setattr(sd, "encode_mp4", slow)
+    d = _vdlg(qtbot, is_async=lambda: True)
+    d.show()
+    d._do_save_video(str(tmp_path / "x.mp4"))
+    assert d._video_btn.text() == "Cancel" and d._video_btn.isEnabled()
+    assert not d._export_btn.isEnabled()
+    d._video_btn.click()
+    qtbot.waitUntil(lambda: d.status.text().startswith("Video cancelled."), timeout=5000)
+    assert d._video_btn.text() == "Save video…"
+    assert d._export_btn.isEnabled()
+    QThreadPool.globalInstance().waitForDone(5000)
+
+
+def test_close_during_render_lands_nowhere(qtbot, tmp_path, monkeypatch):
+    import threading
+    import nocturne.ui.share_dialog as sd
+    from PySide6.QtCore import QThreadPool
+    gate = threading.Event()
+    seen = {}
+
+    def blocked(frames, path, size, fps=30, *, total=None, token=None, on_progress=None):
+        gate.wait(5)
+        seen["cancelled"] = token.cancelled
+
+    monkeypatch.setattr(sd, "encode_mp4", blocked)
+    d = _vdlg(qtbot, is_async=lambda: True)
+    d.show()
+    d._do_save_video(str(tmp_path / "x.mp4"))
+    d.reject()
+    status = d.status.text()
+    gate.set()
+    pool = QThreadPool.globalInstance()
+    qtbot.waitUntil(lambda: pool.activeThreadCount() == 0, timeout=5000)
+    qtbot.wait(50)                       # let the landed signal arrive, if any
+    assert seen["cancelled"] is True     # done() cancelled the token
+    assert d.status.text() == status

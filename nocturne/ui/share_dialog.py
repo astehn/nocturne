@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import replace
 
 import numpy as np
@@ -17,6 +18,9 @@ from PySide6.QtWidgets import (
 from ..core.crop import PICTURE, shape_ratio
 from ..core.plate import PlateText, plate_text
 from ..core.presets import PRESETS, style_from_dict, style_to_dict
+from ..core.share_video import TIMELINE, end_card, render_frames, video_size
+from ..core.tasks import CancelToken, Cancelled
+from ..core.video_encode import encode_mp4
 from ..core.share import (
     CAPTION_SIZES, DEFAULT_CAPTION_SIZE, DEFAULT_SIZE, FORMATS, SIZES,
     centered_crop, share_filename,
@@ -39,6 +43,10 @@ _TEXT_DEBOUNCE_MS = 90
 # the master per typing pause. Export and Copy are unaffected: this is a preview
 # economy, not a size limit.
 PREVIEW_CAP = 1600
+
+# How often the Save video status reads the encoder's frame count. Five times a
+# second is smooth for a job of tens of seconds and costs nothing.
+_VIDEO_POLL_MS = 200
 from .busy_gate import BusyGate, keep_live
 from .image_view import ImageView
 from .plate_render import ANCHORS, TREATMENTS, plate_overflows
@@ -78,7 +86,8 @@ class ShareDialog(QDialog):
     def __init__(self, rgb8: np.ndarray, metadata: dict, settings, parent=None,
                  annotated_rgb8: np.ndarray | None = None,
                  annotations_on: bool = True, settings_saver=None,
-                 *, is_async=None) -> None:
+                 *, is_async=None,
+                 before_provider: Callable[[], np.ndarray] | None = None) -> None:
         """`annotated_rgb8` is the same frame with the plate-solve overlay burned
         in, supplied only when a valid solution exists. Sharing an annotated
         image was previously impossible — Share received raw pixels, so the one
@@ -86,7 +95,11 @@ class ShareDialog(QDialog):
         caption this dialog exists for.
 
         `is_async()` False composes, exports and copies inline — the tests'
-        setting, and MainWindow's when its own `_async_enabled` is off."""
+        setting, and MainWindow's when its own `_async_enabled` is off.
+
+        `before_provider()` returns the full-frame before image, the same shape
+        as `rgb8`. It is called on the worker, because replaying the opened
+        image costs real time; without one there is no video to offer."""
         super().__init__(parent)
         self.setWindowTitle("Share")
         self.setMinimumSize(800, 500)
@@ -104,6 +117,10 @@ class ShareDialog(QDialog):
         self._ext = "jpg"
         self._save_runner = save_share            # injectable for tests
         self._clipboard_runner = to_clipboard    # injectable for tests
+        self._before_provider = before_provider
+        self._video_token: CancelToken | None = None
+        self._video_running = False
+        self._video_progress = [0, TIMELINE.frame_count]
         # Built first: _compose_current() writes the "will not fit" warning here,
         # and the first compose happens while the rest of the dialog is still
         # being assembled.
@@ -255,6 +272,12 @@ class ShareDialog(QDialog):
             # "25m · 1233 × 10s · @andreas" — the tail of its own text, which
             # looks like the beginning has been lost.
             edit.setCursorPosition(0)
+        # The end card's wordmark. Part of the video only — the still never
+        # carries it, so it is not wired to the preview.
+        self._wordmark_edit = QLineEdit(str(getattr(settings, "share_wordmark", "NOCTURNE")))
+        self._wordmark_edit.setPlaceholderText("Leave empty for none")
+        self._wordmark_edit.setToolTip("The last line of the video's end card")
+        self._wordmark_edit.setCursorPosition(0)
         reset_btn = QPushButton("↺")
         reset_btn.setObjectName("glyph")   # the theme's 14 px side padding hid the ↺
         reset_btn.setFixedWidth(30)
@@ -355,6 +378,9 @@ class ShareDialog(QDialog):
         plate_form.addRow(_dim("Object"), self._designation_edit)
         plate_form.addRow(_dim("Name"), self._common_edit)
         plate_form.addRow(_dim("Credit"), text_row)
+        plate_form.addRow(_dim("Wordmark"), self._wordmark_edit)
+        # A field that feeds nothing would read as broken.
+        plate_form.setRowVisible(self._wordmark_edit, before_provider is not None)
 
         style_form = QFormLayout()
         style_form.setContentsMargins(0, 0, 0, 0)
@@ -407,9 +433,19 @@ class ShareDialog(QDialog):
         self._export_btn.clicked.connect(self._on_export_clicked)
         self._copy_btn = QPushButton("Copy to clipboard")
         self._copy_btn.clicked.connect(self._do_copy)
+        self._video_btn = QPushButton("Save video…")
+        self._video_btn.setToolTip("A before/after wipe of this framing, as an MP4")
+        self._video_btn.clicked.connect(self._on_video_clicked)
+        self._video_btn.setVisible(before_provider is not None)
+        self._video_hint = QLabel("9:16 fills a phone screen")
+        self._video_hint.setStyleSheet(f"color: {TEXT_DIM}; font-size: 11px;")
+        self._video_timer = QTimer(self)
+        self._video_timer.setInterval(_VIDEO_POLL_MS)
+        self._video_timer.timeout.connect(self._tick_video_progress)
         buttons = QHBoxLayout()
         buttons.addWidget(self._export_btn)
         buttons.addWidget(self._copy_btn)
+        buttons.addWidget(self._video_btn)
         buttons.addStretch(1)
         self._close_btn = keep_live(QPushButton("Close"))
         self._close_btn.clicked.connect(self.reject)
@@ -481,6 +517,8 @@ class ShareDialog(QDialog):
         self.help_link = HelpLink("share", self)
         root.addWidget(self.help_link, 0, Qt.AlignmentFlag.AlignRight)
         root.addLayout(buttons)
+        root.addWidget(self._video_hint)
+        self._sync_video_hint()
 
         self._refresh_preview()
 
@@ -616,7 +654,13 @@ class ShareDialog(QDialog):
             self._image_view.show_crop_box()
             self._image_view.apply_aspect(aspect)
         self._sync_crop_pane()
+        self._sync_video_hint()
         self._refresh_preview()
+
+    def _sync_video_hint(self) -> None:
+        if hasattr(self, "_video_hint"):        # _select_shape can run mid-build
+            self._video_hint.setVisible(self._before_provider is not None
+                                        and self.shape_picker.shape() != "9:16")
 
     def _sync_crop_pane(self) -> None:
         """Show the reframing pane only while it can do something.
@@ -883,7 +927,9 @@ class ShareDialog(QDialog):
         ring turning; `landed`/`failed` back here, unless the window closed."""
         self._working = True
         self._work_message = message
-        self._gate.close(self._side, self._export_btn, self._copy_btn)
+        # The video button is the video job's Cancel, so only that job leaves it live.
+        extra = () if self._video_running else (self._video_btn,)
+        self._gate.close(self._side, self._export_btn, self._copy_btn, *extra)
         self._image_view.set_crop_locked(True)
         self._show_status(message)
         self._sync_ring()
@@ -901,6 +947,108 @@ class ShareDialog(QDialog):
                   lambda result: finish() and landed(result),
                   lambda exc: finish() and failed(exc))
 
+    # --- video ---
+    def _on_video_clicked(self) -> None:
+        if self._video_running:
+            if self._video_token is not None:
+                self._video_token.cancel()
+            return
+        default_name = share_filename(self._metadata.get("source_label"),
+                                      self._aspect_label, "mp4")
+        default_path = os.path.join(start_dir(self._settings.base_dir), default_name)
+        path, _ = file_dialogs.save_file(self, "Save share video", default_path,
+                                         "MP4 video (*.mp4)")
+        if path:
+            self._do_save_video(path)
+
+    def _persist_wordmark(self, *, always: bool = False) -> None:
+        text = self._wordmark_edit.text()
+        if not always and text == getattr(self._settings, "share_wordmark", None):
+            return
+        self._settings.share_wordmark = text
+        if self._settings_saver:
+            self._settings_saver(self._settings)
+
+    @staticmethod
+    def _render_video(after_full, crop, card, provider, path, token, progress):
+        """The whole job, on the worker. Static for the same reason as _compose:
+        a pool job must not hold the dialog. Writes only `progress[0]`, an int
+        the UI timer reads — never a widget."""
+        t, b, l, r = crop
+        before = np.ascontiguousarray(provider()[t:b, l:r])
+        after = np.ascontiguousarray(after_full[t:b, l:r])
+        size = video_size(r - l, b - t)
+
+        def tick(done: int, _total: int) -> None:
+            progress[0] = done
+
+        encode_mp4(render_frames(before, after, card, size), path, size,
+                   total=TIMELINE.frame_count, token=token, on_progress=tick)
+        return size
+
+    def _do_save_video(self, path: str) -> None:
+        if self._working or self._before_provider is None:
+            return
+        name = os.path.basename(path)
+        crop = self._current_crop()
+        t, b, l, r = crop
+        if b - t <= 0 or r - l <= 0:
+            self._show_status("Nothing to render — the frame is empty.")
+            return
+        self._persist_wordmark(always=True)
+        plate = self._plate()
+        title = " · ".join(x for x in (plate.designation, plate.common) if x)
+        card = end_card(title, plate.credit, self._wordmark_edit.text())
+        source, provider = self._source(), self._before_provider
+        token = self._video_token = CancelToken()
+        progress = self._video_progress = [0, TIMELINE.frame_count]
+        render = ShareDialog._render_video
+
+        def job():
+            return render(source, crop, card, provider, path, token, progress)
+
+        if not self._is_async():
+            try:
+                size = job()
+            except Cancelled:
+                self._show_status("Video cancelled.")
+                return
+            except Exception as exc:  # noqa: BLE001 - reported, as Export does
+                self._show_status(f"Could not save {name}: {exc}")
+                return
+            self._video_saved(name, size)
+            return
+
+        def landed(size) -> None:
+            self._video_ended()
+            self._video_saved(name, size)
+
+        def failed(exc) -> None:
+            self._video_ended()
+            if isinstance(exc, Cancelled):
+                self._show_status("Video cancelled.")
+            else:
+                self._show_status(f"Could not save {name}: {exc}")
+
+        self._video_running = True
+        self._video_btn.setText("Cancel")
+        self._work("Rendering video… 0%", job, landed, failed)
+        self._video_timer.start()
+
+    def _tick_video_progress(self) -> None:
+        done, total = self._video_progress
+        pct = int(100 * done / total) if total else 0
+        self._work_message = f"Rendering video… {pct}%"
+        self._show_status(self._work_message)
+
+    def _video_ended(self) -> None:
+        self._video_timer.stop()
+        self._video_running = False
+        self._video_btn.setText("Save video…")
+
+    def _video_saved(self, name: str, size) -> None:
+        self._show_status(f"Saved {name} — {size[0]} × {size[1]} video")
+
     def _sync_ring(self) -> None:
         if self._closed or not shiboken6.isValid(self.status_ring):
             return
@@ -915,4 +1063,9 @@ class ShareDialog(QDialog):
         self._closed = True
         self._text_timer.stop()
         self._runner.cancel()
+        self._video_timer.stop()
+        if self._video_token is not None:
+            self._video_token.cancel()
+        if self._before_provider is not None:
+            self._persist_wordmark()
         super().done(r)
