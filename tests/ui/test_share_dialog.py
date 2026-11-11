@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pytest
 
@@ -1130,19 +1131,68 @@ def test_video_uses_annotated_source_when_annotations_on(qtbot, tmp_path, monkey
 
 
 def test_cancel_reports_and_leaves_no_file(qtbot, tmp_path, monkeypatch):
+    """A REAL encode cancelled at frame 70 — past x264's ~40-frame lookahead,
+    so the .part file has really been written to before the cancel."""
     import nocturne.ui.share_dialog as sd
-    from nocturne.core.tasks import Cancelled
+    real = sd.encode_mp4
+    reached = []
 
-    def cancelled(*a, **k):
-        raise Cancelled()
+    def cancel_at_70(frames, path, size, fps=30, *, total=None, token=None, on_progress=None):
+        def tick(done, tot):
+            on_progress(done, tot)
+            if done == 70:
+                reached.append(os.path.exists(path + ".part"))
+                token.cancel()
+        real(frames, path, size, fps, total=total, token=token, on_progress=tick)
 
-    monkeypatch.setattr(sd, "encode_mp4", cancelled)
-    d = _vdlg(qtbot, is_async=lambda: False)
+    monkeypatch.setattr(sd, "encode_mp4", cancel_at_70)
+    d = _vdlg(qtbot, rgb8=_solid(64, 36, (200, 120, 60)), is_async=lambda: False)
     out = tmp_path / "c.mp4"
     d._do_save_video(str(out))
+    assert reached == [True]                     # the cancel came mid-write
     assert d.status.text().startswith("Video cancelled.")
     assert "Saved" not in d.status.text()
     assert not out.exists()
+    assert not (tmp_path / "c.mp4.part").exists()
+
+
+def test_cancel_during_the_before_replay_never_encodes(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.share_dialog as sd
+    encoded = []
+    monkeypatch.setattr(sd, "encode_mp4", lambda *a, **k: encoded.append(1))
+    holder = {}
+
+    def provider():
+        holder["d"]._video_token.cancel()      # Cancel pressed while it replays
+        return _solid(400, 300, (20, 90, 90))
+
+    d = ShareDialog(_rgb(), {"target": "X"}, Settings(), before_provider=provider,
+                    is_async=lambda: False)
+    qtbot.addWidget(d)
+    holder["d"] = d
+    d._do_save_video(str(tmp_path / "b.mp4"))
+    assert encoded == []
+    assert d.status.text().startswith("Video cancelled.")
+
+
+def test_the_wordmark_stays_editable_with_the_plate_off(qtbot, tmp_path, monkeypatch):
+    import nocturne.ui.share_dialog as sd
+    seen = {}
+
+    def fake_render(before, after, card, size, tl=None):
+        seen["card"] = card
+        return iter(())
+
+    monkeypatch.setattr(sd, "render_frames", fake_render)
+    _stub_encode(monkeypatch)
+    d = _vdlg(qtbot, is_async=lambda: False)
+    d.show()
+    d._caption_check.setChecked(False)
+    assert d._wordmark_edit.isEnabled() and d._wordmark_edit.isVisible()
+    d._wordmark_edit.setText("My Obs")
+    d._do_save_video(str(tmp_path / "w.mp4"))
+    assert (seen["card"].title, seen["card"].credit) == ("", "")
+    assert seen["card"].wordmark == "My Obs"
 
 
 def test_failure_says_could_not_save(qtbot, tmp_path, monkeypatch):
@@ -1202,22 +1252,27 @@ def test_close_during_render_lands_nowhere(qtbot, tmp_path, monkeypatch):
     import threading
     import nocturne.ui.share_dialog as sd
     from PySide6.QtCore import QThreadPool
-    gate = threading.Event()
+    gate, started = threading.Event(), threading.Event()
     seen = {}
 
     def blocked(frames, path, size, fps=30, *, total=None, token=None, on_progress=None):
+        started.set()
         gate.wait(5)
         seen["cancelled"] = token.cancelled
+        on_progress(200, total)          # a late count must reach no status
 
     monkeypatch.setattr(sd, "encode_mp4", blocked)
     d = _vdlg(qtbot, is_async=lambda: True)
     d.show()
     d._do_save_video(str(tmp_path / "x.mp4"))
+    assert started.wait(5)               # closed mid-ENCODE, past the replay checks
+    assert d._video_timer.isActive()
     d.reject()
+    assert not d._video_timer.isActive()
     status = d.status.text()
     gate.set()
     pool = QThreadPool.globalInstance()
     qtbot.waitUntil(lambda: pool.activeThreadCount() == 0, timeout=5000)
-    qtbot.wait(50)                       # let the landed signal arrive, if any
+    qtbot.wait(450)                      # landed signal + two timer periods, if any
     assert seen["cancelled"] is True     # done() cancelled the token
     assert d.status.text() == status

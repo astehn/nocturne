@@ -95,3 +95,15 @@ def test_linear_before_is_stretched_like_the_spike(tmp_path):
 
 def test_geometry_names_come_from_pipeline():
     assert GEOMETRY_NAMES == ("Crop", "Rotate", "Flip H", "Flip V", "Trim")
+
+
+def test_a_step_recorded_after_the_snapshot_does_not_change_the_before(tmp_path):
+    p = Project(_base(), str(tmp_path))
+    _geo(p, "Crop", CropParams(bounds=(2, 38, 3, 27)), CropParams(bounds=(2, 38, 3, 27)))
+    _stretch(p)
+    at = p.position
+    pinned = before_image(p, at).data.copy()
+    _geo(p, "Rotate", "", CropParams(rotate=90))       # lands after Share opened
+    assert np.array_equal(before_image(p, at).data, pinned)
+    assert np.array_equal(before_rgb8(p, at), to_rgb8(pinned))
+    assert before_image(p).data.shape != pinned.shape  # unpinned does follow it

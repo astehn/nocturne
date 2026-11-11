@@ -378,9 +378,6 @@ class ShareDialog(QDialog):
         plate_form.addRow(_dim("Object"), self._designation_edit)
         plate_form.addRow(_dim("Name"), self._common_edit)
         plate_form.addRow(_dim("Credit"), text_row)
-        plate_form.addRow(_dim("Wordmark"), self._wordmark_edit)
-        # A field that feeds nothing would read as broken.
-        plate_form.setRowVisible(self._wordmark_edit, before_provider is not None)
 
         style_form = QFormLayout()
         style_form.setContentsMargins(0, 0, 0, 0)
@@ -480,6 +477,18 @@ class ShareDialog(QDialog):
         side.addWidget(_rule())
         side.addWidget(self._caption_check)
         side.addWidget(self._caption_wrap)
+        # Outside the plate's wrap: the end card draws the wordmark whether or
+        # not the title plate is on, so the field must stay editable when it
+        # is off. Hidden without a video to feed — a dead field reads as broken.
+        video_form = QFormLayout()
+        video_form.setContentsMargins(0, 0, 0, 0)
+        video_form.setSpacing(6)
+        video_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        video_form.addRow(_dim("Wordmark"), self._wordmark_edit)
+        self._video_wrap = QWidget()
+        self._video_wrap.setLayout(video_form)
+        self._video_wrap.setVisible(before_provider is not None)
+        side.addWidget(self._video_wrap)
         side.addStretch(1)
         self._side = QWidget()
         self._side.setLayout(side)
@@ -975,8 +984,14 @@ class ShareDialog(QDialog):
         a pool job must not hold the dialog. Writes only `progress[0]`, an int
         the UI timer reads — never a widget."""
         t, b, l, r = crop
-        before = np.ascontiguousarray(provider()[t:b, l:r])
+        # Replaying the before can take seconds before the encoder's first
+        # check, so a Cancel pressed meanwhile is honoured here.
+        token.check()
+        full_before = provider()
+        token.check()
+        before = np.ascontiguousarray(full_before[t:b, l:r])
         after = np.ascontiguousarray(after_full[t:b, l:r])
+        token.check()
         size = video_size(r - l, b - t)
 
         def tick(done: int, _total: int) -> None:

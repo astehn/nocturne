@@ -7739,7 +7739,8 @@ class MainWindow(QMainWindow):
                           annotations_on=self.image_view._annotations is not None,
                           settings_saver=lambda s: save_settings(s, self._settings_path),
                           is_async=lambda: self._async_enabled,
-                          before_provider=lambda p=self.project: before_rgb8(p))
+                          before_provider=lambda p=self.project, at=self.project.position:
+                              before_rgb8(p, at))
         dlg.exec()
         if isinstance(dlg, QObject):    # a test's stand-in is not one
             dlg.deleteLater()           # parented, it outlived exec() with two full frames

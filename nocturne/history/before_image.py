@@ -20,8 +20,12 @@ def _bounds(option):
     return tuple(int(v) for v in b) if b is not None else None
 
 
-def before_image(project) -> AstroImage:
-    entries = project.entries()
+def before_image(project, position: int | None = None) -> AstroImage:
+    """`position` pins the history state the after came from: Share snapshots
+    it on open, so a step landing meanwhile cannot change the before."""
+    if position is None:
+        position = project.position
+    entries = project.entries_through(position)
     geo = [i for i, (name, _) in enumerate(entries) if name in GEOMETRY_NAMES]
     if not geo:
         return project.state_at(0)
@@ -42,12 +46,12 @@ def before_image(project) -> AstroImage:
         else:
             params = CropParams(flip_v=True)
         img = apply_crop_params(img, params)
-    if replayed and tuple(img.data.shape[:2]) == tuple(project.shape_at(project.position)[:2]):
+    if replayed and tuple(img.data.shape[:2]) == tuple(project.shape_at(position)[:2]):
         return img
     return project.state_at(geo[-1] + 1)
 
 
-def before_rgb8(project) -> np.ndarray:
-    img = before_image(project)
+def before_rgb8(project, position: int | None = None) -> np.ndarray:
+    img = before_image(project, position)
     data = linked_stretch(img.data, _LINEAR_TARGET) if img.is_linear else img.data
     return to_rgb8(data)
