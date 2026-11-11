@@ -378,3 +378,9 @@ def test_the_nr_check_returns_before_a_window_is_created():
     src = (ROOT / "nocturne" / "__main__.py").read_text(encoding="utf-8")
     body = src.split("def main()")[1]
     assert body.index('"--check-nr" in sys.argv') < body.index("QApplication(sys.argv)")
+
+
+def test_the_video_check_passes_from_source():
+    r = _run("--check-video")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "video         : OK" in r.stdout

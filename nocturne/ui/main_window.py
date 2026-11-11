@@ -32,6 +32,7 @@ from ..core.crop import (
 )
 from ..core.enhance import (ENHANCE_OPS, sharpen_nebulosity_layers,
                             star_colour_layers)
+from ..core.share import to_rgb8 as share_to_rgb8
 from ..core.export import camera_cards, capture_cards, decimate_for_preview, jpeg_bytes, save_fits, save_png, save_tiff, _to_uint
 # The start page thumbnail saved inside a project: twice the card it is
 # drawn in (welcome.py), so it stays sharp on a Retina screen.
@@ -43,6 +44,7 @@ def _preview_source(img):
     return decimate_for_preview(img, PREVIEW_EDGE)
 from ..core.fits_io import format_integration, import_summary, resolve_integration
 from ..core.image_io import load_tiff
+from ..history.before_image import before_rgb8, has_processing
 from ..history.project import Project
 from ..history.project_store import NewerVersionError, load_project, save_project
 from ..history.step import Step
@@ -423,10 +425,7 @@ def _display(data):
 
 def _share_rgb8(data):
     """The 8-bit RGB frame Share works from; pure, so the pool can make it."""
-    rgb8 = _to_uint(data, 8)
-    if rgb8.ndim == 2:
-        rgb8 = np.stack([rgb8] * 3, axis=2)
-    return rgb8
+    return share_to_rgb8(data)
 
 
 # What a restored solve that no longer fits the picture is stamped with: equal
@@ -7701,11 +7700,15 @@ class MainWindow(QMainWindow):
             return
         self._clear_warning()
         snap = self.project.current()
+        # Read beside the snapshot, not after the pool round trip: the before
+        # must come from the same state as the after.
+        position = self.project.position
+        video_ready = has_processing(self.project, position)
         data = snap.data
         meta = dict(snap.metadata)
         meta["source_label"] = self._source_label
         if not self._async_enabled:
-            self._open_share(_share_rgb8(data), meta)
+            self._open_share(_share_rgb8(data), meta, None, position, video_ready)
             return
         # The 8-bit copy is made on the pool: 0.11 s of the 0.33 s the window
         # froze opening Share on the 33 MP M 8 drizzle (2026-10-06).
@@ -7720,7 +7723,8 @@ class MainWindow(QMainWindow):
             self._share_pending = False
             # Deferred, never exec()'d inside a worker's slot: the job's
             # cleanup would wait the dialog's whole life behind it.
-            QTimer.singleShot(0, self, lambda: self._open_share(rgb8, meta, gen))
+            QTimer.singleShot(0, self, lambda: self._open_share(rgb8, meta, gen, position,
+                                                                video_ready))
 
         def failed(exc) -> None:
             self._share_pending = False
@@ -7728,7 +7732,7 @@ class MainWindow(QMainWindow):
 
         run_async(self._pool, lambda: _share_rgb8(data), landed, failed)
 
-    def _open_share(self, rgb8, meta, gen=None) -> None:
+    def _open_share(self, rgb8, meta, gen=None, position=None, video_ready=True) -> None:
         """Opens on the picture as it was when Share was pressed. Only a
         replaced workspace drops it: a step started meanwhile lands behind the
         modal dialog harmlessly, and a Share press that silently does nothing
@@ -7739,7 +7743,10 @@ class MainWindow(QMainWindow):
                           annotated_rgb8=self._annotated_rgb8(rgb8),
                           annotations_on=self.image_view._annotations is not None,
                           settings_saver=lambda s: save_settings(s, self._settings_path),
-                          is_async=lambda: self._async_enabled)
+                          is_async=lambda: self._async_enabled,
+                          before_provider=lambda box, token, p=self.project, at=position:
+                              before_rgb8(p, at, box, token),
+                          video_ready=video_ready)
         dlg.exec()
         if isinstance(dlg, QObject):    # a test's stand-in is not one
             dlg.deleteLater()           # parented, it outlived exec() with two full frames

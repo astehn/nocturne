@@ -121,3 +121,10 @@ def test_the_model_licence_forbids_training_on_results_and_frees_the_pictures():
     assert ("You may not use images processed with the models to train, fine-tune or test "
             "any other noise-reduction or machine-learning model") in text
     assert "Apart from that, the pictures you make with them are yours to keep, share and sell." in text
+
+
+def test_the_video_encoder_licences_are_named():
+    """The PyAV wheel ships only its own BSD text, not FFmpeg's or x264's, so
+    the bundled encoder's licences are named in the credits instead."""
+    from nocturne.ui.about import about_html
+    assert "FFmpeg (LGPL-2.1+) and x264 (GPL-2+) via PyAV (BSD-3)" in about_html()

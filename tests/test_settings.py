@@ -628,3 +628,16 @@ def test_the_calmer_stack_fields_round_trip_and_default_off(tmp_path):
         p = tmp_path / f"{field}.json"
         save_settings(Settings(**{field: True}), str(p))
         assert getattr(load_settings(str(p)), field) is True, field
+
+
+def test_share_wordmark_round_trips_keeps_empty_and_defaults(tmp_path):
+    import json
+    p = tmp_path / "s.json"
+    assert Settings().share_wordmark == "NOCTURNE"
+    save_settings(Settings(share_wordmark="M. Smith Obs."), str(p))
+    assert load_settings(str(p)).share_wordmark == "M. Smith Obs."
+    # An explicit "" means "no wordmark" — it must not come back as the default.
+    save_settings(Settings(share_wordmark=""), str(p))
+    assert load_settings(str(p)).share_wordmark == ""
+    p.write_text(json.dumps({"handle": "x"}), encoding="utf-8")
+    assert load_settings(str(p)).share_wordmark == "NOCTURNE"

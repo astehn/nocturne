@@ -112,6 +112,9 @@ class Settings:
     # The preset browser: "" = from the screen (list below COMPACT_BELOW_HEIGHT), "grid" or "list".
     preset_view: str = ""
     preset_sort: str = "created"        # one of user_presets.SORT_KEYS
+    # The Share video's end-card wordmark. "" is a real choice (no wordmark),
+    # so it is loaded with .get, never `or`, which would turn it back into the default.
+    share_wordmark: str = "NOCTURNE"
 
 
 def load_settings(path: str) -> Settings:
@@ -173,6 +176,7 @@ def load_settings(path: str) -> Settings:
         plate_user_presets=data.get("plate_user_presets", []) or [],
         preset_view=data.get("preset_view", ""),
         preset_sort=data.get("preset_sort", "created"),
+        share_wordmark=data.get("share_wordmark", "NOCTURNE"),
     )
 
 

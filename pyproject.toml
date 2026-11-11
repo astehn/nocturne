@@ -43,6 +43,10 @@ dependencies = [
     # after anyone could connect it to a cause. 12 MB, accepted deliberately:
     # nine features depend on a good star split.
     "imagecodecs>=2024.1",
+    # H.264 for the Share video. libx264 ships inside the wheel (measured
+    # +44 MB on disk in the macOS bundle, 293M -> 337M; GPL-compatible).
+    # Chosen after the Qt Multimedia probe failed 2026-11-11.
+    "av>=19.0",
 ]
 
 [project.optional-dependencies]

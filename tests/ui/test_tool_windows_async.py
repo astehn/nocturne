@@ -795,3 +795,38 @@ def test_a_share_copy_landing_after_the_window_is_gone_does_nothing(qtbot, tmp_p
     pool.waitForDone(5000)
     qtbot.wait(50)
     assert errors == [] and opened == []
+
+
+def test_share_pins_the_before_where_share_was_pressed(qtbot, tmp_path, monkeypatch, hold):
+    """The position is read beside the snapshot, not after the pool round trip:
+    a step landing meanwhile must not change the video's before."""
+    import numpy as np
+
+    import nocturne.ui.main_window as mw
+    from nocturne.core.crop import CropParams, apply_crop_params
+    from nocturne.history.before_image import before_rgb8
+    from tests.ui.test_main_window import _allow_geometry, _stretched_window
+    win = _allow_geometry(_stretched_window(qtbot, tmp_path))
+    win._async_enabled = True
+    at_press = win.project.position
+    h, w = win.project.shape_at(at_press)[:2]
+    expected = before_rgb8(win.project, at_press, (0, h, 0, w)).copy()
+    got = {}
+
+    class _Fake:
+        def __init__(self, *a, before_provider=None, video_ready=None, **kw):
+            got["provider"], got["ready"] = before_provider, video_ready
+
+        def exec(self):
+            got["shown"] = True
+    monkeypatch.setattr(mw, "ShareDialog", _Fake)
+    held = hold(mw, "_share_rgb8")
+    win._share()
+    held.wait(qtbot)
+    cur = win.project.current()       # lands while the 8-bit copy is made
+    win.project.record_precomputed("Rotate", "", apply_crop_params(cur, CropParams(rotate=90)))
+    assert win.project.position == at_press + 1
+    held.release()
+    qtbot.waitUntil(lambda: "shown" in got, timeout=5000)
+    assert got["ready"] is True
+    assert np.array_equal(got["provider"]((0, h, 0, w), None), expected)
