@@ -2096,3 +2096,85 @@ def test_the_bar_moves_before_the_first_count(qtbot, tmp_path):
     gate.set()
     qtbot.waitUntil(lambda: not dlg._busy, timeout=5000)
     assert dlg.progress.maximum() > 0, "the busy bar ran on after the grade"
+
+
+# --- "this looks like a mosaic" warning (his ask, 2026-11-13) -----------------
+# Forgetting to tick "Stack as mosaic" let an ordinary stack run for a long time
+# and fail at the end. He chose a warning, not an automatic tick.
+
+def _two_pointings(tmp_path, n_each=5, strays=0):
+    for i in range(n_each):
+        _sub_with_pointing(tmp_path, f"a{i}.fit", 10.0, 41.0)
+        _sub_with_pointing(tmp_path, f"b{i}.fit", 10.0, 43.0)
+    for i in range(strays):
+        _sub_with_pointing(tmp_path, f"s{i}.fit", 10.0, 45.0 + 2 * i)
+
+
+def _scanned(qtbot, tmp_path, astap=True):
+    settings = Settings()
+    settings.astap_path = str(fake_tool(tmp_path / "astap")) if astap else ""
+    dlg = StackDialog(settings)
+    qtbot.addWidget(dlg)
+    dlg.folder_edit.setText(str(tmp_path))
+    dlg.scan_pointings()
+    return dlg
+
+
+def test_a_mosaic_left_unticked_is_warned_about(qtbot, tmp_path):
+    _two_pointings(tmp_path)
+    dlg = _scanned(qtbot, tmp_path)
+    assert not dlg.mosaic_check.isChecked()          # a warning, never a tick
+    text = dlg.mosaic_note.text()
+    assert "several pointings" in text and "looks like a mosaic" in text, text
+    assert "Stack as mosaic" in text
+
+
+def test_ticking_mosaic_clears_the_warning_and_unticking_brings_it_back(qtbot, tmp_path):
+    _two_pointings(tmp_path)
+    dlg = _scanned(qtbot, tmp_path)
+    dlg.mosaic_check.setChecked(True)
+    assert dlg.mosaic_note.text() == ""
+    dlg.mosaic_check.setChecked(False)
+    assert "looks like a mosaic" in dlg.mosaic_note.text()
+
+
+def test_without_astap_the_warning_says_what_a_mosaic_needs(qtbot, tmp_path):
+    _two_pointings(tmp_path)
+    dlg = _scanned(qtbot, tmp_path, astap=False)
+    text = dlg.mosaic_note.text()
+    assert "looks like a mosaic" in text and "ASTAP" in text and "Settings" in text, text
+
+
+def test_a_single_pointing_says_nothing(qtbot, tmp_path):
+    for i in range(6):
+        _sub_with_pointing(tmp_path, f"a{i}.fit", 10.0, 41.0)
+    dlg = _scanned(qtbot, tmp_path)
+    assert dlg.mosaic_note.text() == ""
+
+
+def test_a_couple_of_stray_subs_do_not_make_a_mosaic(qtbot, tmp_path):
+    """NGC 281 in his archive: 1621 subs at one pointing plus two single strays
+    read as "3 pointings". Pointings under _MOSAIC_MIN_SUBS subs are strays."""
+    for i in range(8):
+        _sub_with_pointing(tmp_path, f"a{i}.fit", 10.0, 41.0)
+    for i in range(2):
+        _sub_with_pointing(tmp_path, f"s{i}.fit", 10.0, 45.0 + 2 * i)
+    dlg = _scanned(qtbot, tmp_path)
+    assert dlg.mosaic_check.isEnabled()             # the offer itself is unchanged
+    assert dlg.mosaic_note.text() == ""
+
+
+def test_the_mosaic_warning_survives_collapsing_the_help_and_folding(qtbot, tmp_path):
+    """It is what you decide ON, so neither the help toggle nor a folded band
+    may hide it (the visible-note pattern)."""
+    _two_pointings(tmp_path)
+    dlg = _scanned(qtbot, tmp_path)
+    dlg.options_band.set_folded(False)
+    dlg._settings.stack_help_expanded = False
+    dlg._apply_hints_visible()
+    dlg.show()
+    qtbot.waitExposed(dlg)
+    assert dlg.mosaic_note.isVisible()
+    dlg.options_band.set_folded(True)
+    assert dlg.options_band.folded_note.isVisible()
+    assert "looks like a mosaic" in dlg.options_band.folded_note.text()
