@@ -108,31 +108,6 @@ def linked_stretch(data: np.ndarray, target: float) -> np.ndarray:
     return np.clip(out, 0.0, 1.0)
 
 
-def linked_stretch_params(data: np.ndarray, target: float) -> tuple[float, float]:
-    """The (shadow, m) linked_stretch derives, without stretching anything, so a
-    crop can be stretched exactly as the whole frame would be
-    (apply_linked_stretch). The luminance is averaged over the strided sample
-    alone — a full-frame luminance is a 532 MB array on a 133 MP mosaic."""
-    if data.ndim == 2:
-        return _stretch_params(data, target)
-    s = _sample(data)       # strides rows and columns, as _sample(lum) would
-    lum = s.mean(axis=2)
-    if not np.isfinite(lum).any():
-        return _stretch_params(data.mean(axis=2), target)   # only the whole frame can tell
-    return _params_from_sample(lum, target)
-
-
-def apply_linked_stretch(data: np.ndarray, params: tuple[float, float]) -> np.ndarray:
-    """linked_stretch with `params` from linked_stretch_params."""
-    shadow, m = params
-    if data.ndim == 2:
-        return np.clip(_apply_params(data, shadow, m), 0.0, 1.0)
-    out = np.empty_like(data, dtype=np.float32)
-    for ch in range(data.shape[2]):
-        out[..., ch] = _apply_params(data[..., ch], shadow, m)
-    return np.clip(out, 0.0, 1.0)
-
-
 def unlinked_stretch(data: np.ndarray, target: float = _TARGET_BG) -> np.ndarray:
     """Per-channel display stretch: each channel independently stretched so its
     own median hits `target`. Neutralizes a uniform sky-colour cast (twilight,
@@ -560,3 +535,34 @@ def autostretch(img: AstroImage, *, linked: bool = True) -> np.ndarray:
     # neutral_stretch. Matches the committed stretch, so the preview equals the
     # exported result at every step.
     return (neutral_stretch if linked else versioned_unlinked_stretch)(img.data, _TARGET_BG)
+
+
+def neutral_stretch_box(data: np.ndarray, box=None,
+                        target: float = _TARGET_BG) -> np.ndarray:
+    """neutral_stretch (the canvas's linked view of linear data) of data[box],
+    measured on the WHOLE frame, so a crop looks exactly as it does inside the
+    full picture. Only the box is stretched, but measuring still takes a few
+    full-frame planes (stretch_v3_params: peak, data mask, sky smoothing; 564 MB
+    peak on 7680x4320x3) — no more than the canvas already spends drawing the
+    same image. The Share video's before uses it: plain linked_stretch kept the
+    sky's colour cast, so a light-polluted or dual-band stack opened as a
+    saturated red or blue frame the canvas never showed (2026-11-13).
+
+    Follows STRETCH_VERSION 3 only; a new version must be added here too, which
+    test_autostretch's equality with neutral_stretch enforces."""
+    if STRETCH_VERSION != STRETCH_V3:
+        raise NotImplementedError("neutral_stretch_box follows stretch version 3")
+    d = np.asarray(data, dtype=np.float32)
+    t, b, l, r = box if box is not None else (0, d.shape[0], 0, d.shape[1])
+    if d.ndim == 2:
+        shadow, m = _v3_channel_params(d, target)
+        return _apply_params(d[t:b, l:r], shadow, m)
+    meds, ref, shadow, m, data_mask = stretch_v3_params(d, target)
+    shift = (np.asarray(meds, np.float32) - np.float32(ref)).astype(np.float32)
+    mask = data_mask[t:b, l:r]
+    del data_mask
+    with np.errstate(invalid="ignore"):
+        out = _apply_params(d[t:b, l:r] - shift, shadow, m)
+    if not mask.all():
+        out[~mask] = 0.0
+    return out
