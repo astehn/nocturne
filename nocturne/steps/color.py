@@ -4,8 +4,9 @@ from ..core.color import FALLBACK_COLOUR_METHOD, ColorSettings, apply_color
 from ..core.image import AstroImage
 from ..history.step import Step
 
-# Approved word for word (2026-10-10; "stars" for "sky" 2026-11-13). Through two narrow passbands a star's
-# colour no longer tracks its Gaia BP-RP, so there is nothing to calibrate to.
+# Approved word for word (2026-10-10; "stars" for "sky" 2026-11-13). Through
+# two narrow passbands a star's colour no longer tracks its Gaia BP-RP, so
+# there is nothing to calibrate to.
 DUALBAND_MESSAGE = ("Photometric colour isn't meaningful through a dual-band "
                     "filter; balanced on the stars instead.")
 
@@ -134,7 +135,7 @@ class ColorStep(Step):
             self.last_message = (
                 f"Couldn't verify a secure connection to the star catalogue — "
                 f"this is a certificate problem on this computer, not a problem "
-                f"with your network or with Gaia. Used sky balance. ({exc})")
+                f"with your network or with Gaia. Used star balance. ({exc})")
             return None
         except GaiaUnreachable as exc:
             self.last_message = (f"Couldn't reach Gaia ({exc}) — used star balance.")

@@ -1,5 +1,6 @@
 """ColorStep: star balance, what runs when, and what is recorded as having run."""
 import numpy as np
+import pytest
 
 from nocturne.core.color import ColorSettings, apply_color
 from nocturne.core.image import AstroImage
@@ -47,12 +48,8 @@ def test_the_recorded_version_is_the_one_used():
     step = ColorStep()
     step.apply(img, ColorSettings(method="star", version=1))
     assert _rec(step, ColorSettings(method="star", version=1)).version == 1
-    try:
+    with pytest.raises(ValueError):
         step.apply(img, ColorSettings(method="star", version=99))
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("an unknown star balance version must not run")
 
 
 def test_dualband_photometric_steps_aside_to_star_balance():
@@ -123,3 +120,16 @@ def test_ran_does_not_stick_between_applies():
     rec = _rec(step, ColorSettings(method="sky"))
     assert (rec.ran, rec.version) == ("sky", 0)
     assert step.last_gains is None
+
+
+def test_tls_failure_falls_back_to_star_balance_and_says_so():
+    from nocturne.tools.gaia import GaiaTlsError
+
+    def boom(*a, **k):
+        raise GaiaTlsError("bad cert")
+    img, s = _stars(), ColorSettings(method="photometric")
+    step = ColorStep(astap=_FakeAstap(), gaia_query=boom)
+    step.apply(img, s)
+    assert "Used star balance." in step.last_message
+    assert "sky balance" not in step.last_message
+    assert _rec(step, s).ran == "star"
