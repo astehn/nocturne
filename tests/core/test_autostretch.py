@@ -1,3 +1,4 @@
+import pytest
 import numpy as np
 from nocturne.core.image import AstroImage
 from nocturne.core.autostretch import autostretch, _TARGET_BG, linked_stretch, unlinked_stretch
@@ -331,3 +332,21 @@ def test_sampling_changes_no_visible_pixel():
     assert (diff > 1.0 / 255.0).sum() == 0, (
         f"{(diff > 1/255).mean():.4%} of pixels moved by more than one 8-bit "
         f"step (max {diff.max():.5f})")
+
+
+@pytest.mark.parametrize("shape", [(40, 30, 3), (520, 420, 3), (520, 420)])
+def test_neutral_stretch_box_is_the_canvas_stretch_cropped(shape):
+    """The Share video's before stretches only its framing box; it must equal
+    the canvas's neutral_stretch of the whole frame, cropped. The 520x420 cases
+    pass the sampling threshold, and a new STRETCH_VERSION fails here until
+    neutral_stretch_box follows it."""
+    from nocturne.core.autostretch import neutral_stretch, neutral_stretch_box
+    rng = np.random.default_rng(11)
+    d = (rng.random(shape) ** 3 * 0.2).astype(np.float32)
+    d[:5] = 0.0                                          # a black border row band
+    h, w = shape[:2]
+    box = (3, h - 5, 2, w - 7)
+    t, b, l, r = box
+    full = neutral_stretch(d)
+    assert np.array_equal(neutral_stretch_box(d), full)
+    assert np.array_equal(neutral_stretch_box(d, box), full[t:b, l:r])

@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..core.autostretch import apply_linked_stretch, linked_stretch_params
+from ..core.autostretch import neutral_stretch_box
 from ..core.crop import CropParams, apply_crop_params
 from ..core.image import AstroImage
 from ..core.share import to_rgb8
 from ..ui.pipeline import GEOMETRY_NAMES  # pure module, no Qt
-
-_LINEAR_TARGET = 0.205
-
 
 def _bounds(option):
     """(t, b, l, r) from a live CropParams or a reloaded bundle's dict, else None.
@@ -76,13 +73,12 @@ def before_rgb8(project, position: int | None = None, box=None, token=None) -> n
     img = before_image(project, position, token)
     check()
     data = img.data
-    params = linked_stretch_params(data, _LINEAR_TARGET) if img.is_linear else None
-    if box is not None:
+    if img.is_linear:
+        # The canvas's stretch, sky neutralised: what the user saw on opening.
+        data = neutral_stretch_box(data, box)
+    elif box is not None:
         t, b, l, r = box
         data = data[t:b, l:r]
     del img
     check()
-    if params is not None:
-        data = apply_linked_stretch(data, params)
-        check()
     return to_rgb8(data)

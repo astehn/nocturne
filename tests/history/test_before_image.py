@@ -1,6 +1,6 @@
 import numpy as np
 
-from nocturne.core.autostretch import linked_stretch
+from nocturne.core.autostretch import neutral_stretch
 from nocturne.core.crop import CropParams, apply_crop_params
 from nocturne.core.image import AstroImage
 from nocturne.core.share import to_rgb8
@@ -85,12 +85,12 @@ def test_mono_before_rgb8_is_three_channel(tmp_path):
     assert np.array_equal(out[..., 0], out[..., 1]) and np.array_equal(out[..., 1], out[..., 2])
 
 
-def test_linear_before_is_stretched_like_the_spike(tmp_path):
+def test_linear_before_is_stretched_like_the_canvas(tmp_path):
     base = _base(linear=True)
     p = Project(base, str(tmp_path))
     _geo(p, "Flip V", "", CropParams(flip_v=True))
     exp = apply_crop_params(p.state_at(0), CropParams(flip_v=True)).data
-    assert np.array_equal(before_rgb8(p), to_rgb8(linked_stretch(exp, 0.205)))
+    assert np.array_equal(before_rgb8(p), to_rgb8(neutral_stretch(exp)))
 
 
 def test_geometry_names_come_from_pipeline():
@@ -146,7 +146,7 @@ def test_a_boxed_linear_before_is_stretched_from_the_whole_frame(tmp_path):
     p = Project(AstroImage(d, is_linear=True), str(tmp_path))
     box = (0, H, 0, W // 2)
     assert np.array_equal(before_rgb8(p, box=box),
-                          to_rgb8(linked_stretch(d, 0.205))[:, :W // 2])
+                          to_rgb8(neutral_stretch(d))[:, :W // 2])
 
 
 def test_the_replay_honours_the_token(tmp_path):
@@ -189,12 +189,14 @@ def test_a_replay_that_disagrees_with_the_recorded_shape_falls_back(tmp_path):
     assert np.array_equal(got, p.state_at(1).data)
 
 
-@pytest.mark.parametrize("shape", [(H, W, 3), (520, 420, 3), (1001, 903, 3), (1001, 903)])
-def test_split_stretch_is_bitwise_linked_stretch(shape):
-    """The crop path derives its luminance from the sample, not the whole
-    frame; it must still be exactly linked_stretch, below and above the
-    200k-sample threshold."""
-    from nocturne.core.autostretch import apply_linked_stretch, linked_stretch_params
-    d = (np.random.default_rng(3).random(shape) ** 3 * 0.2).astype(np.float32)
-    assert np.array_equal(apply_linked_stretch(d, linked_stretch_params(d, 0.205)),
-                          linked_stretch(d, 0.205))
+def test_a_colour_cast_sky_comes_out_neutral(tmp_path):
+    """His 2026-11-13 report: a dual-band / light-polluted stack opened as a
+    saturated red frame, because the spike's plain linked stretch kept the sky's
+    cast. The canvas neutralises the sky; the video's before must too."""
+    rng = np.random.default_rng(3)
+    d = np.empty((120, 90, 3), np.float32)
+    for c, level in enumerate((0.08, 0.02, 0.015)):     # red-dominated sky
+        d[..., c] = level + rng.normal(0, 0.002, (120, 90))
+    p = Project(AstroImage(d, is_linear=True), str(tmp_path))
+    med = np.median(before_rgb8(p).reshape(-1, 3), axis=0)
+    assert med.max() - med.min() <= 2, med
