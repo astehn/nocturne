@@ -129,6 +129,12 @@ _OPEN_HEIGHT = 700      # what the dialog asks for before it knows its content
 # so every pixel added here goes to them; capped so a big monitor gets a
 # window, not a wall.
 _ROOMY_HEIGHT = 1000
+# A pointing with fewer subs than this is a stray, not a panel, when deciding
+# whether to WARN that the set looks like a mosaic (the offer itself is
+# unchanged). Measured on his archive 2026-11-13: NGC 281 read as 3 pointings —
+# 1621 subs plus two single-sub strays — while the smallest real panels were
+# 15 subs (NGC 1499) and 16 (M 31).
+_MOSAIC_MIN_SUBS = 5
 # The status line with every night unticked (spec 2026-09-28 §9.2).
 NO_NIGHT_STATUS = "No night is ticked — tick one under Nights to stack it."
 ADD_FOLDER_TEXT = "Add folder…"
@@ -242,6 +248,7 @@ class StackDialog(QDialog):
         self.mosaic_check = QCheckBox("Stack as mosaic")
         self.mosaic_check.toggled.connect(lambda *_: self._auto_output_path())
         self.mosaic_check.toggled.connect(lambda *_: self._sync_exclusive())
+        self.mosaic_check.toggled.connect(lambda *_: self._sync_mosaic_note())
         self.mosaic_check.setEnabled(False)
         self.mosaic_check.setToolTip(
             "Available when the subs cover more than one pointing")
@@ -338,6 +345,14 @@ class StackDialog(QDialog):
         self.mosaic_hint = _Hint(
             "Several pointings assembled into one wide image — needs ASTAP, "
             "and takes considerably longer.")
+        # "This looks like a mosaic": forgetting the tick let an ordinary stack
+        # run for a long time and then fail (his ask, 2026-11-13). A warning,
+        # not an automatic tick — his choice, and multi-night framing drift
+        # must never switch the stacking method on its own.
+        self.mosaic_note = _Hint("")
+        self.mosaic_note.setStyleSheet(f"color: {theme.WARNING};")
+        self.mosaic_note.setVisible(False)
+        self._mosaic_panels = 0
         self.drizzle_note = _Hint("")
         self.drizzle_hint = _Hint(
             "Rebuilds the image on a 2× grid instead of enlarging it — finer "
@@ -365,6 +380,7 @@ class StackDialog(QDialog):
         result.body.addWidget(self.crop_check)
         result.body.addWidget(_Hint(TRIM_NOTE))
         result.body.addWidget(self.mosaic_check)
+        result.body.addWidget(self.mosaic_note)
         result.body.addWidget(self.mosaic_hint)
         result.body.addWidget(self.exclusive_note)
         result.body.addWidget(self.drizzle_check)
@@ -935,6 +951,8 @@ class StackDialog(QDialog):
         return discover_panels(read_pointings(paths, on_progress=on_progress), 0.56)
 
     def _show_panels(self, panels: list) -> None:
+        self._mosaic_panels = sum(len(p.paths) >= _MOSAIC_MIN_SUBS for p in panels)
+        self._sync_mosaic_note()
         if len(panels) < 2:
             self.mosaic_check.setChecked(False)
             self.mosaic_check.setEnabled(False)
@@ -956,6 +974,23 @@ class StackDialog(QDialog):
             "Stack each pointing separately, plate-solve them, and assemble one "
             "wide image")
         self._sync_exclusive()
+
+    def _sync_mosaic_note(self) -> None:
+        # No count in the text: the checkbox beside it already names one, and
+        # this one leaves strays out, so two different numbers would sit side
+        # by side (M 31: 39 on the box, 34 here).
+        if self._mosaic_panels < 2 or self.mosaic_check.isChecked():
+            text = ""
+        elif astap_valid(self._settings):
+            text = ("These subs cover several pointings — this looks like a mosaic. "
+                    "Tick “Stack as mosaic”, or an ordinary stack is likely to fail.")
+        else:
+            text = ("These subs cover several pointings — this looks like a mosaic, "
+                    "which needs ASTAP: set its path in Settings. An ordinary "
+                    "stack is likely to fail.")
+        self.mosaic_note.setText(text)
+        self.mosaic_note.setVisible(bool(text))
+        self._sync_folded_note()
 
     def _hints_showing(self) -> bool:
         """What the link's arrow claims: explanations actually on screen.
@@ -1040,7 +1075,7 @@ class StackDialog(QDialog):
         """Folding hides the groups, never what they warn about: the combined
         mosaic+drizzle cost, and — once Drizzle is ticked — its time and size
         estimate. The same rule `_apply_hints_visible` follows."""
-        notes = [self.exclusive_note.text()]
+        notes = [self.mosaic_note.text(), self.exclusive_note.text()]
         if self.drizzle_check.isChecked():
             notes.append(self.drizzle_note.text())
         self.options_band.set_folded_note("  ".join(n for n in notes if n))
@@ -1066,7 +1101,7 @@ class StackDialog(QDialog):
         # the numbers you needed to choose, or left a disabled control with no
         # reason anywhere on screen.
         always = {self.drizzle_note, self.exclusive_note, self.background_note,
-                  self.name_note}
+                  self.name_note, self.mosaic_note}
         for hint in self.findChildren(_Hint):
             if hint not in always:
                 hint.setVisible(shown)
