@@ -8,7 +8,7 @@ from ..settings import Settings, astap_valid, graxpert_valid, rcastro_valid
 from ..steps.factory import make_step
 from ..steps.noise_sharpen import FREE
 from ..tools.base import run_cli
-from .color import ColorSettings
+from .color import DEFAULT_COLOUR_METHOD, ColorSettings
 from .crop import CropParams, detect_content_bounds
 from .filter_type import detect_data_type
 from .image import AstroImage
@@ -184,7 +184,7 @@ def build_auto_plan(img, settings: Settings, include_crop: bool = True,
         plan.append(("crop", _auto_crop_option(img)))
     if graxpert_valid(settings):
         plan.append(("background", AUTO_BACKGROUND_STRENGTH))
-    method = "photometric" if astap_valid(settings) else "sky"
+    method = "photometric" if astap_valid(settings) else DEFAULT_COLOUR_METHOD
     plan.append(("color", ColorSettings(method=method)))
     if rcastro_valid(settings):
         plan.append(("deconvolution", AUTO_DECONVOLUTION[by_data]))

@@ -498,3 +498,70 @@ def test_a_real_crop_is_never_renamed(tmp_path):
                 ""):
         step = {"name": "Crop", "stage": "crop", "cached": True, "option": opt}
         assert restored_entry(step) == ("Crop", opt)
+
+
+def _colour_cast_base():
+    from tests.core.test_star_balance import _field
+    return AstroImage(_field(), is_linear=True, metadata={"gain": 10})
+
+
+def _colour_project(tmp_path, option):
+    from nocturne.core.color import ColorSettings  # noqa: F401
+    p = Project(_colour_cast_base(), str(tmp_path / "cache"))
+    step = make_step("color", Settings())
+    result = step.apply(p.current(), option)
+    # as the panel records it: what RAN, not only what was chosen
+    p.record_precomputed("Color", step.recorded_option(option), result)
+    return p
+
+
+def _reopen(p, tmp_path):
+    save_project(p, str(tmp_path / "c.nocturne"))
+    return load_project(str(tmp_path / "c.nocturne"), str(tmp_path / "reopen"))
+
+
+def test_a_sky_project_replays_byte_identical(tmp_path):
+    from nocturne.core.color import ColorSettings
+    p = _colour_project(tmp_path, ColorSettings(method="sky"))
+    before = p.state_at(p.position).data.copy()
+    # the sky result really differs from what star balance would make
+    star = _colour_project(tmp_path / "s", ColorSettings(method="star"))
+    assert not np.array_equal(before, star.state_at(star.position).data)
+    loaded = _reopen(p, tmp_path)
+    with zipfile.ZipFile(str(tmp_path / "c.nocturne")) as zf:
+        m = json.loads(zf.read("manifest.json"))
+    assert m["steps"][0]["cached"] is False                     # replayed, not cached
+    assert m["steps"][0]["option"]["method"] == "sky"
+    assert np.array_equal(loaded.project.state_at(loaded.project.position).data, before)
+
+
+def test_a_star_project_replays_at_its_recorded_version(tmp_path):
+    from nocturne.core.color import ColorSettings
+    from nocturne.core import star_balance as sb
+    p = _colour_project(tmp_path, ColorSettings(method="star"))
+    before = p.state_at(p.position).data.copy()
+    loaded = _reopen(p, tmp_path)
+    with zipfile.ZipFile(str(tmp_path / "c.nocturne")) as zf:
+        m = json.loads(zf.read("manifest.json"))
+    opt = m["steps"][0]["option"]
+    assert m["steps"][0]["cached"] is False
+    assert opt["method"] == "star" and opt["ran"] == "star"
+    assert opt["version"] == sb.STAR_BALANCE_VERSION == 1
+    assert np.array_equal(loaded.project.state_at(loaded.project.position).data, before)
+    assert is_reproducible("color", {"method": "star", "version": 1,
+                                     "neutralize_background": True, "remove_green": False}) is True
+
+
+def test_the_recorded_version_reaches_the_step_on_replay(tmp_path, monkeypatch):
+    # A later tuning change adds version 2: a project saved at 1 must still ask
+    # for 1. Pin it by recording what the step is told on reopen.
+    from nocturne.core.color import ColorSettings
+    from nocturne.core import star_balance as sb
+    p = _colour_project(tmp_path, ColorSettings(method="star"))
+    save_project(p, str(tmp_path / "c.nocturne"))
+    seen = []
+    real = sb.apply_star_balance
+    monkeypatch.setattr(sb, "apply_star_balance",
+                        lambda img, version: (seen.append(version), real(img, version=version))[1])
+    load_project(str(tmp_path / "c.nocturne"), str(tmp_path / "reopen"))
+    assert seen == [1]
