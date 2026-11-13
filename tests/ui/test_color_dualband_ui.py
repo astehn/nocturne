@@ -40,6 +40,6 @@ def test_busy_label_does_not_promise_a_calibration_that_will_step_aside(qtbot, t
     lp = AstroImage(np.zeros((8, 8, 3), np.float32), is_linear=True, metadata={"filter": "LP"})
     ir = AstroImage(np.zeros((8, 8, 3), np.float32), is_linear=True, metadata={"filter": "IRCUT"})
     photometric = ColorSettings(method="photometric")
-    assert win._busy_label_for("color", photometric, lp) == "Balancing colour on the sky…"
+    assert win._busy_label_for("color", photometric, lp) == "Balancing colour on the stars…"
     assert win._busy_label_for("color", photometric, ir) == "Calibrating colour…"
     assert win._busy_label_for("color", photometric) == "Calibrating colour…"

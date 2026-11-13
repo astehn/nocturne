@@ -68,9 +68,9 @@ SPLIT_STAGES = frozenset({"star_reduction", "saturation", "green_fringe",
                           "narrowband", "color_balance", "starless_levels"})
 _FREE_SPLIT = "Nocturne (free star split)"
 _FALLBACKS: dict[str, str] = {
-    # The provenance report's wording too (provenance.SKY_BALANCE_ENGINE):
-    # the two said "sky balance" and "built-in sky balance" for one thing.
-    "color": "Nocturne (built-in sky balance)",
+    # The provenance report's wording too (provenance.STAR_BALANCE_ENGINE):
+    # the two said different things for one thing before.
+    "color": "Nocturne (built-in star balance)",
     "deconvolution": "Nocturne (built-in sharpen)",
     "noise_sharpen": "Nocturne (built-in denoise)",
     "star_reduction": _FREE_SPLIT,

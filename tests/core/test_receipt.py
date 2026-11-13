@@ -43,7 +43,7 @@ def test_an_unconfigured_tool_names_the_fallback_AND_the_reason(tmp_path):
 def test_the_fallback_is_named_specifically_where_that_is_knowable():
     """Each name checked against the step's own apply(), not assumed. The four
     star steps share steps/star_split.resolve_star_split, so they share a name."""
-    assert "sky balance" in engine_for("color", Settings()).engine
+    assert "star balance" in engine_for("color", Settings()).engine
     assert "built-in sharpen" in engine_for("deconvolution", Settings()).engine
     # De-green Stars, Narrowband and Colour Balance were listed here too; none
     # splits without a splitter (see the tests below).

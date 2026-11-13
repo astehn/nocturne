@@ -5,7 +5,7 @@ from .core.curves import normalize_curves
 import json
 from dataclasses import dataclass, field
 
-from .core.color import ColorSettings
+from .core.color import DEFAULT_COLOUR_METHOD, ColorSettings
 from .core.crop import CropParams
 from .ui.pipeline import STEP_NAME, ENHANCE_NAMES, GEOMETRY_NAMES
 
@@ -107,7 +107,7 @@ def serialize_option(stage_id, option, *, project: bool = False):
     shape to another picture, where one picture's pixel bounds mean nothing."""
     raw = option
     if stage_id in _OBJECT_OPTIONS and isinstance(option, dict):
-        option = _from_saved_dict(stage_id, option)
+        option = _from_saved_dict(stage_id, option, project=project)
     if stage_id == "crop":
         c = option if isinstance(option, CropParams) else CropParams()
         out = {"aspect": c.aspect, "rotate": c.rotate, "flip_h": c.flip_h, "flip_v": c.flip_v}
@@ -132,6 +132,16 @@ def serialize_option(stage_id, option, *, project: bool = False):
             out["fell_back"] = bool(c.fell_back)
         if c.stepped_aside:
             out["stepped_aside"] = True
+        if c.ran:
+            out["ran"] = c.ran
+        if c.star_fallback:
+            out["star_fallback"] = c.star_fallback
+        if c.method == "star" or c.ran == "star":
+            # The star balance version, so a reopened project replays the
+            # tuning it was made with, as Stretch does with STRETCH_VERSION.
+            # Never 0: a star record that skipped recorded_option still pins it.
+            from .core.star_balance import STAR_BALANCE_VERSION
+            out["version"] = int(c.version or STAR_BALANCE_VERSION)
         return out
     if stage_id == "tint":
         t, w = option if option else (0.0, 0.0)
@@ -219,9 +229,9 @@ def serialize_option(stage_id, option, *, project: bool = False):
     return option  # background / noise_sharpen: str
 
 
-def _from_saved_dict(stage_id, value: dict):
+def _from_saved_dict(stage_id, value: dict, *, project: bool = False):
     """The settings object for an option stored as a dict."""
-    return deserialize_option(stage_id, value)
+    return deserialize_option(stage_id, value, project=project)
 
 
 def deserialize_option(stage_id, value, *, project: bool = False):
@@ -239,7 +249,23 @@ def deserialize_option(stage_id, value, *, project: bool = False):
     if stage_id == "color":
         import dataclasses
         fields = {f.name for f in dataclasses.fields(ColorSettings)}
-        return ColorSettings(**{k: v for k, v in value.items() if k in fields})
+        kept = {k: v for k, v in value.items() if k in fields}
+        # A record with no method was written before the field existed, when
+        # sky balance was the only one: pinned here, never by the dataclass
+        # default, which is now "star".
+        method = kept.get("method", "sky")
+        if not project:
+            # A recipe or preset applies a decision to a NEW picture: a "sky"
+            # one runs star balance (Andreas, 2026-11-13). Only a project
+            # replays "sky" as made. What ran and at which version belong to
+            # the picture it was made on, so they are not carried over.
+            if method == "sky":
+                method = DEFAULT_COLOUR_METHOD
+            kept.pop("ran", None)
+            kept.pop("version", None)
+            kept.pop("star_fallback", None)
+        kept["method"] = method
+        return ColorSettings(**kept)
     if stage_id == "tint":
         return tuple(value) if value else (0.0, 0.0)
     if stage_id == "levels":

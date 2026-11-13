@@ -137,7 +137,9 @@ def is_reproducible(stage, option) -> bool:
         return True
     ser = _ensure_serialized(stage, option)
     if stage == "color":
-        return isinstance(ser, dict) and ser.get("method") == "sky"
+        # Sky balance and star balance are deterministic numpy; photometric
+        # needs the network and a solver, so it stays cached.
+        return isinstance(ser, dict) and ser.get("method") in ("sky", "star")
     if stage == "saturation":
         try:
             return float(ser[1]) == 0.0

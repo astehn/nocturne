@@ -1519,8 +1519,8 @@ def test_auto_enhance_help_lists_the_plan_that_is_actually_built(_no_nr_models):
     assert f"<b>Deconvolution</b> at <i>{AUTO_DECONVOLUTION['broadband']}</i> " \
            f"(<i>{AUTO_DECONVOLUTION['dualband']}</i> on dual-band data)" in b
     assert "<b>only if RC-Astro is set up</b>" in b
-    assert full["color"].method == "photometric" and plan["color"].method == "sky"
-    assert "<b>photometric</b> if ASTAP is set up" in b and "sky-neutralise" in b
+    assert full["color"].method == "photometric" and plan["color"].method == "star"
+    assert "<b>photometric</b> if ASTAP is set up" in b and "<b>star balance</b>" in b
 
 
 def test_auto_enhance_help_names_the_stages_it_refuses_to_run(_no_nr_models):
@@ -2237,7 +2237,7 @@ def test_color_help_matches_what_photometric_colour_does():
     img = AstroImage(np.full((16, 16, 3), 0.3, np.float32), is_linear=True,
                      metadata={"filter": "LP"})
     step.apply(img, ColorSettings(method="photometric"))
-    assert step.last_message == DUALBAND_MESSAGE and step.fell_back is True
+    assert step.last_message.startswith(DUALBAND_MESSAGE) and step.fell_back is True
     # It reaches the result line (Output), not the step log, so the help names
     # neither: "tells you so" is true of the manual step and of Auto Enhance.
     assert "and tells you so" in b and "the log says so" not in b

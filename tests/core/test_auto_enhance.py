@@ -85,10 +85,11 @@ def test_plan_uses_photometric_color_when_astap_available(tmp_path):
     assert options["color"].method == "photometric"
 
 
-def test_plan_uses_sky_color_without_astap():
+def test_auto_enhance_without_astap_picks_star():
+    from nocturne.core.color import DEFAULT_COLOUR_METHOD
     plan = build_auto_plan(_broadband_stack(), Settings())
     options = dict(plan)
-    assert options["color"].method == "sky"
+    assert options["color"].method == DEFAULT_COLOUR_METHOD == "star"
 
 
 def test_plan_uses_photometric_color_for_dualband_data_too(tmp_path):

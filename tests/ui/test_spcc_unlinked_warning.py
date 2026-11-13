@@ -68,7 +68,7 @@ def test_committing_unlinked_after_spcc_is_logged(qtbot, tmp_path, monkeypatch):
     win._panel.apply_btn.click(); qtbot.wait(50)
     assert win.project.entries()[-1][1] == new_stretch_option(0.24, False), "fixture"
     added = win.activity.text()[len(before):].lower()
-    assert "photometric" in added and "discarded" in added
+    assert "colour calibration (spcc)" in added and "discarded" in added
 
 
 def test_committing_linked_after_spcc_logs_nothing_about_it(qtbot, tmp_path, monkeypatch):

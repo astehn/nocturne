@@ -134,9 +134,56 @@ def test_color_option_round_trips_method():
     assert s["method"] == "photometric"
     back = deserialize_option("color", s)
     assert back.method == "photometric"
-    # default/legacy (no method key) -> "sky"
+    # default/legacy (no method key) -> "sky" in a saved project
     assert deserialize_option("color", {"neutralize_background": True,
-                                        "remove_green": False}).method == "sky"
+                                        "remove_green": False},
+                              project=True).method == "sky"
+
+
+def test_star_settings_round_trip():
+    from nocturne.core.color import ColorSettings
+    from nocturne.recipe import serialize_option, deserialize_option
+    s = serialize_option("color", ColorSettings(method="star", ran="star", version=1),
+                         project=True)
+    assert s["method"] == "star" and s["ran"] == "star" and s["version"] == 1
+    back = deserialize_option("color", s, project=True)
+    assert (back.method, back.ran, back.version) == ("star", "star", 1)
+    # a saved dict goes through serialize unchanged (the project flag reaches it)
+    sky = {"neutralize_background": True, "remove_green": False,
+           "method": "sky", "ran": "sky"}
+    assert serialize_option("color", sky, project=True) == sky
+
+
+def test_version_is_written_only_for_star():
+    from nocturne.core.color import ColorSettings
+    from nocturne.recipe import serialize_option
+    assert "version" not in serialize_option("color", ColorSettings(method="sky", ran="sky"))
+    assert "ran" not in serialize_option("color", ColorSettings(method="sky"))
+    # photometric that fell back to star balance ran star: the version is kept
+    fb = serialize_option("color", ColorSettings(method="photometric", ran="star",
+                                                 version=1, fell_back=True))
+    assert fb["version"] == 1 and fb["ran"] == "star"
+
+
+def test_a_missing_method_reads_as_sky_in_a_project():
+    from nocturne.recipe import deserialize_option
+    got = deserialize_option("color", {"neutralize_background": True,
+                                       "remove_green": False}, project=True)
+    assert got.method == "sky"
+
+
+def test_a_sky_recipe_runs_star_balance_on_a_new_image():
+    from nocturne.recipe import deserialize_option
+    assert deserialize_option("color", {"method": "sky", "ran": "sky",
+                                        "neutralize_background": True,
+                                        "remove_green": False}).method == "star"
+    assert deserialize_option("color", {"neutralize_background": True,
+                                        "remove_green": False}).method == "star"
+    # photometric stays the choice; and what ran / which version belongs to
+    # the picture it was made on, not the new one
+    got = deserialize_option("color", {"method": "star", "ran": "star", "version": 7})
+    assert (got.method, got.ran, got.version) == ("star", "", 0)
+    assert deserialize_option("color", {"method": "photometric"}).method == "photometric"
 
 
 def test_enhance_taps_are_captured():
@@ -508,3 +555,19 @@ def test_a_recipe_without_the_flag_replays_as_linked():
     from nocturne.steps.stretch_step import parse_stretch_linked
     assert parse_stretch_linked(deserialize_option(
         "stretch", serialize_option("stretch", 0.6))) is True
+
+
+def test_a_star_record_without_a_version_still_pins_one():
+    from nocturne.core.star_balance import STAR_BALANCE_VERSION
+    from nocturne.recipe import serialize_option
+    got = serialize_option("color", ColorSettings(method="star"), project=True)
+    assert got["version"] == STAR_BALANCE_VERSION
+
+
+def test_star_fallback_reason_survives_a_project_save_but_not_a_recipe():
+    s = serialize_option("color", ColorSettings(method="star", ran="sky", version=0,
+                                                star_fallback="implausible"), project=True)
+    assert s["star_fallback"] == "implausible"
+    assert deserialize_option("color", s, project=True).star_fallback == "implausible"
+    assert deserialize_option("color", s).star_fallback == ""      # recipe: the picture's own
+    assert "star_fallback" not in serialize_option("color", ColorSettings(method="star"))
