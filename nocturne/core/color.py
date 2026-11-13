@@ -33,6 +33,9 @@ class ColorSettings:
     # balance version used, 0 when star balance did not run.
     ran: str = ""
     version: int = 0
+    # Why star balance fell back to sky balance: "too_few_stars", "implausible"
+    # or "" (did not fall back, or recorded before the reason was kept).
+    star_fallback: str = ""
 
 
 # Luminance weights (Rec. 709), used to hold brightness constant while colour

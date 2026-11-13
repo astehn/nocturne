@@ -69,6 +69,15 @@ def _colour_method(ser: dict) -> str:
     return _COLOUR_METHOD.get(m, str(m))
 
 
+_STAR_FALLBACK_TEXT = {"too_few_stars": "too few stars",
+                       "implausible": "implausible star colours"}
+
+
+def _star_fallback_why(ser: dict) -> str:
+    """Old records kept no reason and could only have been too few stars."""
+    return _STAR_FALLBACK_TEXT.get(ser.get("star_fallback"), "too few stars")
+
+
 def _colour_headline(ser: dict) -> str:
     method = _colour_method(ser)
     if ser.get("stepped_aside"):
@@ -76,7 +85,7 @@ def _colour_headline(ser: dict) -> str:
     if ser.get("fell_back"):
         return f"{method} → fell back to {_colour_landed(ser)}"
     if ser.get("method") == "star" and ser.get("ran") == "sky":
-        return f"{method} → sky balance (too few stars)"
+        return f"{method} → sky balance ({_star_fallback_why(ser)})"
     return method
 
 
@@ -89,8 +98,11 @@ def _colour_params(ser: dict) -> list[str]:
     elif ser.get("fell_back"):
         lines.append(f"- result: {landed} — photometric calibration could not run")
     elif ser.get("method") == "star" and ser.get("ran") == "sky":
-        lines.append("- result: sky balance — too few stars to balance on")
-    if ser.get("method") == "star" and ser.get("version"):
+        why = {"too_few_stars": "too few stars to balance on",
+               "implausible": "the star colours gave an implausible correction"
+               }.get(ser.get("star_fallback"), "too few stars to balance on")
+        lines.append(f"- result: sky balance — {why}")
+    if ser.get("method") == "star" and ser.get("version") and ser.get("ran") != "sky":
         lines.append(f"- star balance version: {ser['version']}")
     # Settings with no control on today's panel: named only when they differ
     # from what every Colour step does, so the block is not padded with them.

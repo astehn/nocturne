@@ -4888,7 +4888,8 @@ class MainWindow(QMainWindow):
             # ever after one.
             import dataclasses
             committed = dataclasses.replace(committed, fell_back=False,
-                                            stepped_aside=False, ran="", version=0)
+                                            stepped_aside=False, ran="", version=0,
+                                            star_fallback="")
         if not _same_option(read(), committed):
             return False
         tints = [opt for n, opt in tail[at + 1:] if n == STEP_NAME["tint"]]

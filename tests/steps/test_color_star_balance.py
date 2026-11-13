@@ -89,8 +89,9 @@ def test_star_balance_with_too_few_stars_falls_back_to_sky():
 def test_photometric_failure_then_too_few_stars_says_both():
     step = ColorStep(astap=None, gaia_query=None)
     step.apply(_stars(n=5), ColorSettings(method="photometric"))
-    assert "ASTAP not set" in step.last_message
-    assert "used sky balance" in step.last_message
+    assert step.last_message == ("ASTAP not set \u2014 star balance couldn't run either "
+                                 "(too few stars to balance on) \u2014 used sky balance.")
+    assert "used star balance" not in step.last_message
     assert _rec(step, ColorSettings(method="photometric")).ran == "sky"
 
 
@@ -133,3 +134,41 @@ def test_tls_failure_falls_back_to_star_balance_and_says_so():
     assert "Used star balance." in step.last_message
     assert "sky balance" not in step.last_message
     assert _rec(step, s).ran == "star"
+
+
+def test_implausible_correction_is_reported_as_such():
+    img = AstroImage(_field(cast=np.array([4.0, 1.0, 0.86], np.float32)),
+                     is_linear=True, metadata={})
+    s = ColorSettings(method="star")
+    step = ColorStep()
+    step.apply(img, s)
+    assert step.last_message == ("The star colours gave an implausible correction "
+                                 "\u2014 used sky balance.")
+    rec = _rec(step, s)
+    assert rec.ran == "sky" and rec.star_fallback == "implausible"
+
+
+def test_too_few_stars_records_its_reason():
+    step = ColorStep()
+    s = ColorSettings(method="star")
+    step.apply(_stars(n=5), s)
+    assert _rec(step, s).star_fallback == "too_few_stars"
+    step.apply(_stars(), s)               # a later success clears it
+    assert _rec(step, s).star_fallback == ""
+
+
+def test_sky_fallback_on_a_bordered_master_is_not_black():
+    d = _field(n_stars=5)
+    d[:, :200] = 0                        # 33% untrimmed border
+    step = ColorStep()
+    out = step.apply(AstroImage(d, is_linear=True, metadata={}), ColorSettings(method="star"))
+    assert step.ran == "sky"
+    assert (out.data[:, :200] == 0).all() and np.median(out.data[:, 200:]) > 0.01
+
+
+def test_a_bordered_master_runs_star_balance():
+    d = _field()
+    d[:, :200] = 0
+    step = ColorStep()
+    out = step.apply(AstroImage(d, is_linear=True, metadata={}), ColorSettings(method="star"))
+    assert step.ran == "star" and np.median(out.data[:, 200:]) > 0.01

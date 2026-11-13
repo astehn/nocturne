@@ -398,7 +398,7 @@ def test_auto_enhance_log_and_warning_are_unchanged(qtbot, tmp_path, monkeypatch
     assert win.output_panel.toPlainText() == (
         "Auto-enhanced (Natural) \u2014 7 steps. Background and Deconvolution were left "
         "out: GraXpert and RC-Astro aren't set up. "
-        "Too few stars to balance on, or the correction was implausible \u2014 used sky balance.")
+        "Too few stars to balance on \u2014 used sky balance.")
 
 
 def _crop_state(win):

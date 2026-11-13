@@ -52,7 +52,7 @@ def test_nebula_under_stars_does_not_steer_the_gains():
 def test_sky_medians_are_unchanged_by_the_star_gains():
     d = _field()
     neut = background_neutralize(d)
-    out, res = sb.apply_star_balance(AstroImage(d))
+    out, res, _why = sb.apply_star_balance(AstroImage(d))
     assert res is not None
     mask = _background_mask(neut.mean(axis=2))
     before = [np.median(neut[..., c][mask]) for c in range(3)]
@@ -65,7 +65,7 @@ def test_sky_medians_are_unchanged_by_the_star_gains():
 def test_a_black_border_stays_black_and_does_not_move_the_gains():
     clean = _field()
     d = _field(border=40)
-    out, res = sb.apply_star_balance(AstroImage(d))
+    out, res, _why = sb.apply_star_balance(AstroImage(d))
     assert res is not None
     assert (out.data[:40] == 0).all() and (out.data[:, :40] == 0).all()
     np.testing.assert_allclose(_gains(d), _gains(clean), rtol=0.01)
@@ -74,7 +74,7 @@ def test_a_black_border_stays_black_and_does_not_move_the_gains():
 def test_too_few_stars_gives_none_and_sky_balance():
     d = _field(n_stars=5)
     assert sb.star_balance_gains(background_neutralize(d)) is None
-    out, res = sb.apply_star_balance(AstroImage(d))
+    out, res, _why = sb.apply_star_balance(AstroImage(d))
     assert res is None
     np.testing.assert_array_equal(out.data, background_neutralize(d))
 
@@ -86,14 +86,14 @@ def test_absurd_gains_give_none():
 
 def test_deterministic():
     d = _field()
-    a, _ = sb.apply_star_balance(AstroImage(d))
-    b, _ = sb.apply_star_balance(AstroImage(d))
+    a, _, _ = sb.apply_star_balance(AstroImage(d))
+    b, _, _ = sb.apply_star_balance(AstroImage(d))
     assert a.data.tobytes() == b.data.tobytes()
 
 
 def test_mono_is_untouched():
     m = np.random.default_rng(0).random((20, 20)).astype(np.float32)
-    out, res = sb.apply_star_balance(AstroImage(m))
+    out, res, _why = sb.apply_star_balance(AstroImage(m))
     assert res is None
     np.testing.assert_array_equal(out.data, m)
 
@@ -101,3 +101,53 @@ def test_mono_is_untouched():
 def test_unknown_version_raises():
     with pytest.raises(ValueError):
         sb.apply_star_balance(AstroImage(_field(n_stars=5)), version=99)
+
+
+def test_reason_distinguishes_too_few_from_implausible():
+    _, res, why = sb.apply_star_balance(AstroImage(_field(n_stars=5)))
+    assert res is None and why == sb.TOO_FEW_STARS
+    _, res, why = sb.apply_star_balance(
+        AstroImage(_field(cast=np.array([4.0, 1.0, 0.86], np.float32))))
+    assert res is None and why == sb.IMPLAUSIBLE
+    _, res, why = sb.apply_star_balance(AstroImage(_field()))
+    assert res is not None and why == ""
+
+
+def test_sky_neutralize_is_byte_identical_without_a_border():
+    # No zero pixel: must equal background_neutralize so version 1 stays honest.
+    for d in (_field(), _field(n_stars=5, seed=9)):
+        assert sb.sky_neutralize(d.copy()).tobytes() == background_neutralize(d.copy()).tobytes()
+
+
+def _bordered(kind, frac):
+    d = _field()
+    h, w = d.shape[:2]
+    yy, xx = np.mgrid[:h, :w]
+    m = (xx < frac * w) if kind == "straight" else ((xx / w + yy / h) < frac * 2)
+    d = d.copy()
+    d[m] = 0
+    return d, m
+
+
+import pytest
+
+
+@pytest.mark.parametrize("kind,frac", [("straight", 0.30), ("wedge", 0.40)])
+def test_a_big_black_border_does_not_blacken_the_picture(kind, frac):
+    d, m = _bordered(kind, frac)
+    assert 0.25 < m.mean() < 0.5              # past where the unmasked path dies
+    out, res, why = sb.apply_star_balance(AstroImage(d))
+    assert res is not None, why
+    assert (out.data[m] == 0).all()
+    valid = ~m
+    assert np.median(out.data[valid]) > 0.01
+    ref = _gains(_field())
+    np.testing.assert_allclose(res.gains, ref, rtol=0.05)
+
+
+def test_the_sky_fallback_image_is_border_safe_too():
+    d, m = _bordered("straight", 0.30)
+    d = np.where(m[..., None], 0, _field(n_stars=5)).astype(np.float32)
+    out, res, why = sb.apply_star_balance(AstroImage(d))
+    assert res is None and why == sb.TOO_FEW_STARS
+    assert (out.data[m] == 0).all() and np.median(out.data[~m]) > 0.01

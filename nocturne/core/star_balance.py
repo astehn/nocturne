@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from nocturne.core.color import _background_mask, background_neutralize
+from nocturne.core.color import _background_mask
 from nocturne.core.image import AstroImage
 from nocturne.core.spcc import _SAT, _measure
 
@@ -40,29 +40,60 @@ class StarBalanceResult:
     n_stars: int
 
 
-def star_balance_gains(data: np.ndarray) -> StarBalanceResult | None:
-    """Gains (R, 1, B) from the median star colour of sky-neutralised linear
-    data, or None when too few usable stars or any gain is absurd."""
+# Why star balance did not run (the step words them, provenance records them).
+TOO_FEW_STARS = "too_few_stars"
+IMPLAUSIBLE = "implausible"
+
+
+def _gains_or_reason(data: np.ndarray) -> tuple[StarBalanceResult | None, str]:
     d = np.clip(np.asarray(data, np.float32), 0.0, None)
     m = _measure(d)
     if m is None:
-        return None
+        return None, TOO_FEW_STARS
     _x, _y, peakmax, flux = m
     ok = (flux > 0).all(axis=1) & (peakmax < _SAT)
     if not ok.any():
-        return None
+        return None, TOO_FEW_STARS
     g = flux[:, 1]
     lo, hi = np.percentile(g[ok], _FLUX_PCT)
     ok &= (g >= lo) & (g <= hi)
     n = int(ok.sum())
     if n < _MIN_STARS:
-        return None
+        return None, TOO_FEW_STARS
     f = flux[ok].astype(np.float64)
     gains = (1.0 / float(np.median(f[:, 0] / f[:, 1])), 1.0,
              1.0 / float(np.median(f[:, 2] / f[:, 1])))
     if not all(_GAIN_LO < v < _GAIN_HI for v in gains):
-        return None
-    return StarBalanceResult(gains, n)
+        return None, IMPLAUSIBLE
+    return StarBalanceResult(gains, n), ""
+
+
+def star_balance_gains(data: np.ndarray) -> StarBalanceResult | None:
+    """Gains (R, 1, B) from the median star colour of sky-neutralised linear
+    data, or None when too few usable stars or any gain is absurd."""
+    return _gains_or_reason(data)[0]
+
+
+def sky_neutralize(data: np.ndarray) -> np.ndarray:
+    """``background_neutralize`` with statistics from valid pixels only.
+
+    A stacked-untrimmed master has an all-zero border (rotation wedges,
+    mosaics). Past ~20% of the frame the unmasked 10-40th percentile band is
+    all zeros, every sky median is 0, every gain 0 and the picture goes black.
+    Same method (green-anchored multiplicative gains from the per-channel sky
+    medians) and, with no zero pixel, the identical arithmetic, so version 1
+    output does not change. The border stays exactly 0.
+    """
+    lum = data.mean(axis=2)
+    valid = data.max(axis=2) > 0
+    if not valid.any():
+        return np.clip(data, 0.0, 1.0)
+    mask = np.zeros(lum.shape, bool)
+    mask[valid] = _background_mask(lum[valid])
+    bg = np.array([float(np.median(data[..., c][mask])) for c in range(3)],
+                  dtype=np.float32)
+    gain = (bg[1] / np.clip(bg, 1e-6, None)).astype(np.float32)
+    return np.clip(data * gain, 0.0, 1.0)
 
 
 def _sky_level(data: np.ndarray) -> np.ndarray:
@@ -77,20 +108,23 @@ def _sky_level(data: np.ndarray) -> np.ndarray:
 
 
 def apply_star_balance(img: AstroImage, version: int = STAR_BALANCE_VERSION
-                       ) -> tuple[AstroImage, StarBalanceResult | None]:
+                       ) -> tuple[AstroImage, StarBalanceResult | None, str]:
+    """(image, result, reason). With no result the image is the border-safe
+    sky-neutralised one (the caller's sky fallback) and reason says why."""
     if version != STAR_BALANCE_VERSION:
         raise ValueError(f"unknown star balance version {version!r}")
     if not img.is_color:
-        return img.copy(), None
-    data = background_neutralize(img.data.astype(np.float32).copy())
-    res = star_balance_gains(data)
+        return img.copy(), None, ""
+    data = sky_neutralize(img.data.astype(np.float32).copy())
+    res, reason = _gains_or_reason(data)
     meta = dict(img.metadata)
     if res is None:
-        return AstroImage(data, is_linear=img.is_linear, metadata=meta), None
+        return AstroImage(data, is_linear=img.is_linear, metadata=meta), None, reason
     valid = data.max(axis=2) > 0
     sky = _sky_level(data)
     gain = np.array(res.gains, np.float32)
     out = sky + (data - sky) * gain
     out = np.clip(out, 0.0, 1.0)
     out[~valid] = 0.0               # a zero border must stay zero
-    return AstroImage(out.astype(np.float32), is_linear=img.is_linear, metadata=meta), res
+    return (AstroImage(out.astype(np.float32), is_linear=img.is_linear, metadata=meta),
+            res, "")

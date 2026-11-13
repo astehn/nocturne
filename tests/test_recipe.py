@@ -562,3 +562,12 @@ def test_a_star_record_without_a_version_still_pins_one():
     from nocturne.recipe import serialize_option
     got = serialize_option("color", ColorSettings(method="star"), project=True)
     assert got["version"] == STAR_BALANCE_VERSION
+
+
+def test_star_fallback_reason_survives_a_project_save_but_not_a_recipe():
+    s = serialize_option("color", ColorSettings(method="star", ran="sky", version=0,
+                                                star_fallback="implausible"), project=True)
+    assert s["star_fallback"] == "implausible"
+    assert deserialize_option("color", s, project=True).star_fallback == "implausible"
+    assert deserialize_option("color", s).star_fallback == ""      # recipe: the picture's own
+    assert "star_fallback" not in serialize_option("color", ColorSettings(method="star"))

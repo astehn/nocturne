@@ -134,6 +134,8 @@ def serialize_option(stage_id, option, *, project: bool = False):
             out["stepped_aside"] = True
         if c.ran:
             out["ran"] = c.ran
+        if c.star_fallback:
+            out["star_fallback"] = c.star_fallback
         if c.method == "star" or c.ran == "star":
             # The star balance version, so a reopened project replays the
             # tuning it was made with, as Stretch does with STRETCH_VERSION.
@@ -261,6 +263,7 @@ def deserialize_option(stage_id, value, *, project: bool = False):
                 method = DEFAULT_COLOUR_METHOD
             kept.pop("ran", None)
             kept.pop("version", None)
+            kept.pop("star_fallback", None)
         kept["method"] = method
         return ColorSettings(**kept)
     if stage_id == "tint":

@@ -59,3 +59,18 @@ def test_photometric_that_stepped_aside_to_star_balance():
 def test_photometric_that_fell_back_to_star_balance():
     ser = {"method": "photometric", "fell_back": True, "ran": "star", "version": 1}
     assert _colour_headline(ser) == "Photometric (SPCC) → fell back to star balance"
+
+
+def test_implausible_star_fallback_is_not_called_too_few_stars():
+    ser = {"method": "star", "ran": "sky", "star_fallback": "implausible"}
+    assert _colour_headline(ser) == "Star balance → sky balance (implausible star colours)"
+    params = _colour_params(ser)
+    assert "- result: sky balance — the star colours gave an implausible correction" in params
+    assert not any("too few" in p for p in params)
+
+
+def test_version_is_not_printed_when_star_balance_did_not_run():
+    ser = {"method": "star", "ran": "sky", "version": 1, "star_fallback": "too_few_stars"}
+    assert not any("version" in p for p in _colour_params(ser))
+    ser = {"method": "star", "ran": "star", "version": 1}
+    assert "- star balance version: 1" in _colour_params(ser)
