@@ -7,11 +7,19 @@ import numpy as np
 from .image import AstroImage
 
 
+# The one place that decides which method a new Color step uses and what a
+# failed photometric calibration falls back to.
+DEFAULT_COLOUR_METHOD = "star"
+FALLBACK_COLOUR_METHOD = "star"
+
+
 @dataclass
 class ColorSettings:
     neutralize_background: bool = True
     remove_green: bool = False
-    method: str = "sky"           # "sky" (background balance) or "photometric" (SPCC)
+    # "star" (sky grey + median star white), "sky" (background balance only,
+    # kept so saved projects replay as made) or "photometric" (SPCC)
+    method: str = DEFAULT_COLOUR_METHOD
     # What RAN, beside what was chosen: photometric can fall back to sky balance
     # (no ASTAP, no solve, no catalogue). `method` stays the choice, so a recipe
     # still tries photometric on the next image; this records the outcome for
@@ -20,6 +28,11 @@ class ColorSettings:
     # Why, when it did: a deliberate step-aside on dual-band data (2026-10-10)
     # rather than a failure, so the provenance report need not call it one.
     stepped_aside: bool = False
+    # What actually ran: "photometric", "star" or "sky". Empty = not recorded
+    # (an entry written before the field existed). `version` is the star
+    # balance version used, 0 when star balance did not run.
+    ran: str = ""
+    version: int = 0
 
 
 # Luminance weights (Rec. 709), used to hold brightness constant while colour

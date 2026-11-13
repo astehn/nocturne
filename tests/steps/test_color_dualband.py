@@ -1,8 +1,8 @@
 """Photometric colour steps aside on dual-band (Seestar LP filter) data.
 
 Through two narrow passbands a star's colour no longer tracks its Gaia BP-RP,
-so the calibration would be fitting noise. Approved 2026-10-10: use sky balance
-and say so, in exactly these words.
+so the calibration would be fitting noise. Approved 2026-10-10: step aside
+and say so; wording changed 2026-11-13 when the fallback became star balance.
 """
 import numpy as np
 
@@ -15,7 +15,7 @@ from nocturne.tools.gaia import GaiaStar
 from tests.steps.test_color_step import _FakeAstap
 
 _EXACT = ("Photometric colour isn't meaningful through a dual-band filter; "
-          "balanced on the sky instead.")
+          "balanced on the stars instead.")
 
 
 def _img(filt):
@@ -51,16 +51,19 @@ def test_the_message_is_word_for_word():
     assert DUALBAND_MESSAGE == _EXACT
 
 
-def test_lp_filter_steps_aside_to_sky_balance(monkeypatch):
+def test_lp_filter_steps_aside_to_star_balance(monkeypatch):
     step, calls, solves = _spy(monkeypatch)
-    img = _img("LP")
+    from nocturne.core.star_balance import apply_star_balance
+    from tests.core.test_star_balance import _field
+    img = AstroImage(_field(), is_linear=True, metadata={"filter": "LP"})
     chosen = ColorSettings(method="photometric", remove_green=True)
     out = step.apply(img, chosen)
     assert calls == [] and solves == [], "photometric must not run on dual-band data"
     assert step.fell_back is True
     assert step.last_message == _EXACT
-    # Exactly the sky balance the fallback path gives, nothing else.
-    want = apply_color(img, ColorSettings(remove_green=True))
+    # Exactly the star balance the fallback path gives, nothing else.
+    want = apply_color(apply_star_balance(img)[0],
+                       ColorSettings(neutralize_background=False, remove_green=True))
     np.testing.assert_array_equal(out.data, want.data)
     rec = step.recorded_option(chosen)
     assert rec.method == "photometric" and rec.fell_back is True
