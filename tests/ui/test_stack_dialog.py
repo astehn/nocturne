@@ -2178,3 +2178,16 @@ def test_the_mosaic_warning_survives_collapsing_the_help_and_folding(qtbot, tmp_
     dlg.options_band.set_folded(True)
     assert dlg.options_band.folded_note.isVisible()
     assert "looks like a mosaic" in dlg.options_band.folded_note.text()
+
+
+def test_rescanning_an_ordinary_folder_clears_a_mosaic_warning(qtbot, tmp_path):
+    mosaic, single = tmp_path / "mosaic", tmp_path / "single"
+    mosaic.mkdir(); single.mkdir()
+    _two_pointings(mosaic)
+    for i in range(6):
+        _sub_with_pointing(single, f"a{i}.fit", 10.0, 41.0)
+    dlg = _scanned(qtbot, mosaic)
+    assert "looks like a mosaic" in dlg.mosaic_note.text()
+    dlg.folder_edit.setText(str(single))
+    dlg.scan_pointings()
+    assert dlg.mosaic_note.text() == ""
