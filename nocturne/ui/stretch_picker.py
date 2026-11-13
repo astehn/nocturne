@@ -90,6 +90,8 @@ COLOUR_PICKS: list[tuple[str, bool, str]] = [
 # it: a per-channel normalisation is exactly what removes a per-channel gain.
 # Measured on IC 1396A at 0.0004 of an 8-bit level, at every gain tested.
 _SPCC_CAVEAT = "Photometric calibration will be discarded"
+# Star balance is the same kind of per-channel gain, so the same removal.
+_STAR_CAVEAT = "Star balance will be discarded"
 
 # Said BEFORE the pick, not only in the log after it: under an Unlinked Import,
 # choosing Linked switches Import too and brings Colour back (Option A,
@@ -174,7 +176,7 @@ def _is_grey(data: np.ndarray) -> bool:
 
 
 def colour_pick(base: AstroImage, *, spcc_applied: bool = False,
-                view_linked: bool = True) -> Pick | None:
+                view_linked: bool = True, calibration: str = "SPCC") -> Pick | None:
     """Linked or unlinked? None when the channels are identical.
 
     Both panels are rendered at the SAME target so only colour varies — one
@@ -193,7 +195,8 @@ def colour_pick(base: AstroImage, *, spcc_applied: bool = False,
 
     return Pick(title="How should the colour be balanced?",
                 key="linked", options=options, caption=_colour_caption,
-                caveats={**({False: _SPCC_CAVEAT} if spcc_applied else {}),
+                caveats={**({False: _SPCC_CAVEAT if calibration == "SPCC"
+                            else _STAR_CAVEAT} if spcc_applied else {}),
                          **({} if view_linked else {True: _SWITCH_CAVEAT})},
                 columns=2)
 

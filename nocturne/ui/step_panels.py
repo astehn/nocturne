@@ -96,7 +96,7 @@ STEP_DESCRIPTIONS: dict[str, str] = {
     "load": "Your stack as loaded: its facts, and how the unstretched data is shown.",
     "crop": "Click the image to place the crop box, adjust it, then apply.",
     "background": "Remove uneven sky-glow — a gradient brighter toward one edge or corner.",
-    "color": "Neutralise the sky background without touching your nebula's real colour.",
+    "color": "Makes the sky grey and the typical star white, without touching your nebula's own colour.",
     "deconvolution": "Sharpen stars and fine detail by undoing some of the blur.",
     "stretch": "Brighten the faint detail so your target appears.",
     "remove_green": "Remove a green cast from the sky. Usually unnecessary — leave at 0 "
@@ -748,7 +748,7 @@ def build_panel(
         # format and colour space. SegmentRow reads and writes the same strings
         # the dropdown did, so everything downstream is unchanged.
         controls.addWidget(section_label("Method"))
-        method_box = SegmentRow(["Sky balance", "Photometric (SPCC)"])
+        method_box = SegmentRow(["Star balance", "Photometric (SPCC)"])
         controls.addWidget(method_box)
         w.method_box = method_box
         # What the dropdown read on arrival — same idea as option_baseline for
@@ -764,7 +764,7 @@ def build_panel(
 
         def _color_option():
             photometric = method_box.currentText().startswith("Photometric")
-            return ColorSettings(method="photometric" if photometric else "sky")
+            return ColorSettings(method="photometric" if photometric else "star")
 
         # The ONE visible action on Colour (spec §2.4). Built unconnected:
         # MainWindow connects it to _apply_colour_step, which commits method

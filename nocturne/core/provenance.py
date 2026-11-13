@@ -48,10 +48,20 @@ def _num(v) -> str:
 
 
 # ---- Colour ----------------------------------------------------------------
-# The panel's own words (step_panels: "Sky balance" / "Photometric (SPCC)").
-_COLOUR_METHOD = {"sky": "Sky balance", "photometric": "Photometric (SPCC)"}
-# One wording for the built-in, shared with core.receipt's fallback name.
+# The panel's own words (step_panels: "Star balance" / "Photometric (SPCC)");
+# "Sky balance" is still read for the projects that recorded it.
+_COLOUR_METHOD = {"sky": "Sky balance", "star": "Star balance",
+                  "photometric": "Photometric (SPCC)"}
+# One wording for each built-in, shared with core.receipt's fallback name.
 SKY_BALANCE_ENGINE = "Nocturne (built-in sky balance)"
+STAR_BALANCE_ENGINE = "Nocturne (built-in star balance)"
+
+
+def _colour_landed(ser: dict) -> str:
+    """What a calibration that did not run was replaced by: "star balance" or
+    "sky balance". A record from before `ran` existed could only have fallen to
+    sky balance."""
+    return "star balance" if ser.get("ran") == "star" else "sky balance"
 
 
 def _colour_method(ser: dict) -> str:
@@ -62,19 +72,26 @@ def _colour_method(ser: dict) -> str:
 def _colour_headline(ser: dict) -> str:
     method = _colour_method(ser)
     if ser.get("stepped_aside"):
-        return f"{method} → stepped aside on dual-band data; sky balance"
+        return f"{method} → stepped aside on dual-band data; {_colour_landed(ser)}"
     if ser.get("fell_back"):
-        return f"{method} → fell back to sky balance"
+        return f"{method} → fell back to {_colour_landed(ser)}"
+    if ser.get("method") == "star" and ser.get("ran") == "sky":
+        return f"{method} → sky balance (too few stars)"
     return method
 
 
 def _colour_params(ser: dict) -> list[str]:
     lines = [f"- method: {_colour_method(ser)}"]
+    landed = _colour_landed(ser)
     if ser.get("stepped_aside"):
-        lines.append("- result: sky balance — photometric calibration is not meaningful "
+        lines.append(f"- result: {landed} — photometric calibration is not meaningful "
                      "through a dual-band filter")
     elif ser.get("fell_back"):
-        lines.append("- result: sky balance — photometric calibration could not run")
+        lines.append(f"- result: {landed} — photometric calibration could not run")
+    elif ser.get("method") == "star" and ser.get("ran") == "sky":
+        lines.append("- result: sky balance — too few stars to balance on")
+    if ser.get("method") == "star" and ser.get("version"):
+        lines.append(f"- star balance version: {ser['version']}")
     # Settings with no control on today's panel: named only when they differ
     # from what every Colour step does, so the block is not padded with them.
     if ser.get("neutralize_background") is False:
@@ -727,11 +744,12 @@ def _engine_text(name: str, ser) -> str | None:
     if name == "Color":
         if not isinstance(ser, dict):
             return "not recorded"
+        landed = STAR_BALANCE_ENGINE if ser.get("ran") == "star" else SKY_BALANCE_ENGINE
         if ser.get("stepped_aside"):
-            return (f"**{SKY_BALANCE_ENGINE}** — photometric calibration was chosen and "
+            return (f"**{landed}** — photometric calibration was chosen and "
                     "stepped aside: it isn't meaningful through a dual-band filter")
         if ser.get("fell_back"):
-            return (f"**{SKY_BALANCE_ENGINE}** — photometric calibration was chosen "
+            return (f"**{landed}** — photometric calibration was chosen "
                     "but could not run")
         if ser.get("method") == "photometric":
             if "fell_back" in ser:
@@ -740,6 +758,8 @@ def _engine_text(name: str, ser) -> str | None:
             # run and an unrecorded fallback (pre-0.44) looked the same.
             return ("ASTAP + Gaia was chosen (photometric calibration); whether it ran "
                     "or fell back to sky balance was not recorded for this step")
+        if ser.get("method") == "star" and ser.get("ran") != "sky":
+            return f"**{STAR_BALANCE_ENGINE}**"
         return f"**{SKY_BALANCE_ENGINE}**"
     if name == "Noise Reduction":
         ran, known = _nr_ran(ser)

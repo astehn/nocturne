@@ -137,7 +137,9 @@ def serialize_option(stage_id, option, *, project: bool = False):
         if c.method == "star" or c.ran == "star":
             # The star balance version, so a reopened project replays the
             # tuning it was made with, as Stretch does with STRETCH_VERSION.
-            out["version"] = int(c.version)
+            # Never 0: a star record that skipped recorded_option still pins it.
+            from .core.star_balance import STAR_BALANCE_VERSION
+            out["version"] = int(c.version or STAR_BALANCE_VERSION)
         return out
     if stage_id == "tint":
         t, w = option if option else (0.0, 0.0)

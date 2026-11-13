@@ -555,3 +555,10 @@ def test_a_recipe_without_the_flag_replays_as_linked():
     from nocturne.steps.stretch_step import parse_stretch_linked
     assert parse_stretch_linked(deserialize_option(
         "stretch", serialize_option("stretch", 0.6))) is True
+
+
+def test_a_star_record_without_a_version_still_pins_one():
+    from nocturne.core.star_balance import STAR_BALANCE_VERSION
+    from nocturne.recipe import serialize_option
+    got = serialize_option("color", ColorSettings(method="star"), project=True)
+    assert got["version"] == STAR_BALANCE_VERSION

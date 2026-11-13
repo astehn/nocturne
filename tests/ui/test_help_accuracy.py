@@ -1519,8 +1519,8 @@ def test_auto_enhance_help_lists_the_plan_that_is_actually_built(_no_nr_models):
     assert f"<b>Deconvolution</b> at <i>{AUTO_DECONVOLUTION['broadband']}</i> " \
            f"(<i>{AUTO_DECONVOLUTION['dualband']}</i> on dual-band data)" in b
     assert "<b>only if RC-Astro is set up</b>" in b
-    assert full["color"].method == "photometric" and plan["color"].method == "sky"
-    assert "<b>photometric</b> if ASTAP is set up" in b and "sky-neutralise" in b
+    assert full["color"].method == "photometric" and plan["color"].method == "star"
+    assert "<b>photometric</b> if ASTAP is set up" in b and "<b>star balance</b>" in b
 
 
 def test_auto_enhance_help_names_the_stages_it_refuses_to_run(_no_nr_models):

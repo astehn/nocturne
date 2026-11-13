@@ -4557,7 +4557,9 @@ class MainWindow(QMainWindow):
             if entry_name == name:
                 # Noise Reduction records what RAN beside what was chosen;
                 # every reader here compares with the panel, which only chooses.
-                return strip_ran(option)
+                # Colour's "ran" is kept: _colour_calibration_name asks for it, and the
+                # one comparison (_colour_matches_commit) drops it itself.
+                return option if stage_id == "color" else strip_ran(option)
         return None
 
     def _has_pending(self) -> bool:
@@ -4880,12 +4882,13 @@ class MainWindow(QMainWindow):
             from ..recipe import deserialize_option
             committed = deserialize_option("color", committed)
         if isinstance(committed, ColorSettings):
-            # The outcome is not a control: a fallen-back calibration still
-            # matches the dropdown that asked for it, or Apply would read
-            # "changes not applied" for ever after one.
+            # The outcome (fell back, what ran, at which version) is not a
+            # control: a fallen-back calibration still matches the dropdown
+            # that asked for it, or Apply would read "changes not applied" for
+            # ever after one.
             import dataclasses
             committed = dataclasses.replace(committed, fell_back=False,
-                                            stepped_aside=False)
+                                            stepped_aside=False, ran="", version=0)
         if not _same_option(read(), committed):
             return False
         tints = [opt for n, opt in tail[at + 1:] if n == STEP_NAME["tint"]]
@@ -4943,9 +4946,9 @@ class MainWindow(QMainWindow):
             # that still works (review 2026-09-30).
             fix = ("choose Linked in Visual stretch" if visual is not None
                    and visual.isEnabled() else "switch Import back to Linked")
-            spcc_note.setText(
-                "Unlinked will discard your photometric colour calibration "
-                f"(SPCC). To keep it, {fix}.")
+            what = ("star balance" if self._colour_calibration_name() == "star balance"
+                    else "photometric colour calibration (SPCC)")
+            spcc_note.setText(f"Unlinked will discard your {what}. To keep it, {fix}.")
             spcc_note.setVisible(
                 not getattr(self._panel, "stretch_linked", True)
                 and self._spcc_was_applied()
@@ -5421,8 +5424,8 @@ class MainWindow(QMainWindow):
                     and option.get("linked") is False and self._spcc_was_applied()
                     and not (isinstance(prior_stretch, dict)
                              and prior_stretch.get("linked") is False)):
-                spcc_lost = ("Unlinked stretch: the photometric colour calibration "
-                             "(SPCC) was discarded.")
+                spcc_lost = ("Unlinked stretch: the colour calibration "
+                             f"({self._colour_calibration_name()}) was discarded.")
             else:
                 spcc_lost = None
             # The commit now reflects what the slider/dropdown showed. Only
@@ -5505,8 +5508,10 @@ class MainWindow(QMainWindow):
         if stage_id == "color" and getattr(option, "method", "sky") == "photometric":
             from ..steps.color import steps_aside
             if base is not None and steps_aside(base, option):
-                return "Balancing colour on the sky…"     # dual-band: nothing to calibrate
+                return "Balancing colour on the stars…"   # dual-band: nothing to calibrate
             return "Calibrating colour…"
+        if stage_id == "color":
+            return "Balancing colour…"
         return f"Applying {STEP_NAME[stage_id]}…"
 
     def _log_step(self, stage_id: str, option, base, result, step=None) -> None:
@@ -5529,12 +5534,25 @@ class MainWindow(QMainWindow):
         label = self._step_log_label(stage_id, option, getattr(step, "last_engine", None))
         detail = (self._levels_log_detail(option, getattr(step, "last_resolved", None))
                   if stage_id == "levels" else "")
+        if stage_id == "color":
+            detail = self._colour_log_detail(step)
         self.log_panel.append_entry(
             format_log_entry(name, label, rms_delta(base, result), detail=detail))
         # And to the file. The panel is wiped when a project closes and gone
         # when the app exits — which is exactly when somebody sits down to
         # write a support ticket.
         sessionlog.write(f"step  {name}" + (f" ({label})" if label else "") + detail)
+
+    @staticmethod
+    def _colour_log_detail(step) -> str:
+        """" · R 0.71 · G 1.00 · B 1.16 · 3948 stars" when star balance ran: the
+        gains it applied are the only evidence it did something to the colour."""
+        gains = getattr(step, "last_gains", None)
+        if not gains:
+            return ""
+        r, g, b = gains
+        return (f" \u00b7 R {r:.2f} \u00b7 G {g:.2f} \u00b7 B {b:.2f}"
+                f" \u00b7 {getattr(step, 'last_n_stars', 0)} stars")
 
     @staticmethod
     def _step_log_label(stage_id: str, option, engine_tag) -> str:
@@ -6811,21 +6829,35 @@ class MainWindow(QMainWindow):
         from .stretch_picker import brightness_pick, colour_pick
         base = self._preview_base("stretch")
         colour = colour_pick(base, spcc_applied=self._spcc_was_applied(),
-                             view_linked=self._view_linked)
+                             view_linked=self._view_linked,
+                             calibration=("star" if self._colour_calibration_name()
+                                          == "star balance" else "SPCC"))
         return ([colour] if colour is not None else []) + [brightness_pick(base)]
 
-    def _spcc_was_applied(self) -> bool:
-        """Did the committed Colour step use photometric calibration?
+    def _colour_calibration_name(self) -> str | None:
+        """"SPCC" or "star balance" when the committed Colour step ran one of
+        the two calibrations an unlinked stretch discards, else None.
 
-        Only then is the caveat true. An unlinked stretch annihilates SPCC
-        (measured 0.0004 of a level), but saying so unconditionally would warn
-        the many people who never ran it.
+        An unlinked stretch annihilates SPCC (measured 0.0004 of a level), but
+        saying so unconditionally would warn people whose Colour was the sky
+        balance fallback, which has no calibration to lose.
         """
         opt = self._committed_option("color")
         # A dict when Auto Enhance recorded it (serialized), a ColorSettings
-        # when Apply did. Either way: chosen AND actually run.
+        # when Apply did. Either way: what RAN, not what was asked.
         get = opt.get if isinstance(opt, dict) else (lambda k, d=None: getattr(opt, k, d))
-        return get("method") == "photometric" and not get("fell_back", False)
+        ran = get("ran", "")
+        if ran == "star":
+            return "star balance"
+        if ran == "photometric" or (not ran and get("method") == "photometric"
+                                    and not get("fell_back", False)):
+            return "SPCC"
+        return None
+
+    def _spcc_was_applied(self) -> bool:
+        """Did the committed Colour step run a calibration an unlinked stretch
+        would discard (photometric, or star balance)?"""
+        return self._colour_calibration_name() is not None
 
     def _apply_picked_stretch(self, option) -> None:
         """Put the pick on the slider. It does NOT commit.

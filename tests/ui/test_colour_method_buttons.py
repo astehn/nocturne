@@ -13,8 +13,8 @@ def test_the_method_is_two_buttons_not_a_dropdown(qtbot, tmp_path):
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
     assert not isinstance(win._panel.method_box, QComboBox)
-    assert [b.text() for b in _buttons(win)] == ["Sky balance", "Photometric (SPCC)"]
-    assert win._panel.method_box.currentText() == "Sky balance", "the default is unchanged"
+    assert [b.text() for b in _buttons(win)] == ["Star balance", "Photometric (SPCC)"]
+    assert win._panel.method_box.currentText() == "Star balance", "the default is star balance"
 
 
 def test_clicking_spcc_selects_it_and_makes_the_step_pending(qtbot, tmp_path):
@@ -30,8 +30,8 @@ def test_clicking_spcc_selects_it_and_makes_the_step_pending(qtbot, tmp_path):
 def test_the_two_buttons_are_one_exclusive_choice(qtbot, tmp_path):
     win = _win(qtbot, tmp_path)
     win._go_to_id("color")
-    sky, spcc = _buttons(win)
+    star, spcc = _buttons(win)
     spcc.click()
-    sky.click()
-    assert sky.isChecked() and not spcc.isChecked()
-    assert win._panel.commit_option().method == "sky"
+    star.click()
+    assert star.isChecked() and not spcc.isChecked()
+    assert win._panel.commit_option().method == "star"

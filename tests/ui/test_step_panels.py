@@ -92,11 +92,11 @@ def test_color_panel_apply_passes_method(qtbot):
     w.apply_method_btn.click()
     assert isinstance(captured["opt"], ColorSettings)
     assert captured["opt"].method == "photometric"
-    # default selection -> sky
+    # default selection -> star balance
     w2 = build_panel(_stage("color"), on_apply=lambda opt: captured.__setitem__("opt2", opt))
     qtbot.addWidget(w2)
     w2.apply_method_btn.click()
-    assert captured["opt2"].method == "sky"
+    assert captured["opt2"].method == "star"
 
 
 def test_remove_green_panel_apply_button_passes_strength(qtbot):
