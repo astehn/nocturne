@@ -2,6 +2,24 @@
 
 All notable changes to Nocturne. This project uses [semantic versioning](https://semver.org/); while pre-1.0, minor versions add features.
 
+## [0.58.0] — 2026-11-14
+
+Remove gradients without GraXpert by painting the sky yourself, save before/after videos for Reels and Shorts, and get star-based colour calibration.
+
+### Added
+- Background: Paint mask…, a built-in route beside GraXpert. In a large editor you paint what is sky and what is nebula, or press Auto-mask for a first guess, then Nocturne fits and removes the gradient itself, Light or Strong. Background no longer needs GraXpert. A recipe or preset uses Auto-mask on a new image and says so in the log.
+- Share: Save video… makes a 10-second MP4 for Reels, Shorts and Facebook. A line wipes between your finished picture and the raw stack, and it ends on a card with the picture's title and credit.
+- Stack warns when the subs look like a mosaic but the Mosaic box is not ticked.
+
+### Changed
+- Star balance replaces Sky balance in the Color step. It sets the sky to grey, then scales red, green and blue so the typical star comes out white. That undoes the red cast a light-pollution filter gives every star. Saved projects keep their colour. A recipe or preset made with Sky balance uses Star balance on a new image.
+- Background's Off button is gone, because skipping the step does the same. Old projects and recipes that recorded Off still open unchanged.
+- Help and Settings say RC-Astro needs its command-line tools (the RC-Astro CLI), not the PixInsight or Photoshop plug-ins.
+
+### Fixed
+- Tooltips were hard to read in macOS light mode, light grey on white (GitHub #2).
+- A mosaic no longer fails when one panel's plate solve times out. Nocturne leaves that panel out and assembles the rest.
+
 ## [0.57.0] — 2026-11-10
 
 Pictures stay the right way up with the latest RC-Astro tools, FITS exports keep their capture details, and colour calibration no longer depends on one star server.
