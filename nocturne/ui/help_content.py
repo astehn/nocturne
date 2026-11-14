@@ -1233,6 +1233,8 @@ _TOPIC_LIST = (
        "<h4>RC-Astro (paid, optional)</h4>"
        "<p>Adds <b>BlurXTerminator</b> (deconvolution), <b>NoiseXTerminator</b> (noise) and "
        "<b>StarXTerminator</b> (the star split, preferred over StarNet2 when both are set). "
+       "Nocturne needs the <b>RC-Astro CLI</b>, a separate download from rc-astro.com: the "
+       "PixInsight, Photoshop and Affinity plug-ins only run inside those programs. "
        "Set its path in Settings and Test it.</p>"
        "<h4>ASTAP (free, optional)</h4>"
        "<p>A free plate-solver that powers <b>Plate Solve</b> — identifying the field and "
