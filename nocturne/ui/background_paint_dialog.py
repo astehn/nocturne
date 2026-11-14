@@ -204,7 +204,7 @@ class BackgroundPaintDialog(QDialog):
         self._on_apply = on_apply
         self._pool = QThreadPool.globalInstance()
         self._params = _stretch_params(base.data)
-        self._small = _downscale(base)
+        self._decimated = {}       # id(img) -> (rect, max_edge, decimated)
         seed = normalise_painted(option) if option else None
         self._strokes: list = copy.deepcopy((seed or {}).get("strokes") or [])
         amount = (seed or {}).get("amount", "strong")
@@ -216,6 +216,8 @@ class BackgroundPaintDialog(QDialog):
         self._result = None        # the AstroImage Preview result shows
         self._result_gen = 0
         self._result_key = None
+        self._result_busy = False
+        self._result_dirty = False
         self._token = None
         self._busy_cursor = False
         self._img_pm = None        # the stretched picture, before overlays
@@ -424,6 +426,7 @@ class BackgroundPaintDialog(QDialog):
                 self.status.setText(str(exc))
             else:
                 self._auto = labels
+                self.status.setText("")
                 self._compose()
         if self._auto_dirty and self.auto_btn.isChecked():
             self._start_auto()
@@ -442,13 +445,20 @@ class BackgroundPaintDialog(QDialog):
             return
         self._result = None
         self._result_gen += 1
-        gen = self._result_gen
-        if self._token is not None:
-            self._token.cancel()
-        token = self._token = CancelToken()
-        base = self._base
         self.status.setText("Working out the result…")
         self._set_busy(True)
+        # apply_painted cannot stop part-way (~2.4 s at 8 MP), so one job at a
+        # time: an edit during it drops its result and reruns ONCE when it
+        # lands, rather than stacking a full-resolution job per stroke.
+        if self._result_busy:
+            self._result_dirty = True
+            if self._token is not None:
+                self._token.cancel()
+            return
+        gen = self._result_gen
+        token = self._token = CancelToken()
+        base = self._base
+        self._result_busy, self._result_dirty = True, False
 
         def job():
             out, _model = apply_painted(base, opt.get("strokes"), _AMOUNT[opt["amount"]])
@@ -461,11 +471,16 @@ class BackgroundPaintDialog(QDialog):
                   token=token)
 
     def _result_landed(self, gen, key, out, exc) -> None:
-        if gen != self._result_gen:
-            return                      # superseded by a later edit
-        self._set_busy(False)
+        self._result_busy = False
         if getattr(self, "_closed", False):
             return
+        if gen != self._result_gen:     # superseded by a later edit
+            if self._result_dirty and self.preview_btn.isChecked():
+                self._start_result()
+            else:
+                self._set_busy(False)
+            return
+        self._set_busy(False)
         if exc is not None:
             # "Too little sky left…" is the user's to act on, not a crash.
             self.status.setText(str(exc) if isinstance(exc, ValueError)
@@ -493,14 +508,20 @@ class BackgroundPaintDialog(QDialog):
         view. At fit the base comes from its cached decimated copy."""
         view = self.view
         x0, y0, x1, y1 = rect
-        h, w = img.data.shape[:2]
-        if img is self._base and (x0, y0, x1, y1) == (0, 0, w, h):
-            src = self._small
+        edge = max(view.width(), view.height())
+        # Base and result through the SAME decimation at every zoom: a fixed
+        # 640 px copy for the base only made Preview change the noise texture
+        # as well as the gradient. Cached per image, so a stroke never redoes it.
+        hit = self._decimated.get(id(img))
+        if hit is not None and hit[0] == (tuple(rect), edge):
+            src = hit[1]
         else:
             crop = img.data[y0:y1, x0:x1]
             src = _downscale(AstroImage(crop, is_linear=img.is_linear,
-                                        metadata=dict(img.metadata)),
-                             max_edge=max(view.width(), view.height()))
+                                        metadata=dict(img.metadata)), max_edge=edge)
+            self._decimated = {k: v for k, v in self._decimated.items()
+                               if k in (id(self._base), id(self._result))}
+            self._decimated[id(img)] = ((tuple(rect), edge), src)
         shown = AstroImage(_stretched(src.data, self._params), is_linear=False,
                            metadata={})
         return _scaled_to_box(QPixmap.fromImage(to_qimage(shown)), view.size())

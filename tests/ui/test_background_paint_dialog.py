@@ -262,3 +262,90 @@ def test_no_ai_wording(qtbot):
     texts += [w.text() for w in dlg.findChildren(QLabel)]
     texts += [w.toolTip() for w in dlg.findChildren(QAbstractButton)]
     assert not any("AI" in t.split() for t in texts)
+
+
+def _rgb_of(pm):
+    return _pixmap_rgb8(pm)
+
+
+def test_before_and_result_at_fit_share_one_decimation(qtbot):
+    """Larger than the curves dialog's fixed 640 px copy: the base at fit must
+    be decimated exactly as the result is, or toggling Preview changes the
+    noise texture as well as the gradient."""
+    from nocturne.ui.background_paint_dialog import _stretch_params, _stretched
+    from nocturne.ui.curves_dialog import _downscale, _pixmap_for
+    base = _base(h=900, w=1400)
+    dlg = _open(qtbot, base=base)
+    dlg.show_mask_check.setChecked(False)
+    dlg._render()
+    edge = max(dlg.view.width(), dlg.view.height())
+    assert _downscale(base).data.shape != _downscale(base, max_edge=edge).data.shape, \
+        "fixture does not separate the 640 px copy from the view-sized one"
+    params = _stretch_params(base.data)
+
+    def manual(img):
+        small = _downscale(img, max_edge=edge)
+        return _rgb_of(_pixmap_for(AstroImage(_stretched(small.data, params),
+                                              is_linear=False, metadata={}),
+                                   dlg.view.size()))
+
+    assert np.array_equal(_rgb_of(dlg.view.pixmap()), manual(base))
+    dlg.preview_btn.click()
+    qtbot.waitUntil(lambda: dlg._result is not None, timeout=30000)
+    dlg._render()
+    assert np.array_equal(_rgb_of(dlg.view.pixmap()), manual(dlg._result))
+
+
+def test_preview_jobs_are_single_flight(qtbot, monkeypatch):
+    """Each edit with Preview on used to start another full-resolution job;
+    now at most one runs and quick edits fold into one rerun."""
+    import threading
+    import time
+
+    import nocturne.core.painted_background as pb
+    real = pb.apply_painted
+    lock = threading.Lock()
+    state = {"running": 0, "peak": 0, "calls": 0, "last": None}
+
+    def slow(img, strokes, amount):
+        with lock:
+            state["running"] += 1
+            state["calls"] += 1
+            state["peak"] = max(state["peak"], state["running"])
+            state["last"] = strokes
+        time.sleep(0.4)
+        try:
+            return real(img, strokes, amount)
+        finally:
+            with lock:
+                state["running"] -= 1
+
+    monkeypatch.setattr(pb, "apply_painted", slow)
+    dlg = _open(qtbot)
+    dlg.preview_btn.click()
+    cx, cy = _centre(dlg)
+    for i in range(4):
+        _drag(dlg.view, [(cx - 50 + 20 * i, cy), (cx - 40 + 20 * i, cy)])
+    qtbot.waitUntil(lambda: dlg._result is not None and not dlg._result_busy,
+                    timeout=30000)
+    assert state["peak"] == 1
+    assert state["calls"] == 2          # the first, then one rerun for all four edits
+    assert state["last"] == dlg.option()["strokes"]
+    assert QApplication.overrideCursor() is None
+
+
+def test_fit_mapping_anchors_with_letterbox(qtbot):
+    dlg = _open(qtbot)
+    view = dlg.view
+    pm = view.pixmap()
+    ox, oy = (view.width() - pm.width()) / 2, (view.height() - pm.height()) / 2
+    assert ox > 1 or oy > 1, "no letterbox: offset untested"
+    L, N = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    h, w = dlg._base.data.shape[:2]
+    for (px, py), want in (((ox + pm.width() / 2, oy + pm.height() / 2), (w / 2, h / 2)),
+                           ((ox, oy), (0.0, 0.0))):
+        dlg.clear_btn.click()
+        _send(view, QEvent.Type.MouseButtonPress, (px, py), L, L)
+        _send(view, QEvent.Type.MouseButtonRelease, (px, py), L, N)
+        got = dlg.option()["strokes"][0]["points"][0]
+        assert got == pytest.approx(list(want), abs=1.0)
