@@ -22,7 +22,7 @@ from __future__ import annotations
 import copy
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt, QThreadPool, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog,
                                QHBoxLayout, QLabel, QPushButton, QSlider,
@@ -34,7 +34,7 @@ from ..steps.background import _AMOUNT, normalise_painted
 from .curves_dialog import _ZoomPreview, _downscale, _fit_to_screen, _scaled_to_box
 from .preview import qimage_to_rgb8, to_qimage
 from .worker import run_async
-from .zoom_row import ZoomRow
+from .zoom_pill import ZoomPill
 
 _PREFERRED = (1180, 760)
 _VIEW_MIN = (420, 320)
@@ -106,6 +106,78 @@ class _PaintPreview(_ZoomPreview):
         self._pm_size = (1, 1)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setCursor(Qt.CursorShape.CrossCursor)
+        # The brush, drawn where it will land: his first test (2026-11-14) sat
+        # waiting after picking a brush because nothing on the canvas changed,
+        # and a size slider means nothing until you see the size on the image.
+        self._hover = None             # widget position under the pointer
+        self._ring_flash = False       # show the ring centred while sizing
+        self._flash_timer = QTimer(self)
+        self._flash_timer.setSingleShot(True)
+        self._flash_timer.timeout.connect(self._end_flash)
+        # The same floating zoom pill as the main canvas (ImageView), not a
+        # zoom row above the picture: one control, one place, every window.
+        self.zoom_pill = ZoomPill(self.zoom_out, self.fit, self.zoom_in, self)
+        self.zoom_pill.raise_()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        pill = self.zoom_pill
+        pill.adjustSize()
+        m = 12
+        pill.move(self.width() - pill.width() - m, self.height() - pill.height() - m)
+
+    # --- the brush ring
+    def ring_colour(self) -> QColor:
+        if self.brush == "sky":
+            return QColor(*_SKY_RGB)
+        if self.brush == "nebula":
+            return QColor(*_NEBULA_RGB)
+        return QColor(255, 255, 255)
+
+    def ring_centre(self):
+        """Where the ring is drawn, or None: under the pointer while painting
+        is possible, or centred while the size slider is moving."""
+        if self._ring_flash:
+            return QPointF(self.width() / 2, self.height() / 2)
+        if self._hover is None or self._space or self._panning:
+            return None
+        return self._hover
+
+    def flash_ring(self) -> None:
+        self._ring_flash = True
+        self._flash_timer.start(1200)
+        self.update()
+
+    def _end_flash(self) -> None:
+        self._ring_flash = False
+        self.update()
+
+    def set_brush(self, kind: str) -> None:
+        self.brush = kind
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        c = self.ring_centre()
+        if c is None:
+            return
+        r = float(self.brush_px)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        # A dark halo under the coloured ring so it reads on sky and nebula alike.
+        p.setPen(QPen(QColor(0, 0, 0, 160), 3))
+        p.drawEllipse(c, r, r)
+        pen = QPen(self.ring_colour(), 1.5)
+        if self.brush == "erase":
+            pen.setStyle(Qt.PenStyle.DashLine)
+        p.setPen(pen)
+        p.drawEllipse(c, r, r)
+        p.end()
+
+    def leaveEvent(self, event) -> None:
+        self._hover = None
+        self.update()
+        super().leaveEvent(event)
 
     def set_mapping(self, rect, pm_w: int, pm_h: int) -> None:
         self._rect = tuple(rect)
@@ -137,6 +209,7 @@ class _PaintPreview(_ZoomPreview):
             if not event.isAutoRepeat():
                 self._space = True
                 self.setCursor(Qt.CursorShape.OpenHandCursor)
+                self.update()
             event.accept()
             return
         super().keyPressEvent(event)
@@ -147,6 +220,7 @@ class _PaintPreview(_ZoomPreview):
                 self._space = False
                 if not self._panning:
                     self.setCursor(Qt.CursorShape.CrossCursor)
+                self.update()
             event.accept()
             return
         super().keyReleaseEvent(event)
@@ -166,6 +240,8 @@ class _PaintPreview(_ZoomPreview):
         self.strokeChanged.emit()
 
     def mouseMoveEvent(self, event) -> None:
+        self._hover = QPointF(event.position())
+        self.update()
         if self._panning:
             super().mouseMoveEvent(event)
             return
@@ -319,11 +395,9 @@ class BackgroundPaintDialog(QDialog):
         self.view.viewChanged.connect(self._render)
         self.view.strokeChanged.connect(self._compose)
         self.view.strokeFinished.connect(self._stroke_done)
-        zoom_row = ZoomRow(self.view)
-        self.zoom_label = zoom_row.label
+        self.zoom_pill = self.view.zoom_pill
 
         right = QVBoxLayout()
-        right.addLayout(zoom_row)
         right.addWidget(self.view, 1)
         right.addWidget(QLabel("Drag to paint · hold Space and drag to pan · "
                                "pinch or scroll to zoom"))
@@ -367,11 +441,12 @@ class BackgroundPaintDialog(QDialog):
 
     # --- tools
     def _set_brush(self, kind: str) -> None:
-        self.view.brush = kind
+        self.view.set_brush(kind)
 
     def _set_size(self, v: int) -> None:
         self.view.brush_px = v
         self.size_val.setText(f"{v} px")
+        self.view.flash_ring()
 
     def _stroke_done(self, stroke: dict) -> None:
         self._strokes.append(stroke)
@@ -555,7 +630,10 @@ class BackgroundPaintDialog(QDialog):
             self._img_pm = self._pixmap_for_image(img, rect)
             self._img_key = key
             view.set_mapping(rect, self._img_pm.width(), self._img_pm.height())
-        self.zoom_label.setText(f"{view.zoom_level():.1f}x")
+        # The pill reads display scale like the main canvas: screen pixels per
+        # image pixel, not this widget's zoom-relative-to-fit.
+        sx, sy = view.scale()
+        self.zoom_pill.set_zoom(1.0 / max(sx, sy, 1e-9))
         self._compose()
 
     def resizeEvent(self, event) -> None:

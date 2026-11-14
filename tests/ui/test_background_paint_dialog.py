@@ -453,3 +453,83 @@ def test_apply_during_a_running_preview_waits_for_it(qtbot, monkeypatch):
     assert len(calls) == 1
     assert got[0][1] is dlg._result
     assert QApplication.overrideCursor() is None
+
+
+# --- brush ring + zoom pill (his first test, 2026-11-14) ----------------------
+
+def _ring_pixels(dlg, cx, cy):
+    """RGB of the view around the point one brush radius right of (cx, cy)."""
+    img = dlg.view.grab().toImage()
+    r = dlg.view.brush_px
+    dpr = img.devicePixelRatio()
+    out = []
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            c = img.pixelColor(int((cx + r + dx) * dpr), int((cy + dy) * dpr))
+            out.append((c.red(), c.green(), c.blue()))
+    return np.array(out, dtype=int)
+
+
+def _hover(dlg, pos):
+    _send(dlg.view, QEvent.Type.MouseMove, pos, Qt.MouseButton.NoButton,
+          Qt.MouseButton.NoButton)
+
+
+def test_hovering_draws_the_brush_ring_at_its_size_in_the_brush_colour(qtbot):
+    dlg = _open(qtbot)
+    cx, cy = _centre(dlg)
+    dlg.size_slider.setValue(40)
+    dlg.view._end_flash()
+    before = _ring_pixels(dlg, cx, cy)
+    _hover(dlg, (cx, cy))
+    sky = _ring_pixels(dlg, cx, cy)
+    assert not np.array_equal(before, sky), "no ring drawn under the pointer"
+    assert (sky[:, 2] - sky[:, 0]).max() > 60          # blue ring for Sky
+    dlg.nebula_btn.click()
+    neb = _ring_pixels(dlg, cx, cy)
+    assert (neb[:, 0] - neb[:, 2]).max() > 60          # orange ring for Nebula
+
+
+def test_the_ring_goes_when_the_pointer_leaves(qtbot):
+    dlg = _open(qtbot)
+    cx, cy = _centre(dlg)
+    dlg.view._end_flash()
+    _hover(dlg, (cx, cy))
+    assert dlg.view.ring_centre() is not None
+    QApplication.sendEvent(dlg.view, QEvent(QEvent.Type.Leave))
+    assert dlg.view.ring_centre() is None
+
+
+def test_moving_the_size_slider_shows_the_ring_centred(qtbot):
+    dlg = _open(qtbot)
+    dlg.view._end_flash()
+    assert dlg.view.ring_centre() is None              # pointer not over the view
+    dlg.size_slider.setValue(60)
+    c = dlg.view.ring_centre()
+    assert c is not None and (c.x(), c.y()) == _centre(dlg)
+    assert dlg.view.brush_px == 60
+
+
+def test_space_pan_hides_the_ring(qtbot):
+    dlg = _open(qtbot)
+    cx, cy = _centre(dlg)
+    dlg.view._end_flash()
+    _hover(dlg, (cx, cy))
+    QApplication.sendEvent(dlg.view, QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_Space,
+                                               Qt.KeyboardModifier.NoModifier))
+    assert dlg.view.ring_centre() is None
+
+
+def test_zoom_pill_is_on_the_view_and_zooms_it(qtbot):
+    dlg = _open(qtbot)
+    pill = dlg.zoom_pill
+    assert pill.parent() is dlg.view and pill.isVisible()
+    fit_text = pill.level.text()
+    z0 = dlg.view.zoom_level()
+    pill.in_btn.click()
+    dlg._render()
+    assert dlg.view.zoom_level() > z0
+    assert pill.level.text() != fit_text
+    pill.fit_btn.click()
+    dlg._render()
+    assert dlg.view.zoom_level() == 1.0 and pill.level.text() == fit_text
