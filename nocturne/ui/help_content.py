@@ -380,10 +380,13 @@ _TOPIC_LIST = (
        "<p>Opens a window where you show Nocturne which parts of the picture are sky. Paint "
        "with <b>Sky</b> where there is only sky, and with <b>Nebula</b> over your object; "
        "the gradient is fitted from the sky alone, so the object cannot be mistaken for "
-       "glow. Anywhere you leave unpainted is decided automatically \u2014 tick "
+       "glow. Anywhere you leave unpainted is decided automatically \u2014 press "
        "<b>Auto-mask</b> to see how. <b>Preview result</b> shows the corrected picture "
        "before you commit, and <b>Apply</b> adds it to your history like any step. Opening "
        "the window again later brings your painting back, so you can touch it up.</p>"
+       "<p>After Apply the main canvas stretches the corrected picture afresh for "
+       "display, so the sky can look a little different from the paint window's "
+       "preview \u2014 the pixels are the same.</p>"
        "<h4>Seeing what was removed</h4>"
        "<p>After it runs, tick <b>Show what was removed</b> to put the subtracted "
        "gradient on the canvas on its own. This is the check worth making: a "
@@ -1227,8 +1230,8 @@ _TOPIC_LIST = (
 
     # ---- Tools ----
     _t("tools", "External tools: GraXpert, StarNet2, RC-Astro & ASTAP",
-       "GraXpert is free and needed for Background; StarNet2, RC-Astro and ASTAP are optional.",
-       "<h4>GraXpert (free, needed for Background)</h4>"
+       "GraXpert is free and needed for Apply Background; StarNet2, RC-Astro and ASTAP are optional.",
+       "<h4>GraXpert (free, needed for Apply Background)</h4>"
        "<p>Powers <b>Apply Background</b> (the Background step's <b>Paint mask\u2026</b> "
        "needs nothing), and is one of the "
        "engines for Noise Reduction. Download it, then set its path in <b>Settings</b> and "

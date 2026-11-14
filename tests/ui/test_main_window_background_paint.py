@@ -184,3 +184,88 @@ def test_the_commit_lands_on_the_worker_thread_too(qtbot, tmp_path, monkeypatch)
     assert "Background (strong, painted)" in win.log_panel.text()
     assert win._step_state("background") == "applied"
     assert win._has_pending() is False
+
+
+ALL_NEBULA = [{"kind": "nebula", "radius": 1e5, "points": [[0.0, 0.0]]}]
+
+
+def _paint_and_press_apply(qtbot, monkeypatch, strokes, log):
+    """exec() runs the REAL editor's Apply: strokes set, Apply pressed, and the
+    fit allowed to land before exec returns what the dialog ended as."""
+    def exec_(self):
+        log.append(self)
+        self._strokes = [dict(s) for s in strokes]
+        self.apply_btn.click()
+        qtbot.waitUntil(lambda: self.result() == self.DialogCode.Accepted
+                        or "Too little sky" in self.status.text(), timeout=20000)
+        return int(self.result() == self.DialogCode.Accepted)
+    monkeypatch.setattr(bpd.BackgroundPaintDialog, "exec", exec_)
+
+
+def test_a_failed_paint_apply_keeps_history_pixels_and_the_dialog(qtbot, tmp_path, monkeypatch):
+    """All nebula: the fit fails. It used to close the editor and truncate
+    first, losing the old Background and every later step."""
+    win = _at_background(qtbot, tmp_path)
+    _dialog_applies(monkeypatch, PAINTED)
+    win._panel.paint_btn.click()
+    qtbot.waitUntil(lambda: not win._busy, timeout=5000)
+    win.project.run_step(_PrecomputedStep(STEP_NAME["stretch"],
+                                          win.project.current().copy()), 0.3)
+    before = list(win.project.entries())
+    cur = win.project.current().data.copy()
+    monkeypatch.setattr(mw.MainWindow, "_ask_truncation",
+                        lambda self, names, label, verb, **kw: True)
+    opened = []
+    _paint_and_press_apply(qtbot, monkeypatch, ALL_NEBULA, opened)
+    win._panel.paint_btn.click()
+    qtbot.waitUntil(lambda: not win._busy, timeout=5000)
+    assert opened, "the dialog did not open"
+    assert win.project.entries() == before
+    assert np.array_equal(win.project.current().data, cur)
+    dlg = opened[0]
+    assert "Too little sky" in dlg.status.text()
+    assert dlg.result() != dlg.DialogCode.Accepted and not getattr(dlg, "_closed", False)
+
+
+def test_a_paint_apply_commits_the_editors_own_result(qtbot, tmp_path, monkeypatch):
+    """The fit runs once, in the editor; the window commits that image."""
+    import nocturne.core.painted_background as pb
+    real, calls = pb.apply_painted, []
+    monkeypatch.setattr(pb, "apply_painted", lambda *a: calls.append(1) or real(*a))
+    win = _at_background(qtbot, tmp_path)
+    base = win.project.current().data.copy()
+    opened = []
+    _paint_and_press_apply(qtbot, monkeypatch, PAINTED["strokes"], opened)
+    win._panel.paint_btn.click()
+    qtbot.waitUntil(lambda: not win._busy, timeout=5000)
+    name, opt = win.project.entries()[-1]
+    assert name == STEP_NAME["background"] and opt == opened[0].option()
+    assert len(calls) == 1
+    from nocturne.core.image import AstroImage
+    from nocturne.steps.background import BackgroundStep
+    want = BackgroundStep(None).apply(AstroImage(base), opt)
+    assert np.array_equal(win.project.current().data, want.data)
+    assert "Background (strong, painted)" in win.log_panel.text()
+
+
+def test_the_paint_dialog_is_deleted_after_it_closes(qtbot, tmp_path, monkeypatch):
+    import shiboken6
+    from PySide6.QtCore import QCoreApplication, QEvent
+    win = _at_background(qtbot, tmp_path)
+    opened = []
+    _dialog_cancels(monkeypatch, opened)
+    win._panel.paint_btn.click()
+    assert opened
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    assert not shiboken6.isValid(opened[0])
+
+
+def test_a_revisited_painted_light_reads_light(qtbot, tmp_path, monkeypatch):
+    win = _at_background(qtbot, tmp_path)
+    _dialog_applies(monkeypatch, dict(PAINTED, amount="light"))
+    win._panel.paint_btn.click()
+    qtbot.waitUntil(lambda: not win._busy, timeout=5000)
+    win._go_to_id("color")
+    win._go_to_id("background")
+    assert win._panel.option_box.currentText() == "light"
+    assert win._has_pending() is False

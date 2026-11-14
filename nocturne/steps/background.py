@@ -107,6 +107,14 @@ class BackgroundStep(Step):
         # now quietly halve the correction everyone gets.
         return "strong"
 
+    def adopt_painted(self, option: dict) -> dict:
+        """What a painted apply leaves on the step for the log, for a result
+        the paint editor already computed. Returns the normalised option."""
+        opt = normalise_painted(option)
+        self.last_engine = "Nocturne"
+        self.last_message = "" if "strokes" in opt else AUTO_MASK_MESSAGE
+        return opt
+
     def apply(self, img: AstroImage, option: str) -> AstroImage:
         # Named in the log like every other external-tool step (his ask,
         # 2026-09-27): "Background (strong (GraXpert))". Off ran nothing.
@@ -120,10 +128,7 @@ class BackgroundStep(Step):
             # apply_painted zeroes the output where the input was all-zero, so
             # a mosaic border shows no fake gradient.
             from ..core.painted_background import apply_painted
-            opt = normalise_painted(option)
-            self.last_engine = "Nocturne"
-            if "strokes" not in opt:
-                self.last_message = AUTO_MASK_MESSAGE
+            opt = self.adopt_painted(option)
             out, _model = apply_painted(img, opt.get("strokes"), _AMOUNT[opt["amount"]])
             return out
         self.last_engine = "GraXpert"

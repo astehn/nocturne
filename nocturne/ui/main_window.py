@@ -4506,7 +4506,11 @@ class MainWindow(QMainWindow):
         """
         step = self._step_for(stage_id)
         committed = self._committed_option(stage_id)
-        if isinstance(committed, dict):
+        if is_painted(committed):
+            # A painted Background records {"method", "amount", ...}: the
+            # amount IS the light/strong the buttons show.
+            committed = committed.get("amount")
+        elif isinstance(committed, dict):
             committed = committed.get("level")
         if isinstance(committed, str) and committed in step.options():
             return committed
@@ -5338,9 +5342,14 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry(format_log_entry(
             f"Reset {STEP_NAME.get(sid, self._stages[self._stage].label)}", "", None))
 
-    def apply_current(self, option, *, confirmed: bool = False) -> None:
+    def apply_current(self, option, *, confirmed: bool = False, result=None) -> None:
         """`confirmed`: the truncation was already agreed to (Paint mask… asks
-        before its editor opens, not after the painting) — truncate, don't ask."""
+        before its editor opens, not after the painting) — truncate, don't ask.
+
+        `result`: the painted Background's editor already ran this option on
+        this very base (it fits before it closes, so a failed fit never gets
+        here). It is committed as is: the preview is the commit, and the
+        second ~2.4 s fit is saved."""
         if self.project is None or self._busy:
             return
         stage_id = self._stages[self._stage].id
@@ -5442,7 +5451,12 @@ class MainWindow(QMainWindow):
         # start from a debounce timer, a second 6 s prepare beside the commit —
         # is nobody's picture any more (F2).
         self._quiet_previews()
-        self._run_busy(self._commit_work(stage_id, step, base, option), on_result,
+        if result is not None:
+            step.adopt_painted(option)      # the log line apply() would have set
+            work = (lambda: result)
+        else:
+            work = self._commit_work(stage_id, step, base, option)
+        self._run_busy(work, on_result,
                        self._busy_label_for(stage_id, option, base), "Failed")
 
     # Steps whose live preview prepares what the slider does not change, and
@@ -7220,10 +7234,12 @@ class MainWindow(QMainWindow):
             self.project.state_at(target),
             option=committed if is_painted(committed) else None,
             parent=self,
-            on_apply=lambda opt: self.apply_current(opt, confirmed=True))
+            on_apply=lambda opt, result=None: self.apply_current(
+                opt, confirmed=True, result=result))
         # ApplicationModal for the reason given in _open_curves_dialog.
         dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
         dlg.exec()
+        dlg.deleteLater()      # parented, it outlived exec() holding the base and its result
 
     def _open_curves_dialog(self) -> None:
         """The big curve editor. Seeded with whatever is in the inline one, and

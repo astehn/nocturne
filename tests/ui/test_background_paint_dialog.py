@@ -134,20 +134,66 @@ def test_clear_all_empties_strokes(qtbot):
     assert dlg.option()["strokes"] == []
 
 
-def test_apply_hands_back_the_option(qtbot):
+def test_apply_hands_back_the_option_and_its_result(qtbot):
+    """No preview first: Apply runs the fit itself, then hands back the option
+    AND the image — the step's own result, so the window commits it as is."""
     got = []
-    dlg = _open(qtbot, on_apply=got.append)
+    base = _base()
+    dlg = _open(qtbot, base=base, on_apply=lambda o, r: got.append((o, r)))
     dlg.light_btn.click()
     dlg.sky_btn.click()
     cx, cy = _centre(dlg)
     _drag(dlg.view, [(cx, cy), (cx + 25, cy + 5)])
     dlg.apply_btn.click()
+    qtbot.waitUntil(lambda: bool(got), timeout=20000)
     assert len(got) == 1
-    opt = got[0]
+    opt, out = got[0]
     assert opt["method"] == "painted" and opt["amount"] == "light"
     assert [s["kind"] for s in opt["strokes"]] == ["sky"]
     assert opt == dlg.option()
+    assert np.array_equal(out.data, BackgroundStep(None).apply(base, opt).data)
     assert dlg.result() == dlg.DialogCode.Accepted
+    assert QApplication.overrideCursor() is None
+
+
+def test_apply_reuses_the_previewed_result(qtbot, monkeypatch):
+    """The preview IS the commit: no second fit."""
+    import nocturne.core.painted_background as pb
+    real, calls = pb.apply_painted, []
+    monkeypatch.setattr(pb, "apply_painted",
+                        lambda *a: calls.append(1) or real(*a))
+    got = []
+    dlg = _open(qtbot, on_apply=lambda o, r: got.append((o, r)))
+    cx, cy = _centre(dlg)
+    _drag(dlg.view, [(cx, cy), (cx + 25, cy + 5)])
+    dlg.preview_btn.click()
+    qtbot.waitUntil(lambda: dlg._result is not None and not dlg._result_busy,
+                    timeout=20000)
+    shown = dlg._result
+    dlg.apply_btn.click()
+    assert len(got) == 1 and got[0][1] is shown
+    assert len(calls) == 1
+
+
+def test_a_failed_apply_keeps_the_dialog_and_the_strokes(qtbot):
+    """Nebula everywhere: the fit fails. Closing first lost the strokes, and
+    the window had already discarded the old Background and later steps."""
+    got = []
+    dlg = _open(qtbot, on_apply=lambda o, r: got.append((o, r)))
+    dlg.nebula_btn.click()
+    dlg.size_slider.setValue(dlg.size_slider.maximum())
+    w, h = dlg.view.width(), dlg.view.height()
+    for y in range(0, h, 40):
+        _drag(dlg.view, [(0, y), (w, y)])
+    strokes = dlg.option()["strokes"]
+    dlg.apply_btn.click()
+    qtbot.waitUntil(lambda: "Too little sky" in dlg.status.text(), timeout=20000)
+    assert got == []
+    assert dlg.isVisible() and dlg.result() != dlg.DialogCode.Accepted
+    assert not getattr(dlg, "_closed", False)
+    assert dlg.option()["strokes"] == strokes
+    assert dlg.apply_btn.isEnabled() and dlg.view.isEnabled()
+    assert QApplication.overrideCursor() is None
 
 
 def test_default_amount_is_strong(qtbot):
@@ -349,3 +395,61 @@ def test_fit_mapping_anchors_with_letterbox(qtbot):
         _send(view, QEvent.Type.MouseButtonRelease, (px, py), L, N)
         got = dlg.option()["strokes"][0]["points"][0]
         assert got == pytest.approx(list(want), abs=1.0)
+
+
+def test_a_reused_id_never_shows_the_previous_result(qtbot, monkeypatch):
+    """The decimation and pixmap caches are keyed on id(); a freed result's id
+    can come back on the next one (6 in 200, measured). Force every id equal:
+    the picture must still be the image actually shown."""
+    from nocturne.ui import background_paint_dialog as bpd
+    from nocturne.ui.background_paint_dialog import _stretch_params, _stretched
+    from nocturne.ui.curves_dialog import _downscale, _pixmap_for
+    base = _base()
+    dlg = _open(qtbot, base=base)
+    dlg.show_mask_check.setChecked(False)
+    monkeypatch.setattr(bpd, "id", lambda o: 1, raising=False)
+    dlg._render()
+    edge = max(dlg.view.width(), dlg.view.height())
+    params = _stretch_params(base.data)
+
+    def manual(img):
+        small = _downscale(img, max_edge=edge)
+        return _rgb_of(_pixmap_for(AstroImage(_stretched(small.data, params),
+                                              is_linear=False, metadata={}),
+                                   dlg.view.size()))
+
+    first = AstroImage(base.data * 0.5, is_linear=True, metadata={})
+    second = AstroImage(base.data * 0.8, is_linear=True, metadata={})
+    dlg.preview_btn.blockSignals(True)
+    dlg.preview_btn.setChecked(True)
+    dlg.preview_btn.blockSignals(False)
+    for img in (first, second):
+        dlg._result = img
+        dlg._render()
+        assert np.array_equal(_rgb_of(dlg.view.pixmap()), manual(img))
+
+
+def test_apply_during_a_running_preview_waits_for_it(qtbot, monkeypatch):
+    """Apply pressed while the preview is still fitting the same strokes takes
+    that fit rather than cancelling it and starting another."""
+    import time
+
+    import nocturne.core.painted_background as pb
+    real, calls = pb.apply_painted, []
+
+    def slow(*a):
+        calls.append(1)
+        time.sleep(0.4)
+        return real(*a)
+    monkeypatch.setattr(pb, "apply_painted", slow)
+    got = []
+    dlg = _open(qtbot, on_apply=lambda o, r: got.append((o, r)))
+    cx, cy = _centre(dlg)
+    _drag(dlg.view, [(cx, cy), (cx + 25, cy + 5)])
+    dlg.preview_btn.click()
+    assert dlg._result_busy
+    dlg.apply_btn.click()
+    qtbot.waitUntil(lambda: bool(got), timeout=20000)
+    assert len(calls) == 1
+    assert got[0][1] is dlg._result
+    assert QApplication.overrideCursor() is None

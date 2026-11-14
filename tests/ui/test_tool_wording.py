@@ -72,7 +72,7 @@ def test_settings_says_free_or_paid_and_what_graxpert_is_needed_for(qtbot):
     d = SettingsDialog(Settings())
     qtbot.addWidget(d)
     labels = {w.text() for w in d.findChildren(QLabel)}
-    for text in ("GraXpert (free, needed for Background)", "RC-Astro (paid, optional)",
+    for text in ("GraXpert (free, needed for Apply Background)", "RC-Astro (paid, optional)",
                  "StarNet2 (free, optional)", "ASTAP (free, optional)"):
         assert text in labels, text
 
@@ -84,3 +84,22 @@ def test_settings_does_not_call_the_split_export_rc_astro_only(qtbot):
     d = SettingsDialog(Settings())
     qtbot.addWidget(d)
     assert not any("starless+stars" in w.text() for w in d.findChildren(QLabel))
+
+
+def test_graxpert_is_needed_for_apply_background_not_for_background():
+    """Since the painted route (2026-11-14) Background runs without GraXpert:
+    only its Apply Background button needs it."""
+    from nocturne.ui.step_panels import _GATE_NOTE
+    assert _GATE_NOTE["background"] == ("Apply Background needs GraXpert "
+                                         "— set its path in Settings.")
+    tools = TOPICS["tools"]
+    assert "needed for Apply Background" in tools.summary
+    assert "<h4>GraXpert (free, needed for Apply Background)</h4>" in tools.body
+    for t in TOPICS.values():
+        assert "needed for Background" not in t.summary + t.body, t.id
+
+
+def test_background_help_presses_auto_mask_and_explains_the_restretch():
+    body = TOPICS["background"].body
+    assert "press <b>Auto-mask</b>" in body and "tick <b>Auto-mask</b>" not in body
+    assert "the pixels are the same" in body

@@ -86,7 +86,7 @@ SIXTEEN_BIT_FORMATS = frozenset({"TIFF (16-bit)", "Starless + Stars (two TIFFs)"
 STRETCH_DEFAULT = round(_STEP_DEFAULT * 100)
 # Inline "needs <tool>" note text per process stage that can be gated.
 _GATE_NOTE = {
-    "background": "Needs GraXpert — set its path in Settings.",
+    "background": "Apply Background needs GraXpert — set its path in Settings.",
 }
 
 

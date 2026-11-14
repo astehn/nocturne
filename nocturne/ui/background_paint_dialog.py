@@ -12,7 +12,10 @@ Cancel / Apply bottom right.
 
 Preview result runs the Background step's own painted route on the
 full-resolution base, from `option()` — the very dict Apply hands back — so
-what it shows is what the step will produce.
+what it shows is what the step will produce. Apply hands back that result too
+(computing it first if the preview has not), so the fit runs once and a fit
+that fails — "Too little sky left…" — is reported here with the strokes still
+on screen, before anything in the history is touched.
 """
 from __future__ import annotations
 
@@ -204,7 +207,7 @@ class BackgroundPaintDialog(QDialog):
         self._on_apply = on_apply
         self._pool = QThreadPool.globalInstance()
         self._params = _stretch_params(base.data)
-        self._decimated = {}       # id(img) -> (rect, max_edge, decimated)
+        self._decimated = {}       # id(img) -> (img, (rect, max_edge), decimated)
         seed = normalise_painted(option) if option else None
         self._strokes: list = copy.deepcopy((seed or {}).get("strokes") or [])
         amount = (seed or {}).get("amount", "strong")
@@ -218,10 +221,13 @@ class BackgroundPaintDialog(QDialog):
         self._result_key = None
         self._result_busy = False
         self._result_dirty = False
+        self._applying = False     # Apply is waiting for the fit
+        self._inflight_key = None  # the option the running fit was given
         self._token = None
         self._busy_cursor = False
         self._img_pm = None        # the stretched picture, before overlays
         self._img_key = None
+        self._img_src = None       # the image _img_pm was made from
 
         # --- tools
         def tool(text, tip=""):
@@ -305,6 +311,7 @@ class BackgroundPaintDialog(QDialog):
         tools_w = QWidget()
         tools_w.setLayout(tools)
         tools_w.setFixedWidth(200)
+        self._tools_w = tools_w
 
         # --- picture
         self.view = _PaintPreview()
@@ -456,6 +463,7 @@ class BackgroundPaintDialog(QDialog):
                 self._token.cancel()
             return
         gen = self._result_gen
+        self._inflight_key = key
         token = self._token = CancelToken()
         base = self._base
         self._result_busy, self._result_dirty = True, False
@@ -475,7 +483,7 @@ class BackgroundPaintDialog(QDialog):
         if getattr(self, "_closed", False):
             return
         if gen != self._result_gen:     # superseded by a later edit
-            if self._result_dirty and self.preview_btn.isChecked():
+            if self._result_dirty and (self.preview_btn.isChecked() or self._applying):
                 self._start_result()
             else:
                 self._set_busy(False)
@@ -483,8 +491,12 @@ class BackgroundPaintDialog(QDialog):
         self._set_busy(False)
         if exc is not None:
             # "Too little sky left…" is the user's to act on, not a crash.
+            verb = "apply" if self._applying else "preview"
             self.status.setText(str(exc) if isinstance(exc, ValueError)
-                                else f"Could not preview: {exc}")
+                                else f"Could not {verb}: {exc}")
+            if self._applying:
+                self._applying = False
+                self._lock_for_apply(False)
             self.preview_btn.blockSignals(True)
             self.preview_btn.setChecked(False)
             self.preview_btn.blockSignals(False)
@@ -492,6 +504,9 @@ class BackgroundPaintDialog(QDialog):
             return
         self.status.setText("")
         self._result, self._result_key = out, key
+        if self._applying:
+            self._hand_over()
+            return
         self._render()
 
     def _set_busy(self, on: bool) -> None:
@@ -512,16 +527,20 @@ class BackgroundPaintDialog(QDialog):
         # Base and result through the SAME decimation at every zoom: a fixed
         # 640 px copy for the base only made Preview change the noise texture
         # as well as the gradient. Cached per image, so a stroke never redoes it.
+        # Keyed on id() but checked by identity: a freed result's id can be
+        # reused by the next one, which would then show the old decimation
+        # (measured: 6 reuses in 200). Pruned on every call, so an entry never
+        # keeps a dropped result alive.
+        self._decimated = {k: v for k, v in self._decimated.items()
+                           if v[0] is self._base or v[0] is self._result}
         hit = self._decimated.get(id(img))
-        if hit is not None and hit[0] == (tuple(rect), edge):
-            src = hit[1]
+        if hit is not None and hit[0] is img and hit[1] == (tuple(rect), edge):
+            src = hit[2]
         else:
             crop = img.data[y0:y1, x0:x1]
             src = _downscale(AstroImage(crop, is_linear=img.is_linear,
                                         metadata=dict(img.metadata)), max_edge=edge)
-            self._decimated = {k: v for k, v in self._decimated.items()
-                               if k in (id(self._base), id(self._result))}
-            self._decimated[id(img)] = ((tuple(rect), edge), src)
+            self._decimated[id(img)] = (img, (tuple(rect), edge), src)
         shown = AstroImage(_stretched(src.data, self._params), is_linear=False,
                            metadata={})
         return _scaled_to_box(QPixmap.fromImage(to_qimage(shown)), view.size())
@@ -531,7 +550,8 @@ class BackgroundPaintDialog(QDialog):
         rect = view.visible_rect(self._base.data.shape)
         img = self._result if self._showing_result() else self._base
         key = (id(img), rect, view.width(), view.height())
-        if key != self._img_key:
+        if key != self._img_key or self._img_src is not img:
+            self._img_src = img
             self._img_pm = self._pixmap_for_image(img, rect)
             self._img_key = key
             view.set_mapping(rect, self._img_pm.width(), self._img_pm.height())
@@ -617,10 +637,33 @@ class BackgroundPaintDialog(QDialog):
 
     # --- close
     def _apply(self) -> None:
-        opt = self.option()
+        """Fit first, close after. Closing first lost the strokes AND, through
+        the window's truncation, the old Background and every later step when
+        the fit then failed."""
+        if self._applying:
+            return
+        key = repr(self.option())
+        if self._result is not None and self._result_key == key:
+            self._hand_over()
+            return
+        self._applying = True
+        self._lock_for_apply(True)
+        if self._result_busy and not self._result_dirty and self._inflight_key == key:
+            return      # the preview already fitting these strokes lands as Apply's
+        self._start_result()
+
+    def _lock_for_apply(self, on: bool) -> None:
+        """No painting while Apply's fit runs: the result must belong to the
+        strokes it hands back. Cancel stays live."""
+        for w in (self._tools_w, self.view, self.preview_btn, self.apply_btn):
+            w.setEnabled(not on)
+
+    def _hand_over(self) -> None:
+        opt, out = self.option(), self._result
+        self._applying = False
         self._shutdown()
         if self._on_apply is not None:
-            self._on_apply(opt)
+            self._on_apply(opt, out)
         self.accept()
 
     def reject(self) -> None:
