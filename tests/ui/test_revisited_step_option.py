@@ -73,9 +73,10 @@ def test_background_off_is_the_documented_exception(qtbot, tmp_path):
     """
     win = _win(qtbot, tmp_path)
     win._go_to_id("background")
-    win._panel.option_box.setCurrentText("off")
+    # No button sends "off" since 2026-11-14 (the box has no such entry);
+    # the apply_current branch stays for anything that still says it.
     win.apply_current("off")
-    assert win._panel.option_baseline == "off"       # while the panel lives
+    assert "Background" not in [n for n, _ in win.project.entries()]
     win._go_to_id("levels")
     win._go_to_id("background")
     assert win._panel.option_box.currentText() == "strong", (

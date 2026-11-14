@@ -136,15 +136,18 @@ def test_returning_to_an_applied_process_step_is_not_pending(qtbot, tmp_path):
     assert win._has_pending() is False
 
 
-def test_background_off_is_a_decision_not_a_pending_change(qtbot, tmp_path):
-    """Choosing "off" records nothing at all (apply_current early-returns), so
-    there is no commit for the history to report — but the user chose it."""
+def test_a_legacy_background_off_leaves_an_unapplied_step(qtbot, tmp_path):
+    """No button sends "off" since 2026-11-14, but apply_current still takes
+    it. It records nothing, and the box has no "off" to re-baseline to — so
+    the honest reading is the plain unapplied step: green, not pending."""
     win = _win(qtbot, tmp_path)
     win._go_to_id("background")
-    win._panel.option_box.setCurrentText("off")
-    assert win._has_pending() is True
+    entries = list(win.project.entries())
     win.apply_current("off")
+    win._sync_step_controls()
+    assert win.project.entries() == entries
     assert win._has_pending() is False
+    assert win._panel.apply_btn.state() == "not_run"
 
 
 def test_the_color_stage_covers_its_tint_preview(qtbot, tmp_path):
@@ -195,8 +198,8 @@ def test_the_label_appears_as_soon_as_a_compute_dropdown_moves(qtbot, tmp_path, 
     The pending mark now lives on the Apply button (its state; consistent
     panels, 2026-09-25). On a compute step never applied the button is
     already green at arrival (`not_run`), so the colour alone cannot show the
-    dropdown being heard there. Background is used instead, after committing
-    "off" — bookkeeping only, no tool runs — which reads `applied`; moving
+    dropdown being heard there. Background is used instead, after a painted
+    commit — Nocturne's own fit, no tool runs — which reads `applied`; moving
     the dropdown must then make it `pending` at once. GraXpert is
     reported present only so Apply is enabled for "light" (a disabled Apply is
     never marked); nothing here presses it.
@@ -205,10 +208,9 @@ def test_the_label_appears_as_soon_as_a_compute_dropdown_moves(qtbot, tmp_path, 
     monkeypatch.setattr(mw, "graxpert_valid", lambda settings: True)
     win = _win(qtbot, tmp_path)
     win._go_to_id("background")
-    win._panel.option_box.setCurrentText("off")
-    win.apply_current("off")
+    win.apply_current({"method": "painted", "amount": "strong", "strokes": []})
     qtbot.wait(1)
-    assert win._panel.option_box.currentText() == "off", "precondition"
+    assert win._panel.option_box.currentText() == "strong", "precondition"
     assert win._panel.apply_btn.state() == "applied", "precondition"
 
     win._panel.option_box.setCurrentText("light")
@@ -528,7 +530,7 @@ def test_apply_and_continue_defers_navigation_until_the_worker_lands(
 def test_apply_and_continue_is_not_offered_when_apply_is_disabled(
         qtbot, tmp_path, monkeypatch):
     """IMPORTANT 3. Background's apply_btn is disabled from the moment the
-    dropdown reads anything but "off" (GraXpert unconfigured in test
+    page is built (GraXpert unconfigured in test
     settings — apply_enabled is False). Before the fix, `_apply_current_step`
     silently skipped the disabled button and `_go_to` navigated anyway:
     "Apply and continue" committed nothing and nobody was told — the original
@@ -893,15 +895,13 @@ def test_a_live_preview_stage_is_not_green_just_for_arriving(qtbot, tmp_path):
         assert not win._panel.apply_btn.isEnabled(), sid
 
 
-def test_background_off_does_not_stay_green_after_being_applied(qtbot, tmp_path):
-    """Background's "off" records no history entry at all (see
-    apply_current), so a naive `_committed_option is None` check alone would
-    read this compute stage as still needing its first Apply forever — even
-    right after the user explicitly committed that decision."""
+def test_a_painted_background_does_not_stay_green_after_being_applied(qtbot, tmp_path):
+    """The painted route commits through Paint mask…, not the Apply button,
+    and its option is a dict the level buttons cannot show — it must still
+    read as the step's commit."""
     win = _win(qtbot, tmp_path)
     win._go_to_id("background")
-    win._panel.option_box.setCurrentText("off")
-    win.apply_current("off")
+    win.apply_current({"method": "painted", "amount": "light", "strokes": []})
     win._sync_step_controls()
 
     assert win._panel.apply_btn.state() == "applied"

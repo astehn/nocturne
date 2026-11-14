@@ -59,7 +59,8 @@ TERMS: tuple[Term, ...] = (
     _T("Background extraction",
        "Removing the smooth glow (a gradient) that light pollution, moonlight or haze "
        "spreads across a picture, so the sky is even from corner to corner. Nocturne's "
-       "Background step does it with GraXpert, and can show you exactly what it took away.",
+       "Background step does it with GraXpert, or with its own fit from a mask you paint, "
+       "and can show you exactly what it took away.",
        "background", ("gradient", "gradient removal", "light pollution")),
     _T("Bayer pattern",
        "The grid of red, green and blue filters over a colour camera's pixels, with two "

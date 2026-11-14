@@ -54,7 +54,7 @@ def test_the_chosen_level_does_not_wear_the_accent():
 
 
 @pytest.mark.parametrize("stage_id,levels", [
-    ("background", ["off", "light", "strong"]),
+    ("background", ["light", "strong"]),
     ("deconvolution", ["light", "medium", "strong"]),
     ("noise_sharpen", ["light", "medium", "strong"]),
 ])

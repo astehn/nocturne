@@ -281,6 +281,13 @@ class BatchDialog(QDialog):
                 f"• {os.path.basename(r['path'])} — {r.get('message') or 'unknown error'}"
                 for r in failed)
             summary = f"{summary}\n{len(failed)} failed:\n{lines}"
+        # A file can succeed with something to say (the painted Background's
+        # Auto-mask note); after the failures, which matter more.
+        noted = [r for r in results if r.get("ok") and r.get("message")]
+        if noted:
+            lines = "\n".join(f"• {os.path.basename(r['path'])} — {r['message']}"
+                              for r in noted)
+            summary = f"{summary}\nNotes:\n{lines}"
         self.status.setText(summary)
 
     def _on_error(self, exc) -> None:

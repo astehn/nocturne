@@ -372,8 +372,18 @@ _TOPIC_LIST = (
     _t("background", "Background extraction",
        "Remove light-pollution gradients so the sky is even.",
        "<h4>What it does</h4>"
-       "<p>Uses <b>GraXpert</b> to model and subtract the smooth glow of light pollution and "
-       "sky gradients, leaving an even background so the real signal stands out.</p>"
+       "<p>Models and subtracts the smooth glow of light pollution and sky gradients, "
+       "leaving an even background so the real signal stands out. There are two ways to "
+       "do it: <b>Apply Background</b> uses <b>GraXpert</b>, and <b>Paint mask\u2026</b> "
+       "uses Nocturne's own fit, which needs no other program.</p>"
+       "<h4>Paint mask\u2026</h4>"
+       "<p>Opens a window where you show Nocturne which parts of the picture are sky. Paint "
+       "with <b>Sky</b> where there is only sky, and with <b>Nebula</b> over your object; "
+       "the gradient is fitted from the sky alone, so the object cannot be mistaken for "
+       "glow. Anywhere you leave unpainted is decided automatically \u2014 tick "
+       "<b>Auto-mask</b> to see how. <b>Preview result</b> shows the corrected picture "
+       "before you commit, and <b>Apply</b> adds it to your history like any step. Opening "
+       "the window again later brings your painting back, so you can touch it up.</p>"
        "<h4>Seeing what was removed</h4>"
        "<p>After it runs, tick <b>Show what was removed</b> to put the subtracted "
        "gradient on the canvas on its own. This is the check worth making: a "
@@ -401,8 +411,9 @@ _TOPIC_LIST = (
        "<h4>Tips</h4>"
        "<p>Don't be alarmed if the sky looks a little <b>redder</b> afterwards — that's expected. "
        "Light pollution is often bluish, so removing it leaves the naturally red nebulosity more "
-       "prominent. The next step, <b>Color</b>, neutralises any residual cast. Needs GraXpert "
-       "(set its path in Settings).</p>"),
+       "prominent. The next step, <b>Color</b>, neutralises any residual cast. "
+       "<b>Apply Background</b> needs GraXpert (set its path in Settings); "
+       "<b>Paint mask\u2026</b> does not.</p>"),
 
     _t("color", "Color calibration",
        "Make the sky grey and the typical star white.",
@@ -1218,7 +1229,8 @@ _TOPIC_LIST = (
     _t("tools", "External tools: GraXpert, StarNet2, RC-Astro & ASTAP",
        "GraXpert is free and needed for Background; StarNet2, RC-Astro and ASTAP are optional.",
        "<h4>GraXpert (free, needed for Background)</h4>"
-       "<p>Powers <b>Background extraction</b>, which cannot run without it, and is one of the "
+       "<p>Powers <b>Apply Background</b> (the Background step's <b>Paint mask\u2026</b> "
+       "needs nothing), and is one of the "
        "engines for Noise Reduction. Download it, then set its path in <b>Settings</b> and "
        "press <b>Test</b>.</p>"
        "<h4>StarNet2 (free, optional)</h4>"

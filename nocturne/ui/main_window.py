@@ -55,6 +55,7 @@ from ..settings import (
 )
 from ..recipe import recipe_from_entries, save_recipe, uncaptured_step_names
 from ..user_presets import PresetError, PresetLibrary, presets_dir
+from ..steps.background import is_painted
 from ..steps.star_split import preferred_splitter
 from ..steps.factory import make_step
 from ..steps.load import load_fits
@@ -3571,8 +3572,7 @@ class MainWindow(QMainWindow):
 
         `_pending_apply_targets` only ever offers a button when this was
         already True, so False afterwards means the click actually committed
-        (or, on Background's "off", recorded an explicit decision) rather
-        than being declined at a truncation confirm.
+        rather than being declined at a truncation confirm.
 
         Per button rather than `_has_pending()` for the whole step, because
         Colour has two independent sources: reading the step would call a
@@ -4488,8 +4488,8 @@ class MainWindow(QMainWindow):
         on arrival — which is how the step-commit review found it, as a false
         prompt for a step nobody had touched.
 
-        **Background's "off" is not recoverable here, deliberately.** Choosing
-        it records no history entry (see `apply_current`), so
+        **Background's "off" is not recoverable here, deliberately.** (No
+        button offers it since 2026-11-14; old projects still carry it.) It records no history entry (see `apply_current`), so
         `_committed_option` cannot tell "off" from "never applied", and both
         land on the step's default of "strong". Reading the history the other
         way — no entry therefore "off" — is worse: it is right for the user who
@@ -4794,13 +4794,6 @@ class MainWindow(QMainWindow):
         # load/export have no Apply and no place in the truncation order.
         if sid not in ("load", "export") and self._step_has_commit(sid):
             return "applied"
-        if (sid == "background" and sid == self.current_stage_id()
-                and getattr(self._panel, "option_baseline", None) == "off"
-                and getattr(self._panel, "option_box", None) is not None
-                and self._panel.option_box.currentText() == "off"):
-            # "off" records no history entry (see apply_current) but is a
-            # committed decision: `_clear_pending` re-baselines the box to it.
-            return "applied"
         if sid in NOOP_AT_DEFAULT or (sid == "crop" and self._crop_box_is_full_frame()):
             return "no_change"
         return "not_run"
@@ -4831,11 +4824,6 @@ class MainWindow(QMainWindow):
                     or self._crop_box_is_full_frame())
         if sid == "color":
             return self._colour_matches_commit()
-        box = getattr(panel, "option_box", None)
-        if (sid == "background" and box is not None
-                and getattr(panel, "option_baseline", None) == "off"
-                and box.currentText() == "off"):
-            return True     # "off" commits nothing; applying it again is a no-op
         read = getattr(panel, "commit_option", None)
         committed = self._committed_option(sid)
         if read is None or committed is None:
@@ -5350,7 +5338,9 @@ class MainWindow(QMainWindow):
         self.log_panel.append_entry(format_log_entry(
             f"Reset {STEP_NAME.get(sid, self._stages[self._stage].label)}", "", None))
 
-    def apply_current(self, option) -> None:
+    def apply_current(self, option, *, confirmed: bool = False) -> None:
+        """`confirmed`: the truncation was already agreed to (Paint mask… asks
+        before its editor opens, not after the painting) — truncate, don't ask."""
         if self.project is None or self._busy:
             return
         stage_id = self._stages[self._stage].id
@@ -5377,17 +5367,22 @@ class MainWindow(QMainWindow):
         # so silently for the whole life of the app. Before jump_back, and
         # before any expensive work starts — asking permission to discard
         # work already discarded is not asking.
-        if not self._truncate_for(stage_id, "Apply"):
+        if confirmed:
+            self.project.jump_back(self._truncation_target(stage_id))
+        elif not self._truncate_for(stage_id, "Apply"):
             return
-        self._warn_if_uncovered(stage_id)
+        if not is_painted(option):
+            # The painted fit leaves black borders out of the sky itself.
+            self._warn_if_uncovered(stage_id)
         if stage_id == "background" and option == "off":
-            # "off" = no background extraction: drop any prior result, record nothing
+            # "off" = no background extraction: drop any prior result, record
+            # nothing. No button sends it since the painted route (2026-11-14);
+            # kept so nothing that still says "off" can reach GraXpert. The box
+            # has no "off" to re-baseline to, so it is left where it stands —
+            # an unapplied Background, which is what the history now says.
             self._clear_warning()
             self.log_panel.append_entry(format_log_entry("Background", "off", None) + " — skipped")
-            # Nothing is recorded, but "off" is still a first-class decision the
-            # user made and the image now reflects. Without the re-baseline it
-            # would read pending forever, having no commit to compare against.
-            self._clear_pending(stage_id, "off")
+            self._clear_pending(stage_id)
             self._refresh()
             return
         if stage_id == "curves":
@@ -7206,6 +7201,30 @@ class MainWindow(QMainWindow):
             pts = [(0.0, 0.0), (1.0, 1.0)]
         self._panel.curve_editor.set_points(pts)   # emits curveChanged -> preview
 
+    def _open_background_paint(self) -> None:
+        """Background's painted route: the editor, then a commit like any step.
+
+        Asks about later work BEFORE the editor opens — after ten minutes of
+        painting is the wrong moment to learn Apply discards Curves — but
+        truncates only on Apply, so Cancel leaves the history as it was. The
+        editor sees the image the commit will run on, which on a revisit is
+        not `current()`: that already holds the old Background."""
+        if self.project is None or self._busy or self.current_stage_id() != "background":
+            return
+        target = self._truncation_target("background")
+        if not self._confirm_truncation("background", target, "Apply"):
+            return
+        from .background_paint_dialog import BackgroundPaintDialog
+        committed = self._committed_option("background")
+        dlg = BackgroundPaintDialog(
+            self.project.state_at(target),
+            option=committed if is_painted(committed) else None,
+            parent=self,
+            on_apply=lambda opt: self.apply_current(opt, confirmed=True))
+        # ApplicationModal for the reason given in _open_curves_dialog.
+        dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+        dlg.exec()
+
     def _open_curves_dialog(self) -> None:
         """The big curve editor. Seeded with whatever is in the inline one, and
         it hands its points straight back to it — so the two surfaces are one
@@ -8410,6 +8429,8 @@ class MainWindow(QMainWindow):
             on_lc_change=self._on_lc_change,
             on_fringe_apply=self._apply_green_fringe,
             on_show_model=self._on_show_background_model,
+            on_paint=self._open_background_paint,
+            paint_enabled=loaded,
             on_option_change=self._sync_step_controls,
             on_curve_change=self._on_curve_change,
             on_curve_preset=self._on_curve_preset,
