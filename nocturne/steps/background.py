@@ -50,12 +50,52 @@ _SMOOTHING = 0.3
 _AMOUNT = {"light": 0.5, "strong": 1.0}
 
 
+# Strokes a painted option may carry; anything else is a corrupt record.
+_STROKE_KINDS = ("sky", "nebula", "erase")
+
+# Said when a painted option arrives with no "strokes" key at all: that is a
+# recipe or preset replayed on a new picture, where one picture's strokes mean
+# nothing and only the automatic selection ran. `strokes: []` is different — the
+# user applied with nothing painted, so there is nothing to warn about.
+AUTO_MASK_MESSAGE = "Background used Auto-mask \u2014 check the result."
+
+
+def is_painted(option) -> bool:
+    return isinstance(option, dict) and option.get("method") == "painted"
+
+
+def normalise_painted(option: dict, *, keep_strokes: bool = True) -> dict:
+    """The one reader of a painted option: validates, and rounds coordinates to
+    0.1 px so what is recorded is exactly what ran. `keep_strokes=False` is the
+    recipe/preset form: the key is dropped, which is what later reads as
+    "automatic selection only"."""
+    amount = option.get("amount")
+    if amount not in _AMOUNT:
+        raise ValueError(f"Painted background: unknown amount {amount!r}")
+    out: dict = {"method": "painted", "amount": amount}
+    if keep_strokes and "strokes" in option:
+        strokes = []
+        for s in option["strokes"] or []:
+            kind = s.get("kind")
+            if kind not in _STROKE_KINDS:
+                raise ValueError(f"Painted background: unknown stroke kind {kind!r}")
+            strokes.append({
+                "kind": kind,
+                "radius": round(float(s.get("radius", 0.0)), 1),
+                "points": [[round(float(x), 1), round(float(y), 1)]
+                           for x, y in (s.get("points") or [])],
+            })
+        out["strokes"] = strokes
+    return out
+
+
 class BackgroundStep(Step):
     name = "Background"
 
     def __init__(self, graxpert: GraXpert) -> None:
         self._gx = graxpert
         self._runner = run_cli
+        self.last_message = ""
 
     def options(self) -> list[str]:
         return ["off", "light", "strong"]
@@ -67,12 +107,30 @@ class BackgroundStep(Step):
         # now quietly halve the correction everyone gets.
         return "strong"
 
+    def adopt_painted(self, option: dict) -> dict:
+        """What a painted apply leaves on the step for the log, for a result
+        the paint editor already computed. Returns the normalised option."""
+        opt = normalise_painted(option)
+        self.last_engine = "Nocturne"
+        self.last_message = "" if "strokes" in opt else AUTO_MASK_MESSAGE
+        return opt
+
     def apply(self, img: AstroImage, option: str) -> AstroImage:
         # Named in the log like every other external-tool step (his ask,
         # 2026-09-27): "Background (strong (GraXpert))". Off ran nothing.
         self.last_engine = None
+        self.last_message = ""
         if option == "off":
             return img.copy()
+        if is_painted(option):
+            # Never touches GraXpert. The "Show what was removed" view needs no
+            # model from here: it is the step's before minus after, and
+            # apply_painted zeroes the output where the input was all-zero, so
+            # a mosaic border shows no fake gradient.
+            from ..core.painted_background import apply_painted
+            opt = self.adopt_painted(option)
+            out, _model = apply_painted(img, opt.get("strokes"), _AMOUNT[opt["amount"]])
+            return out
         self.last_engine = "GraXpert"
         amount = _AMOUNT[option]
         corrected = self._gx.background_extraction(img, _SMOOTHING, runner=self._runner)

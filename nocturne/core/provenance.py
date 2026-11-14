@@ -448,7 +448,25 @@ def _spikes_params(ser: dict) -> list[str]:
     return out
 
 
+def _background_params(ser) -> list[str]:
+    """Painted Background: the amount and how much was painted. The strokes
+    themselves are the project's, not report prose."""
+    out = [f"- amount: {ser.get('amount', '')}"]
+    strokes = ser.get("strokes")
+    if strokes is None:
+        out.append("- painting: none (automatic selection only)")
+    else:
+        for kind, word in (("sky", "sky"), ("nebula", "nebula"), ("erase", "erase")):
+            n = sum(1 for s in strokes if s.get("kind") == kind)
+            if n:
+                out.append(f"- {word} strokes: {n}")
+        if not strokes:
+            out.append("- painting: none")
+    return out
+
+
 _DICT_PARAMS = {
+    "Background": _background_params,
     "Color": _colour_params,
     "Noise Reduction": _nr_params,
     # Retired 2026-10-05; an old project holds it with NR's option shape.
@@ -484,6 +502,8 @@ def _headline(name: str, ser) -> str:
             # says it, as the log line does ("0.12 unlinked").
             linked = "linked" if ser.get("linked", True) else "unlinked"
             return f"{ser['amount']} {linked}"
+        if name == "Background" and ser.get("method") == "painted":
+            return f"{ser.get('amount', '')}, painted"
         if name == "Color":
             return _colour_headline(ser)
         if name == "Colour Balance":
@@ -751,7 +771,9 @@ def _engine_text(name: str, ser) -> str | None:
     """What ran for one entry, from its record alone, or None when the step has
     no engine choice (or, for a star step, split nothing)."""
     if name == "Background":
-        # One implementation: BackgroundStep has only ever called GraXpert.
+        # GraXpert, or the painted fit, which is Nocturne's own code.
+        if isinstance(ser, dict) and ser.get("method") == "painted":
+            return "**Nocturne**"
         return None if ser == "off" else "**GraXpert**"
     if name == "Color":
         if not isinstance(ser, dict):

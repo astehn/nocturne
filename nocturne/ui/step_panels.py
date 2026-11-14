@@ -40,7 +40,9 @@ def _offset_text(d: float) -> str:
     return f"{d:+.3f}".replace("-", "\u2212")
 
 _PROCESS_OPTIONS = {
-    "background": ["off", "light", "strong"],
+    # No "off" since the painted route (2026-11-14): not pressing Apply is the
+    # off. BackgroundStep still accepts it, so old projects and recipes load.
+    "background": ["light", "strong"],
     "deconvolution": ["light", "medium", "strong"],
     "noise_sharpen": ["light", "medium", "strong"],
 }
@@ -84,7 +86,7 @@ SIXTEEN_BIT_FORMATS = frozenset({"TIFF (16-bit)", "Starless + Stars (two TIFFs)"
 STRETCH_DEFAULT = round(_STEP_DEFAULT * 100)
 # Inline "needs <tool>" note text per process stage that can be gated.
 _GATE_NOTE = {
-    "background": "Needs GraXpert — set its path in Settings.",
+    "background": "Apply Background needs GraXpert — set its path in Settings.",
 }
 
 
@@ -396,6 +398,8 @@ def build_panel(
     on_fringe_change=None,
     on_lc_change=None,
     on_show_model=None,
+    on_paint=None,
+    paint_enabled: bool = True,
     on_option_change=None,
     on_curve_change=None,
     on_curve_preset=None, on_curve_expand=None,
@@ -603,11 +607,7 @@ def build_panel(
         note.setVisible(False)
 
         def _update_enabled(*_):
-            if stage.id == "background":
-                off = box.currentText() == "off"
-                apply_btn.setEnabled(apply_enabled or off)
-                note.setVisible(not apply_enabled and not off)
-            elif stage.id in _GATE_NOTE:  # gated process stage (e.g. star_reduction)
+            if stage.id in _GATE_NOTE:  # gated process stage (background's GraXpert route)
                 apply_btn.setEnabled(apply_enabled)
                 note.setVisible(not apply_enabled)
             else:
@@ -688,6 +688,18 @@ def build_panel(
             apply_btn.clicked.connect(lambda: on_apply(_noise_apply_option()))
         controls.addWidget(QLabel("Strength"))
         controls.addWidget(box)
+        if stage.id == "background":
+            # The other route, in the controls rather than beside Apply: the
+            # pinned action row holds only the main action and Reset. Needs no
+            # GraXpert, so it is gated on an image alone.
+            paint_btn = QPushButton("Paint mask\u2026")
+            paint_btn.setToolTip("Mark sky and nebula yourself; Nocturne fits "
+                                 "the gradient from the sky you mark")
+            paint_btn.setEnabled(paint_enabled)
+            if on_paint is not None:
+                paint_btn.clicked.connect(lambda: on_paint())
+            controls.addWidget(paint_btn)
+            w.paint_btn = paint_btn
         if show_model is not None:
             # A control, directly under the level buttons it checks the result of
             # (it sat below Apply while Apply was in the panel).
@@ -708,13 +720,17 @@ def build_panel(
                 "tick Show what was removed: mid-grey is where nothing was taken, and "
                 "a smooth ramp is sky-glow. If it carries the shape of your object, "
                 "the fit took signal with it — undo and try Light."))
+            notes.addWidget(_desc_label(
+                "Paint mask\u2026 lets you mark sky and nebula yourself \u2014 no "
+                "GraXpert needed."))
         notes.addWidget(note)
         _update_enabled()
         w.option_box = box
         # What the level buttons read on arrival. "Pending" means "moved since the
         # last commit or since I got here", and only the panel can answer that:
         # the committed history stores whatever the step recorded — a dict for
-        # Noise Reduction, nothing at all for Background "off" — and a rebuilt
+        # Noise Reduction or a painted Background, nothing at all for an old
+        # Background "off" — and a rebuilt
         # panel starts at the step default rather than at the committed value.
         w.option_baseline = box.currentText()
         w.apply_btn = w.primary_action = apply_btn

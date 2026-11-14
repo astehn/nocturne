@@ -314,3 +314,28 @@ def test_a_good_recipe_still_reports_its_plan(qtbot, tmp_path):
     dlg.recipe_edit.setText(str(r))
     assert "will run as saved" in dlg.status.text()
     assert dlg.run_btn.isEnabled()
+
+
+def test_a_note_on_a_file_that_succeeded_is_shown(qtbot, tmp_path):
+    """run_batch puts the painted Background's Auto-mask note in an ok result's
+    message; showing messages for failures only meant it never reached anyone.
+    The failure block keeps exactly its old shape."""
+    dlg = BatchDialog(Settings())
+    qtbot.addWidget(dlg)
+    _ready(dlg, tmp_path)
+    note = "Background used Auto-mask — check the result."
+
+    def fake_runner(recipe, paths, outdir, fmt, settings, on_progress=None, **kw):
+        return [{"path": "/x/good.fit", "ok": True, "message": ""},
+                {"path": "/x/noted.fit", "ok": True, "message": note},
+                {"path": "/x/bad.fit", "ok": False, "message": "no stars found"}]
+
+    dlg._batch_runner = fake_runner
+    dlg.run()
+    qtbot.waitUntil(lambda: "Done" in dlg.status.text(), timeout=2000)
+    text = dlg.status.text()
+    assert f"• noted.fit — {note}" in text
+    assert "good.fit" not in text                 # nothing to say about it
+    assert ("Done — 2/3 succeeded.\n1 failed:\n"
+            "• bad.fit — no stars found") in text
+    assert text.index("bad.fit") < text.index("noted.fit"), "failures first"

@@ -216,7 +216,7 @@ class SettingsDialog(QDialog):
 
         tools = QWidget()
         t = QFormLayout(tools)
-        t.addRow("GraXpert (free, needed for Background)",
+        t.addRow("GraXpert (free, needed for Apply Background)",
                  _path_row(self._gx, self._test_graxpert, self._gx_result,
                            DOWNLOAD_URLS["graxpert"],
                            "Select GraXpert.app (or its executable)"))

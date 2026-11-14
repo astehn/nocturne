@@ -55,14 +55,43 @@ def test_crop_panel_immediate_buttons(qtbot):
     assert got == ["rotate", "flip_h", "flip_v", "crop"]
 
 
-def test_background_off_enables_apply_without_graxpert(qtbot):
-    w = build_panel(_stage("background"), on_apply=lambda o: None, apply_enabled=False)
+def test_background_panel_has_no_off(qtbot):
+    """Off went with the painted route (2026-11-14): not pressing Apply is the
+    off. Old "off" records still load — the step keeps the option."""
+    w = build_panel(_stage("background"), on_apply=lambda o: None)
     qtbot.addWidget(w)
-    w.option_box.setCurrentText("off")
-    assert w.apply_btn.isEnabled() is True
-    w.option_box.setCurrentText("light")
-    assert w.apply_btn.isEnabled() is False
+    assert [w.option_box.itemText(i) for i in range(w.option_box.count())] == \
+        ["light", "strong"]
+
+
+def test_paint_button_enabled_without_graxpert_and_apply_gated(qtbot):
+    got = []
+    w = build_panel(_stage("background"), on_apply=lambda o: None,
+                    apply_enabled=False, paint_enabled=True,
+                    on_paint=lambda: got.append("paint"))
+    qtbot.addWidget(w)
+    assert w.apply_btn.isEnabled() is False          # GraXpert route stays gated
     assert w.disabled_note.isHidden() is False
+    assert "GraXpert" in w.disabled_note.text()
+    assert w.paint_btn.text() == "Paint mask\u2026"
+    assert w.paint_btn.isEnabled() is True           # painted route needs no GraXpert
+    w.paint_btn.click()
+    assert got == ["paint"]
+
+
+def test_paint_button_off_without_an_image(qtbot):
+    w = build_panel(_stage("background"), apply_enabled=False, paint_enabled=False,
+                    on_paint=lambda: None)
+    qtbot.addWidget(w)
+    assert w.paint_btn.isEnabled() is False
+
+
+def test_background_note_names_both_routes(qapp):
+    from PySide6.QtWidgets import QLabel
+    w = build_panel(_stage("background"))
+    texts = " ".join(l.text() for l in w.findChildren(QLabel))
+    assert "Paint mask\u2026" in texts
+    assert "no GraXpert needed" in texts
 
 
 def test_auto_panel_apply_color_has_no_green(qtbot):
@@ -501,7 +530,7 @@ def test_crop_panel_labels_and_grouping_polish(qapp):
 
 def test_process_panel_preselects_default_option(qapp):
     w = build_panel(_stage("background"), option_default="light")
-    assert w.option_box.currentText() == "light"   # not "off"
+    assert w.option_box.currentText() == "light"   # not the first button
 
 
 def test_background_panel_explains_gradient_and_how_to_check_it(qapp):

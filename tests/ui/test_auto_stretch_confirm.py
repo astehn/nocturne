@@ -72,10 +72,7 @@ def test_pre_stretch_pipeline_steps_are_never_named(qtbot, tmp_path):
     win = _window(qtbot, tmp_path)
     win.open_fits(_make_fits(tmp_path))
     win._go_to_id("background")
-    # Through the box, the way the Apply button does it — applying an option the
-    # dropdown is not showing leaves the panel legitimately reading "pending".
-    win._panel.option_box.setCurrentText("off")
-    win.apply_current("off")          # a pre-stretch pipeline decision
+    win.apply_current("off")          # a pre-stretch pipeline decision (records nothing)
     win._enhance("Boost Blue")
     asked = []
     win._ask_auto_stretch = lambda names, dest: (asked.append(names), True)[1]

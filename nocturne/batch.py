@@ -46,9 +46,11 @@ def overwrites_source(path: str, output_dir: str, fmt: str) -> bool:
     return os.path.realpath(dest) == os.path.realpath(path)
 
 
-def apply_recipe(base, recipe: Recipe, settings, *, bg_runner=run_cli, rc_runner=run_cli):
+def apply_recipe(base, recipe: Recipe, settings, *, bg_runner=run_cli, rc_runner=run_cli,
+                 notes: list | None = None):
     """Run a recipe's steps on a loaded image, headless. Crop auto-detects the
-    border per image."""
+    border per image. `notes`, when given, collects the Background step's message
+    (the painted route says when only the automatic selection ran)."""
     img = base
     for step in recipe.steps:
         sid = step["stage"]
@@ -81,6 +83,8 @@ def apply_recipe(base, recipe: Recipe, settings, *, bg_runner=run_cli, rc_runner
         if sid == "crop":
             option.bounds = detect_content_bounds(img)
         img = st.apply(img, option)
+        if notes is not None and sid == "background" and st.last_message:
+            notes.append(st.last_message)
     return img
 
 
@@ -104,8 +108,9 @@ def run_batch(recipe, input_paths, output_dir, fmt, settings, *,
             if overwrites_source(path, output_dir, fmt):
                 raise ValueError("would overwrite the source file — choose a "
                                  "different output folder or format")
+            notes: list = []
             out = apply_recipe(load_fits(path), recipe, settings,
-                               bg_runner=bg_runner, rc_runner=rc_runner)
+                               bg_runner=bg_runner, rc_runner=rc_runner, notes=notes)
             if fmt == "FITS":
                 exporter(out, output_path(path, output_dir, fmt))
             else:
@@ -115,7 +120,7 @@ def run_batch(recipe, input_paths, output_dir, fmt, settings, *,
                 # M 16 export rendered dark. Batch has no space choice; sRGB.
                 out, icc = prepare_for_export(out, BATCH_SPACE)
                 exporter(out, output_path(path, output_dir, fmt), icc=icc)
-            results.append({"path": path, "ok": True, "message": ""})
+            results.append({"path": path, "ok": True, "message": " ".join(notes)})
         except Exception as exc:
             results.append({"path": path, "ok": False, "message": str(exc)})
         if on_progress is not None:

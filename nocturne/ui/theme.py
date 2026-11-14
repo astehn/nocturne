@@ -175,6 +175,8 @@ QCheckBox#nightChip:checked {{ border-color: {ACCENT}; }}
    carry their own look, and a default would restyle all of them. */
 QPushButton#choice:checked {{ background: {ACCENT}; color: #041427; font-weight: 600;
     border: 1px solid {ACCENT}; }}
+QPushButton#choice:checked:disabled {{ background: #34373c; color: {TEXT_DIM};
+    border: 1px solid {BORDER}; }}
 /* A level chosen from joined buttons (option_buttons.py: Off | Light | Strong).
    The chosen one is a quiet light fill, not the accent: blue is Next and
    "interactive", and a selected level must not compete with Next. */

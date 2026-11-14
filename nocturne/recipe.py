@@ -106,6 +106,10 @@ def serialize_option(stage_id, option, *, project: bool = False):
     then keeps the region it cut. A recipe or preset never does — it applies a
     shape to another picture, where one picture's pixel bounds mean nothing."""
     raw = option
+    if stage_id == "background":
+        from .steps.background import is_painted, normalise_painted
+        if is_painted(option):
+            return normalise_painted(option, keep_strokes=project)
     if stage_id in _OBJECT_OPTIONS and isinstance(option, dict):
         option = _from_saved_dict(stage_id, option, project=project)
     if stage_id == "crop":
@@ -239,6 +243,11 @@ def deserialize_option(stage_id, value, *, project: bool = False):
     what it made; the default reads a recipe or preset, which re-applies a
     DECISION to a new picture. The two differ for Levels "auto" only."""
     if stage_id == "enhance":
+        return value
+    if stage_id == "background":
+        from .steps.background import is_painted, normalise_painted
+        if is_painted(value):
+            return normalise_painted(value, keep_strokes=project)
         return value
     if stage_id == "crop":
         # Lenient: a recipe or bundle written before a field existed reads it
@@ -390,7 +399,9 @@ def missing_tools(recipe: Recipe, settings) -> list[str]:
     done it better, or the gate stops being a fact and becomes an opinion.
     """
     from .settings import graxpert_valid
+    from .steps.background import is_painted
     needs_gx = any(step.get("stage") == "background" and step.get("option") != "off"
+                   and not is_painted(step.get("option"))
                    for step in recipe.steps)
     return ["GraXpert"] if needs_gx and not graxpert_valid(settings) else []
 
@@ -474,6 +485,7 @@ def preflight(recipe: Recipe, settings, *, scope: str = "recipe") -> list[StepPl
     in a provenance report cannot disagree.
     """
     from .core.receipt import engine_for
+    from .steps.background import is_painted
     from .ui.pipeline import STEP_NAME
 
     blocked = set(missing_tools(recipe, settings))
@@ -496,6 +508,10 @@ def preflight(recipe: Recipe, settings, *, scope: str = "recipe") -> list[StepPl
         # same recipe would contradict each other.
         if sid == "background" and step.get("option") == "off":
             plans.append(StepPlan(name, "run", "", ""))
+            continue
+        if sid == "background" and is_painted(step.get("option")):
+            # The painted fit is Nocturne's own code: no GraXpert, no fallback.
+            plans.append(StepPlan(name, "run", "Nocturne", ""))
             continue
         # Can the factory actually BUILD this stage? Nothing asked before, so a
         # stage that was registered as capturable but had no `make_step` case
