@@ -37,6 +37,16 @@ _MIN_SKY_PAINT = 0.5
 # Spike iter.py selection, unchanged: recovered 96-99% on linear/corner and
 # was the best automatic method on moon/patchy.
 _K_HI, _K_LO, _PASSES, _SMOOTH = 1.5, 5.0, 6, 1.0
+# The outer box ring and the edge strips: a stack's coverage border is a
+# narrow band of brighter sky (his M 33 master: the per-column sky median climbs
+# to +15 sigma in the outer ~100 px), and _K_HI rejected the whole right-hand box
+# column there, so the surface stayed flat and left the band in. Measured on that
+# master (3840 tall x 2160 wide, median residual in sigma, outer 40 px / 40-200 px in):
+# right edge 16.6 / 3.1 before, 11.7 / 0.1 with the strips and this clip; left
+# 6.9 -> 3.3, top 3.9 -> 2.6, bottom 1.4 -> 0.8. The outer 40 px keep part of
+# the band: the stiff surface (_SMOOTH 1.0) cannot bend within half a box. Not
+# pinned as sky: a nebula touching the edge (NGC 7000) must stay rejectable.
+_K_HI_EDGE = 5.0
 _MIN_BOXES = 12
 _FIT_EDGE = 512
 
@@ -104,37 +114,106 @@ def _boxes(a: np.ndarray, bs, ny, nx, oy, ox) -> np.ndarray:
             .reshape((ny, nx, bs * bs) + tail))
 
 
+def _medians(boxes: np.ndarray) -> np.ndarray:
+    """Star-rejected median of each (n, m, c) sample box."""
+    m = boxes.shape[1]
+    lum = boxes.mean(axis=2)
+    k = max(1, int(np.ceil(_STAR_CLIP * m)))
+    darkest = np.argsort(lum, axis=1, kind="stable")[:, :k]
+    return np.median(np.take_along_axis(boxes, darkest[..., None], axis=1),
+                     axis=1).astype(np.float64)
+
+
+def _force(boxes, lb) -> np.ndarray:
+    """Painted label and zero-coverage forcing, shared by boxes and strips."""
+    forced = np.zeros(len(boxes), np.int8)
+    if lb is not None:
+        forced[(lb == SKY).mean(axis=1) >= _MIN_SKY_PAINT] = 1
+        forced[(lb == NEBULA).any(axis=1)] = -1
+    forced[(boxes == 0).all(axis=2).mean(axis=1) > _MAX_ZERO] = -1
+    return forced
+
+
+def _strips(d, labels, bs, ny, nx, oy, ox):
+    """Half-depth boxes along the four frame edges: bs/2 deep, centred bs/4 in,
+    one per box-grid column/row. The outer box ring is centred bs/2 in from the
+    grid (more on an uneven crop), so a stack's narrow bright coverage border
+    lay outside every sample and the stiff surface stayed flat over it.
+    Returns (pts, boxes, label boxes or None)."""
+    h, w, c = d.shape
+    q = bs // 2
+    if q < 2:
+        return None
+    pts, boxes, labs = [], [], []
+    cols = [slice(ox + i * bs, ox + (i + 1) * bs) for i in range(nx)]
+    rows = [slice(oy + j * bs, oy + (j + 1) * bs) for j in range(ny)]
+    for i, cs in enumerate(cols):
+        for rs, yc in ((slice(0, q), q / 2), (slice(h - q, h), h - q / 2)):
+            pts.append((yc / h, (ox + (i + 0.5) * bs) / w))
+            boxes.append(d[rs, cs].reshape(-1, c))
+            labs.append(None if labels is None else labels[rs, cs].ravel())
+    for j, rs in enumerate(rows):
+        for cs, xc in ((slice(0, q), q / 2), (slice(w - q, w), w - q / 2)):
+            pts.append(((oy + (j + 0.5) * bs) / h, xc / w))
+            boxes.append(d[rs, cs].reshape(-1, c))
+            labs.append(None if labels is None else labels[rs, cs].ravel())
+    lb = None if labels is None else np.stack(labs)
+    return np.array(pts), np.stack(boxes), lb
+
+
 def select_sky(data: np.ndarray, labels: np.ndarray | None) -> BoxSelection:
+    """The first ny*nx entries are the box grid (row-major); the edge strips
+    follow."""
     d = _as3(data)
     h, w, c = d.shape
     bs, ny, nx, oy, ox = _grid(h, w)
     boxes = _boxes(d, bs, ny, nx, oy, ox).reshape(ny * nx, bs * bs, c)
-    lum = boxes.mean(axis=2)
-    k = max(1, int(np.ceil(_STAR_CLIP * bs * bs)))
-    darkest = np.argsort(lum, axis=1, kind="stable")[:, :k]
-    vals = np.median(np.take_along_axis(boxes, darkest[..., None], axis=1), axis=1)
-    vals = vals.astype(np.float64)
-
-    forced = np.zeros(ny * nx, np.int8)
+    vals = _medians(boxes)
+    lb = None
     if labels is not None:
-        lb = _boxes(np.asarray(labels), bs, ny, nx, oy, ox).reshape(ny * nx, -1)
-        forced[(lb == SKY).mean(axis=1) >= _MIN_SKY_PAINT] = 1
-        forced[(lb == NEBULA).any(axis=1)] = -1
-    forced[(boxes == 0).all(axis=2).mean(axis=1) > _MAX_ZERO] = -1
+        labels = np.asarray(labels)
+        lb = _boxes(labels, bs, ny, nx, oy, ox).reshape(ny * nx, -1)
+    forced = _force(boxes, lb)
 
     jj, ii = np.divmod(np.arange(ny * nx), nx)
     pts = np.stack([(oy + (jj + 0.5) * bs) / h, (ox + (ii + 0.5) * bs) / w], axis=1)
+    strips = _strips(d, labels, bs, ny, nx, oy, ox)
+    if strips is not None:
+        s_pts, s_boxes, s_lb = strips
+        pts = np.vstack([pts, s_pts])
+        vals = np.vstack([vals, _medians(s_boxes)])
+        forced = np.concatenate([forced, _force(s_boxes, s_lb)])
     keep = _iterate(pts, vals.mean(axis=1), forced, ny, nx)
     return BoxSelection(pts, vals, keep, forced, (ny, nx), bs, (oy, ox))
 
 
 def _iterate(pts, lum, forced, ny, nx) -> np.ndarray:
-    """Spike ``model_iter`` selection with painted boxes pinned every pass."""
+    """Spike ``model_iter`` selection with painted boxes pinned every pass.
+
+    ``pts``/``lum``/``forced`` hold the ny*nx grid first, then any edge
+    strips. The outer box ring and the strips get the looser ``_K_HI_EDGE``
+    upper clip."""
+    try:
+        return _iterate_fit(pts, lum, forced, ny, nx)
+    except np.linalg.LinAlgError:
+        # Nebula everywhere but a row or two of boxes: the surviving centres
+        # are collinear and the plane term of the fit is singular.
+        raise ValueError(_TOO_LITTLE_SKY) from None
+
+
+def _iterate_fit(pts, lum, forced, ny, nx) -> np.ndarray:
+    n = ny * nx
     cand = forced != -1
     if cand.sum() < _MIN_BOXES:
         raise ValueError(_TOO_LITTLE_SKY)
-    L = lum.reshape(ny, nx)
-    c2 = cand.reshape(ny, nx)
+    ring = np.zeros((ny, nx), bool)
+    ring[0] = ring[-1] = True
+    ring[:, 0] = ring[:, -1] = True
+    edge = np.concatenate([ring.ravel(), np.ones(len(lum) - n, bool)])
+    L = lum[:n].reshape(ny, nx)
+    c2 = cand[:n].reshape(ny, nx)
+    if not c2.any():
+        raise ValueError(_TOO_LITTLE_SKY)
     # Noise from neighbouring box pairs that are both candidates: an empty
     # border next to sky would otherwise read as a huge "noise".
     pair = c2[:, 1:] & c2[:, :-1]
@@ -142,18 +221,24 @@ def _iterate(pts, lum, forced, ny, nx) -> np.ndarray:
     noise = float(np.median(diffs)) * 1.4826 + 1e-12
     # Excluded boxes must not set the local floor (a black border would).
     Lf = np.where(c2, L, L[c2].max())
-    floor = uniform_filter(minimum_filter(Lf, 5, mode="nearest"), 5, mode="nearest")
-    keep = (L < floor + 2 * noise).ravel()
+    floor = uniform_filter(minimum_filter(Lf, 5, mode="nearest"), 5, mode="nearest").ravel()
+    # Strips start as candidates: the floor is a 5x5 minimum over the grid, so
+    # it has no sample of a strip's own band and cannot judge it (floor-testing
+    # them left M 33's right edge at 13.2 sigma, against 11.7 this way). The
+    # passes below still reject one that sits above the fit.
+    floor = np.concatenate([floor, np.full(len(lum) - n, np.inf)])
+    keep = lum < floor + np.where(edge, _K_HI_EDGE, 2.0) * noise
     keep = _pin(keep, forced)
     if keep.sum() < _MIN_BOXES:
         keep = cand.copy()
+    k_hi = np.where(edge, _K_HI_EDGE, _K_HI)
     sc = lum[keep].std() + 1e-12
     for _ in range(_PASSES):
         fit = RBFInterpolator(pts[keep], lum[keep] / sc, kernel="thin_plate_spline",
                               smoothing=_SMOOTH, degree=1)(pts) * sc
         r = lum - fit
         s = max(float(np.median(np.abs(r[keep]))) * 1.4826, noise)
-        new = _pin((r < _K_HI * s) & (r > -_K_LO * s), forced)
+        new = _pin((r < k_hi * s) & (r > -_K_LO * s), forced)
         if new.sum() < _MIN_BOXES or (new == keep).all():
             break
         keep = new
@@ -177,7 +262,7 @@ def auto_labels(data: np.ndarray, labels: np.ndarray | None) -> np.ndarray:
     ny, nx = sel.grid
     bs = sel.box
     oy, ox = sel.origin
-    box_lab = np.where(sel.keep, SKY, NEBULA).astype(np.uint8).reshape(ny, nx)
+    box_lab = np.where(sel.keep[:ny * nx], SKY, NEBULA).astype(np.uint8).reshape(ny, nx)
     full = np.repeat(np.repeat(box_lab, bs, axis=0), bs, axis=1)
     full = np.pad(full, ((oy, h - oy - ny * bs), (ox, w - ox - nx * bs)), mode="edge")
     if labels is not None:
@@ -197,9 +282,12 @@ def _model(d: np.ndarray, sel: BoxSelection) -> np.ndarray:
     grid = np.stack([(gy.ravel() + .5) / sh, (gx.ravel() + .5) / sw], axis=1)
     vals = sel.vals[sel.keep]
     scale = vals.std() + 1e-12
-    rbf = RBFInterpolator(sel.pts[sel.keep], vals / scale, kernel="thin_plate_spline",
-                          smoothing=_SMOOTH, degree=1)
-    small = (rbf(grid) * scale).reshape(sh, sw, c)
+    try:
+        rbf = RBFInterpolator(sel.pts[sel.keep], vals / scale, kernel="thin_plate_spline",
+                              smoothing=_SMOOTH, degree=1)
+        small = (rbf(grid) * scale).reshape(sh, sw, c)
+    except np.linalg.LinAlgError:
+        raise ValueError(_TOO_LITTLE_SKY) from None
     if (sh, sw) == (h, w):
         return small.astype(np.float32)
     # Per channel: a 3-D resize also runs the cubic spline along the channel

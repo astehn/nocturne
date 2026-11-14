@@ -263,3 +263,69 @@ def test_untouched_metadata_and_dtype():
     assert out.metadata == meta and out.metadata is not img.metadata
     assert out.is_linear is True
     assert np.array_equal(img.data, before)       # input unchanged
+
+
+# ---------------------------------------------------------------- frame edges
+def _box_noise(data):
+    """Noise of the box medians the selector sees (box edge = long side // 48)."""
+    h, w = data.shape[:2]
+    bs = max(h, w) // 48
+    L = data[:(h // bs) * bs, :(w // bs) * bs].mean(axis=2)
+    med = np.median(L.reshape(h // bs, bs, w // bs, bs).transpose(0, 2, 1, 3)
+                    .reshape(h // bs, w // bs, -1), axis=2)
+    return bs, float(np.median(np.abs(np.diff(med, axis=1)))) * 1.4826
+
+
+def test_bright_coverage_border_is_followed_to_the_edge():
+    # His M 33 master: the stack's coverage border is a narrow band of brighter
+    # sky the stiff fit left in (the right box column rejected outright). Here
+    # +10 box-sigma at the edge, falling off over one box. Measured 2026-11-14:
+    # without the edge strips and the edge clip the band kept 0.50 of its
+    # amplitude and the next five boxes 0.12; with them 0.21 and 0.00.
+    data = _field()
+    h, w = data.shape[:2]
+    bs, noise = _box_noise(data)
+    amp = 10 * noise
+    x = np.arange(w, dtype=np.float32)
+    band = amp * np.exp(-(w - 1 - x) / bs)
+    d = data + band[None, :, None].astype(np.float32)
+    res = d.mean(axis=2) - background_model(d, None).mean(axis=2)
+    assert np.median(res[:, w - 2 * bs:]) < 0.3 * amp
+    assert abs(np.median(res[:, w - 7 * bs:w - 2 * bs])) < 0.05 * amp
+
+
+def test_nebula_stroke_protects_a_blob_touching_the_edge():
+    # The edge strips get the looser clip, but a Nebula stroke still forces
+    # them out: NGC 7000 runs off the frame.
+    data = _field(seed=3)
+    h, w = data.shape[:2]
+    _bs, noise = _box_noise(data)
+    amp = 8 * noise
+    centre, sigma = (h / 2, w - 1), 80.0
+    data = data + _blob(data.shape, centre, sigma, amp)
+    labels = rasterize_strokes([{"kind": "nebula", "radius": 2.5 * sigma,
+                                 "points": [[centre[1], centre[0]]]}], (h, w))
+    sel = select_sky(data, labels)
+    under = (labels[np.minimum((sel.pts[:, 0] * h).astype(int), h - 1),
+                    np.minimum((sel.pts[:, 1] * w).astype(int), w - 1)] == NEBULA)
+    strips = np.arange(len(sel.pts)) >= sel.grid[0] * sel.grid[1]
+    assert (under & strips).any()                  # strips do sit on the blob
+    assert not sel.keep[under].any()
+    model = background_model(data, labels)
+    yy, xx = np.mgrid[0:h, 0:w]
+    blob = (yy - centre[0]) ** 2 + (xx - centre[1]) ** 2 < sigma ** 2
+    assert abs(model[blob].mean() - np.median(model)) < 0.05 * amp
+
+
+def test_sky_left_in_one_row_is_too_little_not_a_crash():
+    # Nebula everywhere but one row of boxes: collinear centres make the fit's
+    # plane term singular — it must read as the user's message.
+    data = _field(h=200, w=300)
+    h, w = data.shape[:2]
+    bs = max(h, w) // 48
+    labels = np.full((h, w), NEBULA, np.uint8)
+    labels[h // 2 - bs // 2 - 2:h // 2 + bs // 2 + 2] = SKY
+    labels[:, :2] = NEBULA
+    labels[:, -2:] = NEBULA
+    with pytest.raises(ValueError, match="Too little sky left"):
+        background_model(data, labels)
