@@ -49,6 +49,11 @@ def build_stylesheet() -> str:
     return f"""
 * {{ color: {TEXT}; font-size: 14px; }}
 QMainWindow, QWidget {{ background-color: {BG_1}; }}
+/* The `*` rule makes tooltip text light, but the tooltip's background comes
+   from the system palette: white in macOS light mode, so light grey on white
+   (GitHub #2). Give tooltips our own surface so they read in either mode. */
+QToolTip {{ background-color: {BG_3}; color: {TEXT}; border: 1px solid {BORDER};
+    padding: 4px 6px; }}
 /* Inside a step card everything lets the card colour through. The global rule
    above paints EVERY widget BG_1, which put a darker rectangle behind every
    label on the BG_2 card (his screenshot, 2026-09-25). Buttons, dropdowns,

@@ -17,3 +17,35 @@ def test_build_stylesheet_uses_tokens():
     # slider + progressbar polish present
     assert "QSlider" in qss and "QProgressBar" in qss
     assert "::sub-page" in qss  # accent-filled slider track
+
+
+def test_tooltips_are_readable_under_a_light_system_palette(qtbot):
+    """GitHub #2: in macOS light mode the tooltip took the system's white
+    background while the stylesheet's `*` rule made its text light grey."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QColor, QPalette
+    from PySide6.QtWidgets import QApplication, QLabel, QToolTip
+    from nocturne.ui.theme import build_stylesheet
+
+    app = QApplication.instance()
+    old_pal, old_css = app.palette(), app.styleSheet()
+    light = QPalette(old_pal)
+    light.setColor(QPalette.ColorRole.ToolTipBase, QColor("#ffffff"))
+    light.setColor(QPalette.ColorRole.ToolTipText, QColor("#000000"))
+    try:
+        app.setPalette(light)
+        app.setStyleSheet(build_stylesheet())
+        w = QLabel("x")
+        qtbot.addWidget(w)
+        w.show()
+        QToolTip.showText(w.mapToGlobal(QPoint(5, 5)), "Readable tooltip text", w)
+        tip = next(t for t in app.topLevelWidgets()
+                   if t.metaObject().className() == "QTipLabel" and t.isVisible())
+        img = tip.grab().toImage()
+        bg = img.pixelColor(img.width() - 3, img.height() // 2)
+        fg = tip.palette().color(tip.foregroundRole())
+        assert abs(bg.lightnessF() - fg.lightnessF()) > 0.5
+    finally:
+        QToolTip.hideText()
+        app.setStyleSheet(old_css)
+        app.setPalette(old_pal)
