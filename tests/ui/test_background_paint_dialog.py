@@ -527,9 +527,28 @@ def test_zoom_pill_is_on_the_view_and_zooms_it(qtbot):
     fit_text = pill.level.text()
     z0 = dlg.view.zoom_level()
     pill.in_btn.click()
-    dlg._render()
     assert dlg.view.zoom_level() > z0
     assert pill.level.text() != fit_text
     pill.fit_btn.click()
-    dlg._render()
     assert dlg.view.zoom_level() == 1.0 and pill.level.text() == fit_text
+
+
+def test_a_click_on_the_pill_label_paints_nothing(qtbot):
+    dlg = _open(qtbot)
+    before = list(dlg._strokes)
+    lab = dlg.zoom_pill.level
+    L, N = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    c = (lab.width() / 2, lab.height() / 2)
+    _send(lab, QEvent.Type.MouseButtonPress, c, L, L)
+    _send(lab, QEvent.Type.MouseButtonRelease, c, L, N)
+    assert dlg.view.live is None
+    assert dlg._strokes == before
+
+
+def test_the_ring_leaves_when_the_pointer_moves_onto_the_pill(qtbot):
+    dlg = _open(qtbot)
+    dlg.view._end_flash()
+    _hover(dlg, _centre(dlg))
+    assert dlg.view.ring_centre() is not None
+    QApplication.sendEvent(dlg.zoom_pill, QEvent(QEvent.Type.Enter))
+    assert dlg.view.ring_centre() is None

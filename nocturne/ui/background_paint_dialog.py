@@ -22,7 +22,7 @@ from __future__ import annotations
 import copy
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QDialog,
                                QHBoxLayout, QLabel, QPushButton, QSlider,
@@ -117,6 +117,11 @@ class _PaintPreview(_ZoomPreview):
         # The same floating zoom pill as the main canvas (ImageView), not a
         # zoom row above the picture: one control, one place, every window.
         self.zoom_pill = ZoomPill(self.zoom_out, self.fit, self.zoom_in, self)
+        # A press on the pill's number or padding must not fall through to the
+        # canvas and paint a dot where you reached for "+" (review 2026-11-14).
+        # Here, not in ZoomPill: the other canvases rely on its current events.
+        self.zoom_pill.setAttribute(Qt.WidgetAttribute.WA_NoMousePropagation)
+        self.zoom_pill.installEventFilter(self)
         self.zoom_pill.raise_()
 
     def resizeEvent(self, event) -> None:
@@ -174,6 +179,14 @@ class _PaintPreview(_ZoomPreview):
         p.drawEllipse(c, r, r)
         p.end()
 
+    def eventFilter(self, obj, event) -> bool:
+        # Moving onto the pill sends the canvas no Leave, so the ring would
+        # freeze beside it.
+        if obj is self.zoom_pill and event.type() == QEvent.Type.Enter:
+            self._hover = None
+            self.update()
+        return super().eventFilter(obj, event)
+
     def leaveEvent(self, event) -> None:
         self._hover = None
         self.update()
@@ -202,6 +215,9 @@ class _PaintPreview(_ZoomPreview):
     def enterEvent(self, event) -> None:
         # Space must reach this widget, not a focused tool button it would click.
         self.setFocus(Qt.FocusReason.MouseFocusReason)
+        # The ring shows on arrival, not only after the first move.
+        self._hover = QPointF(event.position())
+        self.update()
         super().enterEvent(event)
 
     def keyPressEvent(self, event) -> None:
