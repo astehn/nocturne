@@ -552,3 +552,23 @@ def test_the_ring_leaves_when_the_pointer_moves_onto_the_pill(qtbot):
     assert dlg.view.ring_centre() is not None
     QApplication.sendEvent(dlg.zoom_pill, QEvent(QEvent.Type.Enter))
     assert dlg.view.ring_centre() is None
+
+
+def _fill(btn):
+    """The button's face colour, sampled left of its label."""
+    img = btn.grab().toImage()
+    return img.pixelColor(6, img.height() // 2).name()
+
+
+def test_the_chosen_amount_brush_and_auto_mask_look_chosen(qtbot):
+    """He could not tell which of Light/Strong was pressed: a checked plain
+    QPushButton is unstyled app-wide, so it must render unlike its neighbour."""
+    from nocturne.ui.theme import build_stylesheet
+    dlg = _open(qtbot, option={"method": "painted", "amount": "strong"})
+    dlg.setStyleSheet(build_stylesheet())
+    assert dlg.strong_btn.isChecked() and dlg.sky_btn.isChecked()
+    assert _fill(dlg.strong_btn) != _fill(dlg.light_btn)
+    assert _fill(dlg.sky_btn) != _fill(dlg.nebula_btn)
+    off = _fill(dlg.auto_btn)
+    dlg.auto_btn.setChecked(True)
+    assert _fill(dlg.auto_btn) != off

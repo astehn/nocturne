@@ -325,6 +325,10 @@ class BackgroundPaintDialog(QDialog):
         def tool(text, tip=""):
             b = QPushButton(text)
             b.setCheckable(True)
+            # Plain QPushButton:checked is unstyled app-wide (theme.py), so a
+            # chosen brush or amount looked like the rest; "choice" is the
+            # theme's look for a picked option.
+            b.setObjectName("choice")
             # Space pans the view; a focused button would be clicked by it.
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             if tip:
@@ -365,6 +369,10 @@ class BackgroundPaintDialog(QDialog):
         self._amounts = QButtonGroup(self)
         self._amounts.addButton(self.light_btn)
         self._amounts.addButton(self.strong_btn)
+        # Joined, with the step panel's chosen-level look (Light | Strong there).
+        for b, seg in ((self.light_btn, "first"), (self.strong_btn, "last")):
+            b.setObjectName("level")
+            b.setProperty("seg", seg)
         (self.light_btn if amount == "light" else self.strong_btn).setChecked(True)
         self.light_btn.clicked.connect(self._amount_changed)
         self.strong_btn.clicked.connect(self._amount_changed)
@@ -390,6 +398,7 @@ class BackgroundPaintDialog(QDialog):
         tools.addWidget(self.show_mask_check)
         tools.addWidget(heading("Amount"))
         amt_row = QHBoxLayout()
+        amt_row.setSpacing(0)
         amt_row.addWidget(self.light_btn)
         amt_row.addWidget(self.strong_btn)
         tools.addLayout(amt_row)
