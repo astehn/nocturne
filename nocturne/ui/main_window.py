@@ -5573,7 +5573,13 @@ class MainWindow(QMainWindow):
             # Without a splitter De-green Stars always works inside a star
             # mask. The step tags that "free" and the panel "mask"; one name.
             engine_tag = "star mask"
-        if stage_id == "levels" and parse_levels_option(option).auto:
+        if (stage_id == "background" and isinstance(option, dict)
+                and option.get("method") == "painted"):
+            # "painted" already says whose code ran; naming Nocturne again
+            # would read "strong, painted (Nocturne)".
+            label = f"{option.get('amount', '')}, painted"
+            engine_tag = None
+        elif stage_id == "levels" and parse_levels_option(option).auto:
             # The one Levels option that IS user-facing: it says the black point
             # will be re-derived per image, which a bare "Levels" cannot.
             label = "auto"

@@ -203,6 +203,9 @@ def engine_for(stage_id: str, settings, engine: str | None = None, *,
     prefers = _PREFERS.get(stage_id)
     if prefers is None:
         return None
+    if stage_id == "background" and isinstance(option, dict) \
+            and option.get("method") == "painted":
+        return EngineNote("Background", "Nocturne", "")   # own code, no tool
     if (option is not _NO_OPTION and stage_id in SPLIT_STAGES
             and not splits_stars(stage_id, option)):
         return None
